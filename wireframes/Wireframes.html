@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wireframes — Sistema de Eventos Marca Blanca</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #F5F4F0;
+    --surface: #FFFFFF;
+    --surface2: #EFEFEB;
+    --border: #DDDCD7;
+    --border2: #C8C7C1;
+    --text: #1A1A18;
+    --text2: #5C5B56;
+    --text3: #9B9A94;
+    --accent: #1A1A18;
+    --accent-light: #F0EFE9;
+    --blue: #1B4FD8;
+    --blue-light: #EBF0FD;
+    --green: #15803D;
+    --green-light: #DCFCE7;
+    --amber: #B45309;
+    --amber-light: #FEF3C7;
+    --red: #B91C1C;
+    --red-light: #FEE2E2;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --radius-xl: 24px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* NAV */
+  .app-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--text);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    height: 52px;
+    border-bottom: 1px solid #333;
+  }
+  .app-nav-brand {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: #888;
+    letter-spacing: 0.08em;
+    margin-right: 32px;
+    white-space: nowrap;
+  }
+  .nav-tabs {
+    display: flex;
+    gap: 2px;
+    flex: 1;
+  }
+  .nav-tab {
+    padding: 6px 18px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 400;
+    color: #888;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+    background: transparent;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .nav-tab:hover { color: #ccc; background: rgba(255,255,255,0.06); }
+  .nav-tab.active { color: #fff; background: rgba(255,255,255,0.12); }
+  .nav-tab .num {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: #555;
+    background: #2a2a2a;
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .nav-tab.active .num { color: #aaa; background: rgba(255,255,255,0.1); }
+  .nav-info {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #555;
+    margin-left: auto;
+  }
+
+  /* SCREEN WRAPPER */
+  .screen { display: none; padding: 32px; }
+  .screen.active { display: block; }
+
+  /* SCREEN HEADER */
+  .screen-meta {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .screen-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+  .screen-title {
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 20px;
+  }
+  .badge-info { background: var(--blue-light); color: var(--blue); }
+  .badge-success { background: var(--green-light); color: var(--green); }
+  .badge-warning { background: var(--amber-light); color: var(--amber); }
+  .badge-danger { background: var(--red-light); color: var(--red); }
+  .badge-neutral { background: var(--surface2); color: var(--text2); }
+
+  /* FRAME */
+  .wf-frame {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    box-shadow: var(--shadow-md);
+  }
+
+  /* WIREFRAME ELEMENTS */
+  .wf-block {
+    background: var(--surface2);
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-sm);
+  }
+  .wf-text {
+    background: var(--surface2);
+    border-radius: 3px;
+    height: 10px;
+  }
+  .wf-img {
+    background: var(--surface2);
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--text3);
+    font-size: 11px;
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .wf-input {
+    height: 36px;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text3);
+    font-family: 'DM Mono', monospace;
+  }
+  .wf-btn {
+    height: 36px;
+    border-radius: 20px;
+    border: 1.5px dashed var(--border2);
+    background: var(--surface2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 18px;
+    font-size: 12px;
+    color: var(--text3);
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .wf-btn-solid {
+    background: var(--text);
+    border: none;
+    color: #fff;
+    font-size: 12px;
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+
+  /* NAVBAR */
+  .wf-navbar {
+    padding: 12px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .wf-logo {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    background: var(--surface2);
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 5px 16px;
+    letter-spacing: 0.06em;
+  }
+
+  /* ANOTACIONES */
+  .annotations {
+    margin-top: 20px;
+    display: grid;
+    gap: 10px;
+  }
+  .annotation-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .ann-num {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    background: var(--surface2);
+    border-radius: 4px;
+    padding: 2px 7px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .ann-label { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 2px; }
+  .ann-desc { font-size: 12px; color: var(--text2); line-height: 1.5; }
+
+  /* SEPARATOR */
+  .sep { border: none; border-top: 1px solid var(--border); }
+
+  /* GRID HELPERS */
+  .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .g4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; }
+
+  /* PILL TAG */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 20px;
+  }
+  .pill-neutral { background: var(--surface2); color: var(--text2); }
+  .pill-info { background: var(--blue-light); color: var(--blue); }
+  .pill-success { background: var(--green-light); color: var(--green); }
+  .pill-warning { background: var(--amber-light); color: var(--amber); }
+  .pill-danger { background: var(--red-light); color: var(--red); }
+
+  /* STEPPER */
+  .stepper { display: flex; align-items: center; padding: 14px 28px; border-bottom: 1px solid var(--border); }
+  .step-item { display: flex; align-items: center; gap: 8px; }
+  .step-circle {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600;
+    font-family: 'DM Mono', monospace;
+    flex-shrink: 0;
+  }
+  .step-circle.active { background: var(--text); color: #fff; }
+  .step-circle.inactive { background: var(--surface2); border: 1.5px dashed var(--border2); color: var(--text3); }
+  .step-label { font-size: 12px; white-space: nowrap; }
+  .step-label.active { color: var(--text); font-weight: 500; }
+  .step-label.inactive { color: var(--text3); }
+  .step-line { flex: 1; height: 1px; background: var(--border); margin: 0 12px; }
+
+  /* SIDEBAR FILTER */
+  .filter-section { margin-bottom: 20px; }
+  .filter-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .filter-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 7px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .check-box {
+    width: 13px; height: 13px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .check-box.checked { background: var(--text); }
+  .check-box.unchecked { border: 1.5px dashed var(--border2); }
+  .radio-box {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .radio-box.checked { background: var(--text); }
+  .radio-box.unchecked { border: 1.5px dashed var(--border2); }
+  .filter-count { margin-left: auto; font-size: 11px; color: var(--text3); font-family: 'DM Mono', monospace; }
+
+  /* EVENT CARD */
+  .event-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .event-card.featured { border: 2px solid var(--blue); }
+  .event-card.sold-out { opacity: 0.55; }
+  .card-img {
+    height: 110px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding: 8px;
+  }
+  .card-body { padding: 12px 14px; }
+
+  /* PAGINATION */
+  .page-btn {
+    width: 30px; height: 30px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--text2);
+    font-family: 'DM Mono', monospace;
+    cursor: default;
+  }
+  .page-btn.active { background: var(--text); color: #fff; border-color: var(--text); }
+
+  /* TABS */
+  .tab-bar { display: flex; gap: 0; padding: 0 28px; border-bottom: 1px solid var(--border); }
+  .tab {
+    font-size: 13px;
+    padding: 10px 16px;
+    color: var(--text3);
+    cursor: default;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--text); font-weight: 500; }
+
+  /* SECTION */
+  .wf-section { padding: 20px 28px; }
+  .wf-section + .wf-section { border-top: 1px solid var(--border); }
+  .section-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .field { margin-bottom: 14px; }
+  .field-label { font-size: 12px; font-weight: 500; color: var(--text2); margin-bottom: 5px; }
+
+  /* STATS BAR */
+  .stat-item { text-align: center; }
+  .stat-num {
+    font-family: 'DM Mono', monospace;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--surface2);
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 4px 16px;
+    display: inline-block;
+    margin-bottom: 5px;
+  }
+  .stat-label { font-size: 11px; color: var(--text3); }
+
+  /* HOW IT WORKS */
+  .step-card {
+    background: var(--surface2);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    text-align: center;
+  }
+  .step-num-big {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--text);
+    color: #fff;
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px;
+  }
+
+  /* FOOTER */
+  .wf-footer {
+    padding: 16px 28px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface2);
+  }
+
+  /* BREADCRUMB */
+  .breadcrumb { font-size: 12px; color: var(--text3); padding: 10px 28px 0; }
+  .breadcrumb span { color: var(--text2); }
+
+  /* HERO */
+  .hero-section {
+    padding: 52px 28px 44px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #F8F7F3 0%, #FFFFFF 100%);
+  }
+
+  /* TOGGLE */
+  .view-toggle {
+    display: inline-flex;
+    gap: 4px;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+  }
+  .toggle-btn {
+    width: 28px; height: 28px;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: default;
+  }
+  .toggle-btn.active { background: var(--surface); border: 1px solid var(--border); }
+
+  /* SVG ICONS */
+  .icon { display: inline-block; vertical-align: middle; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<nav class="app-nav">
+  <span class="app-nav-brand">WIREFRAMES · SEMB</span>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="showScreen(0, this)">
+      <span class="num">01</span> Página principal
+    </button>
+    <button class="nav-tab" onclick="showScreen(1, this)">
+      <span class="num">02</span> Crear evento
+    </button>
+    <button class="nav-tab" onclick="showScreen(2, this)">
+      <span class="num">03</span> Lista de eventos
+    </button>
+  </div>
+  <span class="nav-info">Desktop · 1280px</span>
+</nav>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- SCREEN 1: PÁGINA PRINCIPAL                        -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="screen active" id="screen-0">
+  <div class="screen-meta">
+    <div>
+      <p class="screen-label">WIREFRAME 01 / 03</p>
+      <h1 class="screen-title">Página principal</h1>
+    </div>
+    <span class="badge badge-info">Landing page pública</span>
+  </div>
+
+  <div class="wf-frame">
+
+    <!-- Navbar -->
+    <div class="wf-navbar">
+      <div class="wf-logo">LOGO</div>
+      <div style="display:flex; gap:24px; align-items:center;">
+        <span style="font-size:13px; color:var(--text2);">Explorar</span>
+        <span style="font-size:13px; color:var(--text2);">Cómo funciona</span>
+        <span style="font-size:13px; color:var(--text2);">Precios</span>
+        <div class="wf-btn">Iniciar sesión</div>
+        <div class="wf-btn wf-btn-solid">Registrarse</div>
+      </div>
+    </div>
+
+    <!-- Hero -->
+    <div class="hero-section">
+      <div style="max-width:580px; margin:0 auto;">
+        <div class="wf-text" style="width:70%; margin:0 auto 10px;"></div>
+        <div class="wf-text" style="width:90%; margin:0 auto 8px;"></div>
+        <div class="wf-text" style="width:55%; margin:0 auto 6px;"></div>
+        <p style="font-size:11px; color:var(--text3); font-family:'DM Mono',monospace; margin:8px 0 24px; letter-spacing:0.04em;">H1 — TAGLINE PRINCIPAL DEL SISTEMA</p>
+        <div style="display:flex; gap:12px; justify-content:center; margin-bottom:28px;">
+          <div class="wf-btn wf-btn-solid" style="height:40px; padding:0 28px; border-radius:20px;">Crear mi evento</div>
+          <div class="wf-btn" style="height:40px; padding:0 28px;">Ver demo</div>
+        </div>
+        <div class="wf-img" style="height:200px; width:100%;">
+          <svg class="icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg>
+          <span>Hero image / ilustración</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats bar -->
+    <div style="padding:20px 28px; background:var(--surface2); border-bottom:1px solid var(--border);">
+      <div class="g3">
+        <div class="stat-item">
+          <div class="stat-num">+2.4k</div>
+          <p class="stat-label">Eventos creados</p>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">+840</div>
+          <p class="stat-label">Organizadores activos</p>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">+18k</div>
+          <p class="stat-label">Asistentes totales</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Eventos destacados -->
+    <div class="wf-section">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+        <h2 style="font-size:16px; font-weight:500;">Eventos destacados</h2>
+        <span style="font-size:12px; color:var(--text3); font-family:'DM Mono',monospace;">VER TODOS →</span>
+      </div>
+      <div class="g3">
+        <div class="event-card featured">
+          <div class="card-img">
+            <span class="pill pill-info">Destacado</span>
+          </div>
+          <div class="card-body">
+            <div class="wf-text" style="width:90%; margin-bottom:7px;"></div>
+            <div class="wf-text" style="width:60%; margin-bottom:10px;"></div>
+            <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+              <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+              <div class="wf-text" style="width:70%; height:8px;"></div>
+            </div>
+            <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+              <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+              <div class="wf-text" style="width:50%; height:8px;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span class="pill pill-neutral">Conferencia</span>
+              <div class="wf-text" style="width:40px; height:8px;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="event-card">
+          <div class="card-img">
+            <span class="pill pill-success">Gratuito</span>
+          </div>
+          <div class="card-body">
+            <div class="wf-text" style="width:85%; margin-bottom:7px;"></div>
+            <div class="wf-text" style="width:55%; margin-bottom:10px;"></div>
+            <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+              <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+              <div class="wf-text" style="width:70%; height:8px;"></div>
+            </div>
+            <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+              <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+              <div class="wf-text" style="width:50%; height:8px;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span class="pill pill-neutral">Taller</span>
+              <div class="wf-text" style="width:40px; height:8px;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="event-card">
+          <div class="card-img">
+            <span class="pill pill-warning">Últimos cupos</span>
+          </div>
+          <div class="card-body">
+            <div class="wf-text" style="width:90%; margin-bottom:7px;"></div>
+            <div class="wf-text" style="width:62%; margin-bottom:10px;"></div>
+            <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+              <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+              <div class="wf-text" style="width:70%; height:8px;"></div>
+            </div>
+            <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+              <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+              <div class="wf-text" style="width:50%; height:8px;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span class="pill pill-neutral">Networking</span>
+              <div class="wf-text" style="width:40px; height:8px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cómo funciona -->
+    <div class="wf-section" style="background:var(--surface2);">
+      <h2 style="font-size:15px; font-weight:500; text-align:center; margin-bottom:20px;">¿Cómo funciona?</h2>
+      <div class="g4">
+        <div class="step-card">
+          <div class="step-num-big">1</div>
+          <div class="wf-text" style="width:80%; margin:0 auto 6px;"></div>
+          <div class="wf-text" style="width:60%; margin:0 auto;"></div>
+        </div>
+        <div class="step-card">
+          <div class="step-num-big">2</div>
+          <div class="wf-text" style="width:80%; margin:0 auto 6px;"></div>
+          <div class="wf-text" style="width:60%; margin:0 auto;"></div>
+        </div>
+        <div class="step-card">
+          <div class="step-num-big">3</div>
+          <div class="wf-text" style="width:80%; margin:0 auto 6px;"></div>
+          <div class="wf-text" style="width:60%; margin:0 auto;"></div>
+        </div>
+        <div class="step-card">
+          <div class="step-num-big">4</div>
+          <div class="wf-text" style="width:80%; margin:0 auto 6px;"></div>
+          <div class="wf-text" style="width:60%; margin:0 auto;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="wf-footer">
+      <div class="wf-logo">LOGO</div>
+      <div style="display:flex; gap:20px;">
+        <div class="wf-text" style="width:60px;"></div>
+        <div class="wf-text" style="width:60px;"></div>
+        <div class="wf-text" style="width:60px;"></div>
+        <div class="wf-text" style="width:60px;"></div>
+      </div>
+      <span style="font-size:11px; color:var(--text3); font-family:'DM Mono',monospace;">© 2026</span>
+    </div>
+
+  </div>
+
+  <!-- Anotaciones -->
+  <div class="annotations" style="grid-template-columns:1fr 1fr 1fr;">
+    <div class="annotation-card">
+      <span class="ann-num">A</span>
+      <div>
+        <p class="ann-label">Navbar</p>
+        <p class="ann-desc">Logo + navegación principal + acciones de autenticación (iniciar sesión / registrarse)</p>
+      </div>
+    </div>
+    <div class="annotation-card">
+      <span class="ann-num">B</span>
+      <div>
+        <p class="ann-label">Hero + CTA</p>
+        <p class="ann-desc">Propuesta de valor, titular principal, dos CTAs y imagen de soporte. Barra de estadísticas debajo.</p>
+      </div>
+    </div>
+    <div class="annotation-card">
+      <span class="ann-num">C</span>
+      <div>
+        <p class="ann-label">Cards de eventos</p>
+        <p class="ann-desc">Imagen, nombre, fecha, ubicación, categoría y precio. Badges de estado: Destacado, Gratuito, Últimos cupos.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- SCREEN 2: CREAR EVENTO                            -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="screen" id="screen-1">
+  <div class="screen-meta">
+    <div>
+      <p class="screen-label">WIREFRAME 02 / 03</p>
+      <h1 class="screen-title">Crear evento</h1>
+    </div>
+    <span class="badge badge-info">Vista autenticada — Organizador</span>
+  </div>
+
+  <div class="wf-frame">
+
+    <!-- Navbar -->
+    <div class="wf-navbar">
+      <div class="wf-logo">LOGO</div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <div class="wf-block" style="width:30px; height:30px; border-radius:50%;"></div>
+        <div class="wf-text" style="width:80px;"></div>
+      </div>
+    </div>
+
+    <!-- Breadcrumb -->
+    <div class="breadcrumb">
+      Mis eventos <span style="margin:0 6px; color:var(--text3);">›</span>
+      <span>Crear nuevo evento</span>
+    </div>
+
+    <!-- Stepper -->
+    <div class="stepper">
+      <div class="step-item">
+        <div class="step-circle active">1</div>
+        <span class="step-label active">Información general</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item">
+        <div class="step-circle inactive">2</div>
+        <span class="step-label inactive">Espacios y accesos</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item">
+        <div class="step-circle inactive">3</div>
+        <span class="step-label inactive">Identidad y marca</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item">
+        <div class="step-circle inactive">4</div>
+        <span class="step-label inactive">Revisión y publicar</span>
+      </div>
+    </div>
+
+    <!-- Body: form + sidebar -->
+    <div style="display:grid; grid-template-columns:1fr 280px;">
+
+      <!-- Formulario -->
+      <div style="padding:24px 28px; border-right:1px solid var(--border); display:flex; flex-direction:column; gap:24px;">
+
+        <!-- Datos básicos -->
+        <div>
+          <p class="section-label">DATOS BÁSICOS</p>
+          <div class="field">
+            <p class="field-label">Nombre del evento *</p>
+            <div class="wf-input"><span>Ej: Summit Tech Ibagué 2026</span></div>
+          </div>
+          <div class="field">
+            <p class="field-label">Descripción</p>
+            <div class="wf-block" style="height:72px; width:100%; border-radius:var(--radius-sm);"></div>
+          </div>
+          <div class="g2">
+            <div class="field" style="margin:0;">
+              <p class="field-label">Categoría *</p>
+              <div class="wf-input">
+                <span style="flex:1;">Seleccionar</span>
+                <svg class="icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+              </div>
+            </div>
+            <div class="field" style="margin:0;">
+              <p class="field-label">Visibilidad *</p>
+              <div class="wf-input">
+                <span style="flex:1;">Público / Privado</span>
+                <svg class="icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fecha y lugar -->
+        <div>
+          <p class="section-label">FECHA Y LUGAR</p>
+          <div class="g2" style="margin-bottom:12px;">
+            <div>
+              <p class="field-label">Fecha inicio *</p>
+              <div class="wf-input">
+                <svg class="icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <span>dd / mm / aaaa</span>
+              </div>
+            </div>
+            <div>
+              <p class="field-label">Fecha cierre *</p>
+              <div class="wf-input">
+                <svg class="icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <span>dd / mm / aaaa</span>
+              </div>
+            </div>
+          </div>
+          <div class="g2" style="margin-bottom:12px;">
+            <div>
+              <p class="field-label">Hora inicio</p>
+              <div class="wf-input"><span>hh : mm</span></div>
+            </div>
+            <div>
+              <p class="field-label">Hora fin</p>
+              <div class="wf-input"><span>hh : mm</span></div>
+            </div>
+          </div>
+          <div style="margin-bottom:12px;">
+            <p class="field-label">Modalidad *</p>
+            <div style="display:flex; gap:10px;">
+              <div class="wf-btn" style="display:inline-flex; align-items:center; gap:6px; padding:0 16px;">
+                <div class="radio-box unchecked"></div> Presencial
+              </div>
+              <div class="wf-btn" style="display:inline-flex; align-items:center; gap:6px; padding:0 16px;">
+                <div class="radio-box unchecked"></div> Virtual
+              </div>
+              <div class="wf-btn" style="display:inline-flex; align-items:center; gap:6px; padding:0 16px;">
+                <div class="radio-box unchecked"></div> Híbrido
+              </div>
+            </div>
+          </div>
+          <div>
+            <p class="field-label">Ubicación / URL</p>
+            <div class="wf-input">
+              <svg class="icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/><circle cx="8" cy="6" r="1.5"/></svg>
+              <span>Dirección o enlace del evento</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Capacidad -->
+        <div>
+          <p class="section-label">CAPACIDAD Y ACCESO</p>
+          <div class="g2">
+            <div>
+              <p class="field-label">Capacidad máxima</p>
+              <div class="wf-input"><span>N.° de asistentes</span></div>
+            </div>
+            <div>
+              <p class="field-label">Requiere registro</p>
+              <div class="wf-input">
+                <span style="flex:1;">Sí / No</span>
+                <div style="width:34px; height:18px; border-radius:20px; background:var(--surface2); border:1.5px dashed var(--border2);"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Acciones -->
+        <div style="display:flex; justify-content:flex-end; gap:10px; padding-top:16px; border-top:1px solid var(--border);">
+          <div class="wf-btn">Guardar borrador</div>
+          <div class="wf-btn wf-btn-solid" style="height:36px; padding:0 22px; border-radius:20px;">Siguiente paso →</div>
+        </div>
+
+      </div>
+
+      <!-- Sidebar -->
+      <div style="padding:24px 20px; background:var(--surface2); display:flex; flex-direction:column; gap:18px;">
+
+        <div>
+          <p class="field-label">Imagen de portada</p>
+          <div class="wf-img" style="height:130px; background:var(--surface);">
+            <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M12 5v14M5 12h14"/></svg>
+            <span>Subir imagen</span>
+            <span style="font-size:10px; color:var(--text3);">PNG, JPG — máx. 5MB</span>
+          </div>
+        </div>
+
+        <div>
+          <p class="field-label">Organizador</p>
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm);">
+            <div class="wf-block" style="width:32px; height:32px; border-radius:50%; flex-shrink:0;"></div>
+            <div style="flex:1;">
+              <div class="wf-text" style="width:80%; margin-bottom:5px;"></div>
+              <div class="wf-text" style="width:55%; height:8px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p class="field-label">Etiquetas</p>
+          <div style="min-height:36px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 10px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <span class="pill pill-neutral">tecnología ×</span>
+            <span class="pill pill-neutral">2026 ×</span>
+            <span style="font-size:11px; color:var(--text3); font-family:'DM Mono',monospace;">+ agregar</span>
+          </div>
+        </div>
+
+        <div>
+          <p class="field-label">Estado inicial</p>
+          <div class="wf-input" style="background:var(--surface);">
+            <span style="flex:1;">Borrador</span>
+            <svg class="icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+          </div>
+        </div>
+
+        <!-- Vista previa -->
+        <div style="border:1.5px dashed var(--border2); border-radius:var(--radius-md); padding:12px;">
+          <p style="font-family:'DM Mono',monospace; font-size:10px; color:var(--text3); letter-spacing:0.06em; text-transform:uppercase; margin-bottom:10px;">Vista previa card</p>
+          <div class="event-card">
+            <div class="card-img" style="height:70px; border-bottom:1px solid var(--border);">
+              <div style="font-family:'DM Mono',monospace; font-size:10px; color:var(--text3); width:100%; height:100%; display:flex; align-items:center; justify-content:center;">IMAGEN</div>
+            </div>
+            <div class="card-body" style="padding:8px 10px;">
+              <div class="wf-text" style="width:90%; margin-bottom:5px;"></div>
+              <div class="wf-text" style="width:60%; margin-bottom:8px; height:8px;"></div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill pill-neutral" style="font-size:10px;">Categoría</span>
+                <div class="wf-text" style="width:36px; height:8px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Anotaciones -->
+  <div class="annotations" style="grid-template-columns:1fr 1fr 1fr;">
+    <div class="annotation-card">
+      <span class="ann-num">A</span>
+      <div>
+        <p class="ann-label">Stepper de 4 pasos</p>
+        <p class="ann-desc">Info general → Espacios y accesos → Identidad y marca → Revisión y publicar</p>
+      </div>
+    </div>
+    <div class="annotation-card">
+      <span class="ann-num">B</span>
+      <div>
+        <p class="ann-label">Formulario principal</p>
+        <p class="ann-desc">Dividido en 3 secciones: datos básicos, fecha y lugar, capacidad y acceso</p>
+      </div>
+    </div>
+    <div class="annotation-card">
+      <span class="ann-num">C</span>
+      <div>
+        <p class="ann-label">Sidebar contextual</p>
+        <p class="ann-desc">Portada, organizador, etiquetas, estado y vista previa de la card en tiempo real</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- SCREEN 3: LISTA DE EVENTOS                        -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="screen" id="screen-2">
+  <div class="screen-meta">
+    <div>
+      <p class="screen-label">WIREFRAME 03 / 03</p>
+      <h1 class="screen-title">Lista de eventos</h1>
+    </div>
+    <span class="badge badge-info">Vista pública — Explorar</span>
+  </div>
+
+  <div class="wf-frame">
+
+    <!-- Navbar -->
+    <div class="wf-navbar">
+      <div class="wf-logo">LOGO</div>
+      <div style="display:flex; gap:22px; align-items:center;">
+        <span style="font-size:13px; color:var(--text2);">Explorar</span>
+        <span style="font-size:13px; color:var(--text); font-weight:500; border-bottom:2px solid var(--text); padding-bottom:2px;">Mis eventos</span>
+        <span style="font-size:13px; color:var(--text2);">Precios</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div class="wf-block" style="width:30px; height:30px; border-radius:50%;"></div>
+          <div class="wf-text" style="width:72px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Header sección -->
+    <div style="padding:18px 28px 0; border-bottom:1px solid var(--border);">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:14px;">
+        <div>
+          <h2 style="font-size:16px; font-weight:500; margin-bottom:3px;">Explorar eventos</h2>
+          <p style="font-size:12px; color:var(--text3);">Encuentra eventos por categoría, fecha o ubicación</p>
+        </div>
+        <div class="wf-btn wf-btn-solid" style="height:36px; padding:0 20px; border-radius:20px; display:inline-flex; align-items:center; gap:6px;">
+          <span>+</span> Crear evento
+        </div>
+      </div>
+
+      <!-- Barra búsqueda + filtros -->
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap;">
+        <div class="wf-input" style="flex:1; min-width:200px; border-radius:20px;">
+          <svg class="icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><circle cx="7" cy="7" r="5"/><path d="M11 11l3 3" stroke-linecap="round"/></svg>
+          <span>Buscar eventos...</span>
+        </div>
+        <div class="wf-btn" style="display:inline-flex; align-items:center; gap:5px;">
+          Categoría <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+        <div class="wf-btn" style="display:inline-flex; align-items:center; gap:5px;">
+          <svg class="icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+          Fecha <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+        <div class="wf-btn" style="display:inline-flex; align-items:center; gap:5px;">
+          Modalidad <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+        <div class="wf-btn" style="display:inline-flex; align-items:center; gap:5px;">
+          <svg class="icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+          Ubicación <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+        </div>
+        <div style="margin-left:auto;">
+          <div class="view-toggle">
+            <div class="toggle-btn active">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#1A1A18" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+            </div>
+            <div class="toggle-btn">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M1 4h14M1 8h14M1 12h14" stroke-linecap="round"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tab-bar" style="padding:0; border-bottom:none;">
+        <div class="tab active">Todos</div>
+        <div class="tab">Próximos</div>
+        <div class="tab">En curso</div>
+        <div class="tab">Finalizados</div>
+        <div class="tab">Mis eventos</div>
+      </div>
+    </div>
+
+    <!-- Layout: sidebar filtros + grid -->
+    <div style="display:grid; grid-template-columns:210px 1fr;">
+
+      <!-- Sidebar filtros -->
+      <div style="padding:20px 18px; border-right:1px solid var(--border); background:var(--surface2);">
+
+        <div class="filter-section">
+          <p class="filter-title">Categorías</p>
+          <div class="filter-item"><div class="check-box checked"></div> Conferencias <span class="filter-count">12</span></div>
+          <div class="filter-item"><div class="check-box unchecked"></div> Talleres <span class="filter-count">8</span></div>
+          <div class="filter-item"><div class="check-box unchecked"></div> Networking <span class="filter-count">5</span></div>
+          <div class="filter-item"><div class="check-box unchecked"></div> Conciertos <span class="filter-count">4</span></div>
+          <div class="filter-item"><div class="check-box unchecked"></div> Deportes <span class="filter-count">3</span></div>
+        </div>
+
+        <div class="filter-section">
+          <p class="filter-title">Modalidad</p>
+          <div class="filter-item"><div class="radio-box checked"></div> Presencial</div>
+          <div class="filter-item"><div class="radio-box unchecked"></div> Virtual</div>
+          <div class="filter-item"><div class="radio-box unchecked"></div> Híbrido</div>
+        </div>
+
+        <div class="filter-section">
+          <p class="filter-title">Precio</p>
+          <div class="filter-item"><div class="check-box unchecked"></div> Gratuito</div>
+          <div class="filter-item"><div class="check-box unchecked"></div> De pago</div>
+        </div>
+
+        <div class="filter-section">
+          <p class="filter-title">Rango de fechas</p>
+          <div class="wf-input" style="margin-bottom:6px; height:32px;">
+            <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+            <span style="font-size:11px;">Desde</span>
+          </div>
+          <div class="wf-input" style="height:32px;">
+            <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+            <span style="font-size:11px;">Hasta</span>
+          </div>
+        </div>
+
+        <div class="wf-btn" style="width:100%; justify-content:center; margin-top:4px;">Limpiar filtros</div>
+
+      </div>
+
+      <!-- Grid de cards -->
+      <div style="padding:18px 20px 24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <p style="font-size:12px; color:var(--text3); font-family:'DM Mono',monospace;">32 EVENTOS ENCONTRADOS</p>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; color:var(--text3);">Ordenar por</span>
+            <div class="wf-btn" style="height:30px; padding:0 12px; display:inline-flex; align-items:center; gap:5px;">
+              Más recientes <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="g3">
+          <!-- Card destacada -->
+          <div class="event-card featured">
+            <div class="card-img"><span class="pill pill-info">Destacado</span></div>
+            <div class="card-body">
+              <div class="wf-text" style="width:92%; margin-bottom:6px;"></div>
+              <div class="wf-text" style="width:60%; margin-bottom:10px; height:8px;"></div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <div class="wf-text" style="width:68%; height:8px;"></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+                <div class="wf-text" style="width:50%; height:8px;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill pill-neutral">Conferencia</span>
+                <div class="wf-text" style="width:38px; height:8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card gratuito -->
+          <div class="event-card">
+            <div class="card-img"><span class="pill pill-success">Gratuito</span></div>
+            <div class="card-body">
+              <div class="wf-text" style="width:85%; margin-bottom:6px;"></div>
+              <div class="wf-text" style="width:58%; margin-bottom:10px; height:8px;"></div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <div class="wf-text" style="width:68%; height:8px;"></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+                <div class="wf-text" style="width:50%; height:8px;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill pill-neutral">Taller</span>
+                <div class="wf-text" style="width:38px; height:8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card últimos cupos -->
+          <div class="event-card">
+            <div class="card-img"><span class="pill pill-warning">Últimos cupos</span></div>
+            <div class="card-body">
+              <div class="wf-text" style="width:88%; margin-bottom:6px;"></div>
+              <div class="wf-text" style="width:62%; margin-bottom:10px; height:8px;"></div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <div class="wf-text" style="width:68%; height:8px;"></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+                <div class="wf-text" style="width:50%; height:8px;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill pill-neutral">Networking</span>
+                <div class="wf-text" style="width:38px; height:8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card normal -->
+          <div class="event-card">
+            <div class="card-img"></div>
+            <div class="card-body">
+              <div class="wf-text" style="width:80%; margin-bottom:6px;"></div>
+              <div class="wf-text" style="width:55%; margin-bottom:10px; height:8px;"></div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <div class="wf-text" style="width:68%; height:8px;"></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+                <div class="wf-text" style="width:50%; height:8px;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill pill-neutral">Deportes</span>
+                <div class="wf-text" style="width:38px; height:8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card sold out -->
+          <div class="event-card sold-out">
+            <div class="card-img"><span class="pill pill-danger">Sold out</span></div>
+            <div class="card-body">
+              <div class="wf-text" style="width:90%; margin-bottom:6px;"></div>
+              <div class="wf-text" style="width:58%; margin-bottom:10px; height:8px;"></div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <div class="wf-text" style="width:68%; height:8px;"></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+                <div class="wf-text" style="width:50%; height:8px;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill pill-neutral">Concierto</span>
+                <div class="wf-text" style="width:38px; height:8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card normal 2 -->
+          <div class="event-card">
+            <div class="card-img"></div>
+            <div class="card-body">
+              <div class="wf-text" style="width:83%; margin-bottom:6px;"></div>
+              <div class="wf-text" style="width:60%; margin-bottom:10px; height:8px;"></div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="2"/><path d="M5 1v3M11 1v3M1 7h14" stroke-linecap="round"/></svg>
+                <div class="wf-text" style="width:68%; height:8px;"></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:5px; margin-bottom:12px;">
+                <svg class="icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#9B9A94" stroke-width="1.5"><path d="M8 1a5 5 0 0 1 5 5c0 3.5-5 9-5 9S3 9.5 3 6a5 5 0 0 1 5-5z"/></svg>
+                <div class="wf-text" style="width:50%; height:8px;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill pill-neutral">Taller</span>
+                <div class="wf-text" style="width:38px; height:8px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Paginación -->
+        <div style="display:flex; justify-content:center; align-items:center; gap:5px; margin-top:22px;">
+          <div class="page-btn">‹</div>
+          <div class="page-btn active">1</div>
+          <div class="page-btn">2</div>
+          <div class="page-btn">3</div>
+          <span style="font-size:12px; color:var(--text3); padding:0 4px;">...</span>
+          <div class="page-btn">6</div>
+          <div class="page-btn">›</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Anotaciones -->
+  <div class="annotations" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+    <div class="annotation-card">
+      <span class="ann-num">A</span>
+      <div>
+        <p class="ann-label">Búsqueda + filtros</p>
+        <p class="ann-desc">Barra de búsqueda con filtros rápidos por categoría, fecha, modalidad y ubicación</p>
+      </div>
+    </div>
+    <div class="annotation-card">
+      <span class="ann-num">B</span>
+      <div>
+        <p class="ann-label">Tabs de estado</p>
+        <p class="ann-desc">Todos / Próximos / En curso / Finalizados / Mis eventos</p>
+      </div>
+    </div>
+    <div class="annotation-card">
+      <span class="ann-num">C</span>
+      <div>
+        <p class="ann-label">Sidebar de filtros</p>
+        <p class="ann-desc">Filtros expandidos por categoría, modalidad, precio y rango de fechas</p>
+      </div>
+    </div>
+    <div class="annotation-card">
+      <span class="ann-num">D</span>
+      <div>
+        <p class="ann-label">Badges en cards</p>
+        <p class="ann-desc">Destacado (azul), Gratuito (verde), Últimos cupos (amber), Sold out (rojo)</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showScreen(index, btn) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('screen-' + index).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>

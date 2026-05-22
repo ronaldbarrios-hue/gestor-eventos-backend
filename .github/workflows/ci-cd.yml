@@ -1,0 +1,38 @@
+name: CI/CD Pipeline
+
+# Esto le dice a GitHub cuándo ejecutarse: cuando hagan un push o un Pull Request al main
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # TAREA 1: Lint y Tests
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Revisar codigo (Lint)
+        run: npm run lint --if-present
+
+      - name: Ejecutar Pruebas (Tests)
+        run: npm test --if-present
+
+  # TAREA 2: Despliegue (Deploy)
+  deploy:
+    needs: build-and-test # Solo se ejecuta si la tarea 1 pasó sin errores
+    runs-on: ubuntu-latest
+    steps:
+      - name: Simular Despliegue a Produccion
+        run: echo "Todo está en verde. Aquí iría la conexión al servidor final."

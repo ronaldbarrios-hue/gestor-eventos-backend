@@ -1,0 +1,30 @@
+{
+  "name": "gestek-api",
+  "version": "0.1.0",
+  "description": "GESTEK Event OS — backend Express",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "dev:frontend": "npm run dev --prefix ./frontend",
+    "dev:full": "concurrently --names \"API,FRONTEND\" --prefix-colors \"cyan,magenta\" \"node --watch index.js\" \"npm run dev --prefix ./frontend\"",
+    "install:all": "npm install && npm install --prefix ./frontend",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
+    "@sentry/node": "^10.52.0",
+    "@supabase/supabase-js": "^2.105.3",
+    "cors": "^2.8.6",
+    "dotenv": "^16.0.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^8.0.7",
+    "web-push": "^3.6.7"
+  }
+}

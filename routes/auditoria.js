@@ -1,11 +1,9 @@
 /* GESTEK — Auditoría (lectura). Feature plan Pro.
    GET /eventos/:eventoId/auditoria  — solo owner del evento + plan Pro vigente.
    Se monta en /eventos. */
-
 const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
-
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -24,8 +22,9 @@ router.get('/:eventoId/auditoria', async (req, res) => {
   const { data: prof } = await supabase
     .from('profiles').select('plan, plan_expires_at').eq('id', ev.owner_id).single();
   const esPro = prof?.plan === 'pro' && (!prof.plan_expires_at || new Date(prof.plan_expires_at) > new Date());
+
   if (!esPro) {
-    return res.status(402).json({ error: 'La auditoría de acciones es una función del plan Pro.', requierePro: true });
+    return res.json({ auditoria: [], requierePro: true });
   }
 
   const { data, error } = await supabase
@@ -35,8 +34,8 @@ router.get('/:eventoId/auditoria', async (req, res) => {
     .eq('evento_id', eventoId)
     .order('created_at', { ascending: false })
     .limit(limit);
-  if (error) return res.status(500).json({ error: error.message });
 
+  if (error) return res.status(500).json({ error: error.message });
   res.json({ auditoria: data || [] });
 });
 

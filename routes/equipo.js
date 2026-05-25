@@ -132,3 +132,43 @@ router.patch('/:eventoId/equipo/:miembroId', async (req, res) => {
   if (!rol_id) return res.status(400).json({ error: 'rol_id requerido.' });
 
   try {
+    await assertOwner(eventoId, req.user.id, ['gestionar_roles']);
+    const { data: rol } = await supabase
+      .from('event_roles').select('id, nombre').eq('id', rol_id).eq('evento_id', eventoId).maybeSingle();
+    if (!rol) return res.status(400).json({ error: 'Rol inválido para este evento.' });
+
+    const { data, error } = await supabase
+      .from('event_members')
+      .update({ rol_id: rol.id, rol: rol.nombre })
+      .eq('id', miembroId)
+      .eq('evento_id', eventoId)
+      .select(`*, profile:profiles!user_id(id, nombre, avatar_url, email), rol_detail:event_roles!rol_id(id, nombre, descripcion)`)
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    auditar(req, eventoId, 'equipo.rol', { entidad: 'miembro', entidadId: miembroId, detalle: { rol: rol.nombre } });
+    res.json({ miembro: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* DELETE /eventos/:eventoId/equipo/:miembroId — sacar del equipo (soft) */
+router.delete('/:eventoId/equipo/:miembroId', async (req, res) => {
+  const { eventoId, miembroId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id, ['remover_miembros']);
+    const { error } = await supabase
+      .from('event_members')
+      .update({ status: 'removed' })
+      .eq('id', miembroId)
+      .eq('evento_id', eventoId);
+    if (error) return res.status(500).json({ error: error.message });
+    auditar(req, eventoId, 'equipo.quitar', { entidad: 'miembro', entidadId: miembroId });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+module.exports = router;

@@ -6,7 +6,6 @@ const { otorgarBadge } = require('../lib/gamificacion.js');
 const { auditar } = require('../lib/auditar.js');
 const { esUrlImagenSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
-
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -22,16 +21,24 @@ const CAMPOS_EDITABLES = [
 
 const ESTADOS_VALIDOS = ['borrador', 'publicado', 'cancelado', 'finalizado'];
 
-/* GET /eventos — lista de mis eventos (con filtros básicos) */
+/* GET /eventos — lista de mis eventos + eventos donde soy miembro activo */
 router.get('/', async (req, res) => {
   const { q, estado, modalidad, page = 1, limit = 20 } = req.query;
   const desde = (Number(page) - 1) * Number(limit);
   const hasta = desde + Number(limit) - 1;
 
+  const { data: memberships } = await supabase
+    .from('event_members')
+    .select('evento_id')
+    .eq('user_id', req.user.id)
+    .eq('status', 'active');
+
+  const memberEventIds = (memberships || []).map(m => m.evento_id);
+
   let query = supabase
     .from('eventos')
     .select('*, categoria:categorias(slug, nombre)', { count: 'exact' })
-    .eq('owner_id', req.user.id)
+    .or(`owner_id.eq.${req.user.id}${memberEventIds.length ? `,id.in.(${memberEventIds.join(',')})` : ''}`)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .range(desde, hasta);
@@ -42,10 +49,18 @@ router.get('/', async (req, res) => {
 
   const { data, error, count } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ eventos: data, total: count ?? 0 });
+
+  const memberSet = new Set(memberEventIds);
+  const eventos = (data || []).map(e => ({
+    ...e,
+    soyOwner: String(e.owner_id) === String(req.user.id),
+    esMiembro: memberSet.has(e.id),
+  }));
+
+  res.json({ eventos, total: count ?? 0 });
 });
 
-/* GET /eventos/:id — evento del owner O de un miembro activo (vista por rol) */
+/* GET /eventos/:id — evento del owner O de un miembro activo */
 router.get('/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('eventos')
@@ -53,7 +68,6 @@ router.get('/:id', async (req, res) => {
     .eq('id', req.params.id)
     .is('deleted_at', null)
     .maybeSingle();
-
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Evento no encontrado.' });
 
@@ -61,7 +75,6 @@ router.get('/:id', async (req, res) => {
     return res.json({ evento: data, soyOwner: true, permisos: ['*'] });
   }
 
-  /* ¿Miembro activo? → acceso de solo-rol */
   const { data: m } = await supabase
     .from('event_members')
     .select('custom_permissions, rol, rol_detail:event_roles!rol_id(permissions)')
@@ -69,7 +82,6 @@ router.get('/:id', async (req, res) => {
     .eq('user_id', req.user.id)
     .eq('status', 'active')
     .maybeSingle();
-
   if (!m) return res.status(404).json({ error: 'Evento no encontrado.' });
 
   const permisos = [...new Set([
@@ -96,10 +108,8 @@ router.post('/', async (req, res) => {
     .insert(insert)
     .select('*, categoria:categorias(slug, nombre)')
     .single();
-
   if (error) return res.status(500).json({ error: error.message });
 
-  /* Badges plataforma: primer evento / organizador pro (best-effort) */
   supabase.from('eventos').select('id', { count: 'exact', head: true })
     .eq('owner_id', req.user.id).is('deleted_at', null)
     .then(({ count }) => {
@@ -113,7 +123,6 @@ router.post('/', async (req, res) => {
 
 /* PATCH /eventos/:id — editar */
 router.patch('/:id', async (req, res) => {
-  /* Verifica propiedad */
   const { data: actual, error: e1 } = await supabase
     .from('eventos')
     .select('id, owner_id, slug, titulo')
@@ -123,8 +132,7 @@ router.patch('/:id', async (req, res) => {
   if (e1) return res.status(500).json({ error: e1.message });
   if (!actual) return res.status(404).json({ error: 'Evento no encontrado.' });
 
-  /* Owner edita todo. Miembro activo edita según sus permisos de rol. */
-  let camposPermitidos = null; // null = todos (owner)
+  let camposPermitidos = null;
   if (actual.owner_id !== req.user.id) {
     const { data: m } = await supabase
       .from('event_members')
@@ -132,6 +140,7 @@ router.patch('/:id', async (req, res) => {
       .eq('evento_id', actual.id).eq('user_id', req.user.id).eq('status', 'active')
       .maybeSingle();
     if (!m) return res.status(403).json({ error: 'No autorizado.' });
+
     const perms = new Set([
       ...(m.rol_detail?.permissions || []),
       ...(m.custom_permissions || []),
@@ -150,22 +159,18 @@ router.patch('/:id', async (req, res) => {
   }
 
   const puede = (k) => camposPermitidos === null || camposPermitidos.has(k);
-
   const updates = {};
   for (const k of CAMPOS_EDITABLES) {
     if (k in req.body && puede(k)) updates[k] = req.body[k];
   }
 
-  /* Permitir cambiar slug si lo mandan, asegurando unicidad (solo owner) */
   if (camposPermitidos === null && req.body.slug && req.body.slug !== actual.slug) {
     updates.slug = await uniqueEventoSlug(supabase, req.body.slug);
   }
-
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ error: 'Sin cambios.' });
   }
 
-  /* Seguridad: URLs de imagen provistas a mano deben ser seguras */
   for (const campo of ['cover_url', 'pago_qr_url']) {
     if (campo in updates && !esUrlImagenSegura(updates[campo])) {
       return res.status(400).json({ error: `URL inválida en ${campo}.` });
@@ -179,6 +184,7 @@ router.patch('/:id', async (req, res) => {
     .select('*, categoria:categorias(slug, nombre)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
+
   auditar(req, data.id, 'evento.editar', { entidad: 'evento', entidadId: data.id, detalle: { campos: Object.keys(updates) } });
   res.json({ evento: data });
 });
@@ -195,11 +201,12 @@ router.delete('/:id', async (req, res) => {
     .update({ deleted_at: new Date().toISOString(), estado: 'cancelado' })
     .eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+
   auditar(req, req.params.id, 'evento.borrar', { entidad: 'evento', entidadId: req.params.id });
   res.json({ ok: true });
 });
 
-/* POST /eventos/:id/estado — cambiar estado (publicar / cancelar / finalizar) */
+/* POST /eventos/:id/estado — cambiar estado */
 router.post('/:id/estado', async (req, res) => {
   const { estado } = req.body;
   if (!ESTADOS_VALIDOS.includes(estado)) {

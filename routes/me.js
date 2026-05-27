@@ -75,12 +75,10 @@ router.get('/boletas', async (req, res) => {
       evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, estado)
     `)
     .eq('user_id', req.user.id)
-    .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
 
-  /* También buscar por email para boletas compradas sin cuenta */
   const { data: porEmail, error: e2 } = await supabase
     .from('tickets')
     .select(`
@@ -90,12 +88,10 @@ router.get('/boletas', async (req, res) => {
     `)
     .eq('guest_email', req.user.email.toLowerCase())
     .is('user_id', null)
-    .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
   if (e2) return res.status(500).json({ error: e2.message });
 
-  /* Combinar y deduplicar por id */
   const todas = [...(data || []), ...(porEmail || [])];
   const unicas = Object.values(Object.fromEntries(todas.map(t => [t.id, t])));
   unicas.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));

@@ -21,6 +21,35 @@ app.use((req, _res, next) => {
   next();
 });
 
+/* ── Rutas públicas SIN auth — deben ir PRIMERO de todo,
+   antes de cualquier router montado en '/' con auth global ── */
+app.get('/', (_req, res) => {
+  res.json({
+    producto: 'GESTEK Event OS',
+    version : '0.2.0-fase-a',
+    estado  : 'operativo',
+    endpoints: {
+      privados: [
+        'GET    /me',
+        'PATCH  /me',
+        'GET    /eventos',
+        'GET    /eventos/:id',
+        'POST   /eventos',
+        'PATCH  /eventos/:id',
+        'DELETE /eventos/:id',
+        'POST   /eventos/:id/estado',
+      ],
+      publicos: [
+        'GET /categorias',
+        'GET /eventos/publicos',
+        'GET /eventos/publicos/slug/:slug',
+      ],
+    },
+  });
+});
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
 /* Rutas */
 app.use('/api/v1',           require('./routes/api.js'));
 /* PÚBLICOS primero: estos routers no requieren auth. Deben ir ANTES de
@@ -57,33 +86,6 @@ app.use('/eventos',          require('./routes/waitlist.js'));
 app.use('/eventos',          require('./routes/auditoria.js'));
 app.use('/eventos',          require('./routes/analytics.js'));
 app.use('/eventos',          require('./routes/eventos.js'));
-
-app.get('/', (_req, res) => {
-  res.json({
-    producto: 'GESTEK Event OS',
-    version : '0.2.0-fase-a',
-    estado  : 'operativo',
-    endpoints: {
-      privados: [
-        'GET    /me',
-        'PATCH  /me',
-        'GET    /eventos',
-        'GET    /eventos/:id',
-        'POST   /eventos',
-        'PATCH  /eventos/:id',
-        'DELETE /eventos/:id',
-        'POST   /eventos/:id/estado',
-      ],
-      publicos: [
-        'GET /categorias',
-        'GET /eventos/publicos',
-        'GET /eventos/publicos/slug/:slug',
-      ],
-    },
-  });
-});
-
-app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 if (process.env.NODE_ENV !== 'production') {
   app.get('/debug-sentry', () => { throw new Error('Prueba Sentry'); });

@@ -6,22 +6,19 @@ const { auditar } = require('../lib/auditar.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { sendMail } = require('../lib/email.js');
 
-/* Se monta en /eventos. Los paths internos incluyen :eventoId. */
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
 const PERMS_EQUIPO = ['invitar_staff', 'gestionar_roles', 'remover_miembros'];
-
 function assertOwner(eventoId, userId, perms = PERMS_EQUIPO) {
   return assertPermiso(eventoId, userId, perms, 'id, owner_id');
 }
 
-/* GET /eventos/:eventoId/equipo — listar miembros + el owner */
+/* GET /eventos/:eventoId/equipo */
 router.get('/:eventoId/equipo', async (req, res) => {
   const eventoId = req.params.eventoId;
   try {
     const evento = await assertOwner(eventoId, req.user.id);
-
     const { data: miembros, error } = await supabase
       .from('event_members')
       .select(`
@@ -33,10 +30,8 @@ router.get('/:eventoId/equipo', async (req, res) => {
       .neq('status', 'removed')
       .order('invited_at', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
-
     const { data: owner } = await supabase
       .from('profiles').select('id, nombre, avatar_url, email').eq('id', evento.owner_id).maybeSingle();
-
     res.json({ owner, miembros: miembros || [] });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -47,20 +42,15 @@ router.get('/:eventoId/equipo', async (req, res) => {
 router.post('/:eventoId/equipo', async (req, res) => {
   const eventoId = req.params.eventoId;
   const { email, rol_id, nombre_invitado } = req.body;
-
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Email requerido.' });
   if (!rol_id)                        return res.status(400).json({ error: 'Selecciona un rol primero.' });
-
   try {
     await assertOwner(eventoId, req.user.id, ['invitar_staff']);
-
     const { data: rol } = await supabase
       .from('event_roles').select('id, nombre').eq('id', rol_id).eq('evento_id', eventoId).maybeSingle();
     if (!rol) return res.status(400).json({ error: 'Rol inválido para este evento.' });
-
     const { data: existingProfile } = await supabase
       .from('profiles').select('id').ilike('email', email).maybeSingle();
-
     const payload = {
       evento_id      : eventoId,
       email          : email.toLowerCase(),
@@ -73,22 +63,38 @@ router.post('/:eventoId/equipo', async (req, res) => {
       accepted_at    : existingProfile ? new Date().toISOString() : null,
     };
 
-    const { data, error } = await supabase
+    // Verificar si ya existe (incluso removido)
+    const { data: existing } = await supabase
       .from('event_members')
-      .insert(payload)
-      .select(`*, profile:profiles!user_id(id, nombre, avatar_url, email), rol_detail:event_roles!rol_id(id, nombre, descripcion)`)
-      .single();
+      .select('id, status')
+      .eq('evento_id', eventoId)
+      .ilike('email', email)
+      .maybeSingle();
 
-    if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Ese email ya está en el equipo.' });
-      return res.status(500).json({ error: error.message });
+    let data, error;
+    if (existing) {
+      if (existing.status !== 'removed') {
+        return res.status(409).json({ error: 'Ese email ya está en el equipo.' });
+      }
+      // Reactivar miembro removido
+      ({ data, error } = await supabase
+        .from('event_members')
+        .update({ ...payload })
+        .eq('id', existing.id)
+        .select(`*, profile:profiles!user_id(id, nombre, avatar_url, email), rol_detail:event_roles!rol_id(id, nombre, descripcion)`)
+        .single());
+    } else {
+      ({ data, error } = await supabase
+        .from('event_members')
+        .insert(payload)
+        .select(`*, profile:profiles!user_id(id, nombre, avatar_url, email), rol_detail:event_roles!rol_id(id, nombre, descripcion)`)
+        .single());
     }
+    if (error) return res.status(500).json({ error: error.message });
 
-    /* Trae el título del evento para el email */
     const { data: ev } = await supabase
       .from('eventos').select('titulo').eq('id', eventoId).maybeSingle();
 
-    /* Enviar email de invitación siempre */
     const resultEmail = await sendMail({
       to: email.toLowerCase(),
       subject: `Te invitaron al equipo de "${ev?.titulo || 'un evento'}" en GESTEK`,
@@ -106,7 +112,6 @@ router.post('/:eventoId/equipo', async (req, res) => {
     });
     console.log('[equipo] email invitación resultado:', resultEmail);
 
-    /* Si el invitado ya tiene cuenta, le notificamos in-app */
     if (existingProfile?.id) {
       notificar({
         userId : existingProfile.id,
@@ -117,7 +122,6 @@ router.post('/:eventoId/equipo', async (req, res) => {
         eventoId,
       });
     }
-
     auditar(req, eventoId, 'equipo.invitar', { entidad: 'miembro', entidadId: data.id, detalle: { email: email.toLowerCase(), rol: rol.nombre } });
     res.status(201).json({ miembro: data });
   } catch (e) {
@@ -130,13 +134,11 @@ router.patch('/:eventoId/equipo/:miembroId', async (req, res) => {
   const { eventoId, miembroId } = req.params;
   const { rol_id } = req.body;
   if (!rol_id) return res.status(400).json({ error: 'rol_id requerido.' });
-
   try {
     await assertOwner(eventoId, req.user.id, ['gestionar_roles']);
     const { data: rol } = await supabase
       .from('event_roles').select('id, nombre').eq('id', rol_id).eq('evento_id', eventoId).maybeSingle();
     if (!rol) return res.status(400).json({ error: 'Rol inválido para este evento.' });
-
     const { data, error } = await supabase
       .from('event_members')
       .update({ rol_id: rol.id, rol: rol.nombre })
@@ -144,7 +146,6 @@ router.patch('/:eventoId/equipo/:miembroId', async (req, res) => {
       .eq('evento_id', eventoId)
       .select(`*, profile:profiles!user_id(id, nombre, avatar_url, email), rol_detail:event_roles!rol_id(id, nombre, descripcion)`)
       .single();
-
     if (error) return res.status(500).json({ error: error.message });
     auditar(req, eventoId, 'equipo.rol', { entidad: 'miembro', entidadId: miembroId, detalle: { rol: rol.nombre } });
     res.json({ miembro: data });

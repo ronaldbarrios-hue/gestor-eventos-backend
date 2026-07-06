@@ -13,14 +13,10 @@ const { signTicketQR } = require('../lib/qr.js');
 const mp = require('../lib/mercadopago.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
+const { sendMail } = require('../lib/email.js');
 
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 
-/* MP firma cada webhook con HMAC-SHA256.
-   Header `x-signature` viene tipo: ts=1234567890,v1=hexhash
-   Manifest: `id:<data.id>;request-id:<x-request-id>;ts:<ts>;` (con punto y coma final)
-   Si MP_WEBHOOK_SECRET no está configurado, NO verificamos (modo dev).
-   En producción, configurar el secret desde el panel del webhook MP. */
 function verifyMPSignature(req) {
   if (!MP_WEBHOOK_SECRET) return { ok: true, reason: 'no_secret_configured' };
 
@@ -37,7 +33,6 @@ function verifyMPSignature(req) {
   const v1 = parts.v1;
   if (!ts || !v1) return { ok: false, reason: 'malformed_signature' };
 
-  /* Ventana de tolerancia de 5 minutos contra replay */
   const tsAge = Math.abs(Date.now() / 1000 - Number(ts));
   if (tsAge > 300) return { ok: false, reason: 'timestamp_too_old' };
 
@@ -93,7 +88,6 @@ router.post('/me/mercadopago/conectar', verifySupabaseJWT, async (req, res) => {
   const { mp_access_token, mp_public_key } = req.body;
   if (!mp_access_token) return res.status(400).json({ error: 'access_token requerido.' });
 
-  /* Validamos las credenciales primero */
   let info;
   try {
     info = await mp.getUserInfo(mp_access_token);
@@ -157,7 +151,6 @@ router.get('/me/plan', verifySupabaseJWT, async (req, res) => {
   });
 });
 
-/* POST /me/plan/pro/trial — prueba gratis de 14 días (una sola vez). */
 router.post('/me/plan/pro/trial', verifySupabaseJWT, async (req, res) => {
   const { data: prof, error: e1 } = await supabase
     .from('profiles').select('plan, plan_expires_at, plan_payment_id').eq('id', req.user.id).single();
@@ -191,7 +184,6 @@ router.post('/me/plan/pro/trial', verifySupabaseJWT, async (req, res) => {
   res.json({ ok: true, profile: data, trial_dias: PLAN_PRO_TRIAL_DAYS });
 });
 
-/* DEV ONLY: activa Pro sin pasar por MP. Habilitado solo si ALLOW_DEV_PRO_ACTIVATION=true. */
 router.post('/me/plan/pro/activar-dev', verifySupabaseJWT, async (req, res) => {
   if (process.env.ALLOW_DEV_PRO_ACTIVATION !== 'true') {
     return res.status(403).json({ error: 'Activación dev no habilitada en este entorno.' });
@@ -234,7 +226,6 @@ router.post('/me/plan/pro/comprar', verifySupabaseJWT, async (req, res) => {
     return res.status(503).json({ error: 'GESTEK aún no tiene configurada la pasarela de pagos del plan Pro. Contactá al admin.' });
   }
 
-  /* Email del comprador desde su perfil */
   const { data: profile, error: ep } = await supabase
     .from('profiles').select('id, email, nombre').eq('id', req.user.id).single();
   if (ep) return res.status(500).json({ error: ep.message });
@@ -300,7 +291,6 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   const capC = await verifyTurnstile(req.body.captcha_token, (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim());
   if (!capC.ok) return res.status(400).json({ error: 'Verificación anti-bot fallida. Recargá e intentá de nuevo.' });
 
-  /* Evento + owner para leer su access token */
   const { data: evento, error: e1 } = await supabase
     .from('eventos')
     .select('id, owner_id, titulo, estado, deleted_at, currency, aforo_total, aforo_vendido')
@@ -309,7 +299,6 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   if (!evento || evento.deleted_at || evento.estado !== 'publicado')
     return res.status(404).json({ error: 'Evento no disponible.' });
 
-  /* Anti-abuso: límite de boletas por email en este evento */
   const MAX_POR_EMAIL = Number(process.env.MAX_TICKETS_POR_EMAIL || 5);
   const { count: yaTiene } = await supabase
     .from('tickets')
@@ -343,8 +332,6 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   if (precioEfectivo <= 0)
     return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usá la reserva directa.' });
 
-  /* Pre-creamos el ticket en estado 'emitido' (no pagado todavía) y un payment_transactions
-     vinculado. Cuando el webhook confirme approved, marcamos el ticket como pagado. */
   const codigo = generarCodigo();
   const { data: ticket, error: e3 } = await supabase
     .from('tickets')
@@ -359,15 +346,12 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
     .select().single();
   if (e3) return res.status(500).json({ error: e3.message });
 
-  /* Firmamos QR ya — la boleta solo es válida cuando el webhook la marque pagada,
-     pero el QR token es estable. */
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
 
   const externalRef = `tx_${ticket.id}`;
   const currency = evento.currency || tipo.currency || 'COP';
 
-  /* Creamos la preferencia con el access token del organizador */
   let preference;
   try {
     preference = await mp.createPreference(owner.mp_access_token, {
@@ -391,7 +375,6 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
       pendingUrl       : `${publicBaseUrl()}/mi-ticket/${ticket.codigo}?pago=pendiente`,
     });
   } catch (e) {
-    /* Si MP falla, dejamos el ticket emitido pero sin preference; el organizador puede limpiar */
     return res.status(502).json({ error: `Mercado Pago rechazó la preferencia: ${e.message}` });
   }
 
@@ -422,16 +405,12 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
 /* ────────────── Webhook Mercado Pago ────────────── */
 
 router.post('/webhooks/mercadopago', async (req, res) => {
-  /* Verificación de firma HMAC. Si falla, log y descartamos.
-     Si MP_WEBHOOK_SECRET no está configurado, se acepta (modo dev). */
   const sig = verifyMPSignature(req);
   if (!sig.ok) {
     console.warn('[webhook MP] firma inválida:', sig.reason);
     return res.status(401).json({ error: 'Invalid signature', reason: sig.reason });
   }
 
-  /* MP envía dos formatos posibles: ?type=payment&data.id=...  o  body.action / body.data.id.
-     Respondemos 200 rápido y procesamos best-effort. */
   res.status(200).json({ received: true });
 
   try {
@@ -439,21 +418,12 @@ router.post('/webhooks/mercadopago', async (req, res) => {
     const type      = req.body?.type      || req.query?.type;
     if (!paymentId || (type && type !== 'payment')) return;
 
-    /* No sabemos a qué organizador pertenece este pago hasta consultarlo.
-       Estrategia: probamos los access tokens de los owners con eventos relacionados.
-       Más simple: como external_reference es tx_<ticket_id>, primero buscamos el
-       payment_transactions por payment_id (si ya pasó por aquí) o por external_ref. */
-
-    /* Si ya lo procesamos, salimos (idempotencia) */
     const { data: existing } = await supabase
       .from('payment_transactions')
       .select('id, ticket_id, evento_id, status')
       .eq('payment_id', String(paymentId))
       .maybeSingle();
 
-    /* Necesitamos el access_token de algún owner para consultar el pago.
-       Si tenemos transacción previa, sacamos el owner por evento.
-       Si no, hacemos un lookup más amplio. */
     let accessToken = null;
     let knownTx = existing;
 
@@ -466,7 +436,6 @@ router.post('/webhooks/mercadopago', async (req, res) => {
     }
 
     if (!accessToken) {
-      /* fallback 1: token de plataforma (compras de plan Pro) */
       const platformToken = process.env.MP_PLATFORM_ACCESS_TOKEN;
       if (platformToken) {
         try {
@@ -475,7 +444,6 @@ router.post('/webhooks/mercadopago', async (req, res) => {
           return;
         } catch { /* not it */ }
       }
-      /* fallback 2: probar todos los profiles con mp conectado hasta que uno responda */
       const { data: conectados } = await supabase
         .from('profiles').select('id, mp_access_token').not('mp_access_token', 'is', null);
       for (const p of conectados || []) {
@@ -507,10 +475,9 @@ async function procesarPago(pago) {
   const ticketId = externalRef.startsWith('tx_') ? externalRef.slice(3) : null;
   if (!ticketId) return;
 
-  const status = pago.status; // approved | rejected | refunded | cancelled | pending | in_process
+  const status = pago.status;
   const monto  = Number(pago.transaction_amount || 0);
 
-  /* upsert por payment_id (idempotente) */
   const { data: existing } = await supabase
     .from('payment_transactions')
     .select('id, ticket_id')
@@ -522,7 +489,6 @@ async function procesarPago(pago) {
       status, raw: pago,
     }).eq('id', existing.id);
   } else {
-    /* buscamos la tx pendiente por ticket_id para enriquecerla */
     const { data: pending } = await supabase
       .from('payment_transactions')
       .select('id')
@@ -536,7 +502,7 @@ async function procesarPago(pago) {
       }).eq('id', pending.id);
     } else {
       await supabase.from('payment_transactions').insert({
-        evento_id : null, // se completa por trigger? no — dejamos null si no hubo pending
+        evento_id : null,
         ticket_id : ticketId,
         payment_id: String(pago.id),
         status, monto, raw: pago,
@@ -545,7 +511,6 @@ async function procesarPago(pago) {
   }
 
   if (status === 'approved') {
-    /* Marcamos el ticket como pagado */
     const { data: ticket } = await supabase
       .from('tickets').select('id, evento_id, estado').eq('id', ticketId).single();
     if (!ticket) return;
@@ -557,12 +522,11 @@ async function procesarPago(pago) {
       pagado_at    : new Date().toISOString(),
     }).eq('id', ticketId);
 
-    /* Webhook ticket.pagado al organizador */
     const { data: evWh } = await supabase
-      .from('eventos').select('owner_id').eq('id', ticket.evento_id).single();
+      .from('eventos').select('owner_id, titulo, slug').eq('id', ticket.evento_id).single();
+    const { data: tFull } = await supabase
+      .from('tickets').select('codigo, guest_nombre, guest_email').eq('id', ticketId).single();
     if (evWh?.owner_id) {
-      const { data: tFull } = await supabase
-        .from('tickets').select('codigo, guest_nombre, guest_email').eq('id', ticketId).single();
       dispatch(evWh.owner_id, 'ticket.pagado', {
         ticket_id: ticketId, evento_id: ticket.evento_id,
         codigo: tFull?.codigo, nombre: tFull?.guest_nombre, email: tFull?.guest_email,
@@ -570,7 +534,28 @@ async function procesarPago(pago) {
       });
     }
 
-    /* Bump de contadores */
+    if (tFull?.guest_email) {
+      sendMail({
+        to: tFull.guest_email,
+        subject: `Tu entrada para "${evWh?.titulo || 'el evento'}" está confirmada`,
+        html: `
+          <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:40px 24px;background:#070C18;color:#E5E5E5;">
+            <h2 style="color:#F1F5F9;">¡Compra confirmada!</h2>
+            <p style="color:#94A3B8;">Hola ${tFull.guest_nombre || ''}, tu pago fue aprobado y tu entrada para <strong style="color:#F1F5F9;">${evWh?.titulo || 'el evento'}</strong> ya está lista.</p>
+            <div style="background:#0D1525;border:1px solid #1e293b;border-radius:16px;padding:18px;margin:24px 0;">
+              <p style="margin:0 0 6px;font-size:13px;color:#94A3B8;">Código de tu entrada</p>
+              <p style="margin:0;font-size:20px;font-weight:700;color:#F1F5F9;letter-spacing:.05em;">${tFull.codigo}</p>
+            </div>
+            <a href="${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${tFull.codigo}"
+               style="display:inline-block;background:#fafafa;color:#0a0a0a;padding:13px 26px;border-radius:999px;text-decoration:none;font-weight:600;">
+              Ver mi entrada
+            </a>
+            <p style="font-size:12px;color:#71717A;margin-top:28px;">Enviado por GESTEK Event OS.</p>
+          </div>
+        `,
+      }).then(r => console.log('[pagos] email confirmación resultado:', r));
+    }
+
     const { data: ev } = await supabase
       .from('eventos').select('aforo_vendido').eq('id', ticket.evento_id).single();
     if (ev) {
@@ -598,7 +583,6 @@ async function procesarPago(pago) {
 
     await supabase.from('tickets').update({ estado: 'cancelado' }).eq('id', ticketId);
 
-    /* Solo decrementamos y notificamos si el ticket estaba efectivamente pagado */
     if (ticketRefund?.estado === 'pagado') {
       const { data: ev } = await supabase
         .from('eventos').select('aforo_vendido, slug, titulo').eq('id', ticketRefund.evento_id).single();
@@ -619,7 +603,6 @@ async function procesarPago(pago) {
   }
 }
 
-/* Notifica al primero de la lista de espera cuando se libera un cupo (best-effort). */
 async function notificarTopWaitlist(ticketTypeId, eventoId, eventoSlug, eventoTitulo) {
   const { data: top } = await supabase
     .from('event_waitlist')
@@ -675,7 +658,6 @@ async function procesarPagoPlan(pago, userId) {
   const status = pago.status;
   const monto  = Number(pago.transaction_amount || 0);
 
-  /* idempotencia: si ya está registrada esta payment_id, sólo actualizar */
   const { data: existing } = await supabase
     .from('payment_transactions')
     .select('id').eq('payment_id', String(pago.id)).maybeSingle();
@@ -683,7 +665,6 @@ async function procesarPagoPlan(pago, userId) {
   if (existing) {
     await supabase.from('payment_transactions').update({ status, raw: pago }).eq('id', existing.id);
   } else {
-    /* enriquece la pending creada al iniciar la compra (busca por user_id + kind=plan + status=pending) */
     const { data: pending } = await supabase
       .from('payment_transactions')
       .select('id')
@@ -705,7 +686,6 @@ async function procesarPagoPlan(pago, userId) {
   }
 
   if (status === 'approved') {
-    /* Extiende plan_expires_at: si ya era pro y aún vigente, suma; si no, parte de hoy */
     const { data: prof } = await supabase
       .from('profiles').select('plan, plan_expires_at').eq('id', userId).single();
     const base = prof?.plan === 'pro' && prof?.plan_expires_at && new Date(prof.plan_expires_at) > new Date()
@@ -720,7 +700,6 @@ async function procesarPagoPlan(pago, userId) {
       plan_updated_at : new Date().toISOString(),
     }).eq('id', userId);
   } else if (status === 'refunded' || status === 'cancelled') {
-    /* Revoca el plan si el pago fue revertido */
     await supabase.from('profiles').update({
       plan: 'free', plan_expires_at: null, plan_updated_at: new Date().toISOString(),
     }).eq('id', userId);

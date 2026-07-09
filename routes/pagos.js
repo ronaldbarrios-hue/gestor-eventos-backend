@@ -332,6 +332,19 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   if (precioEfectivo <= 0)
     return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usá la reserva directa.' });
 
+  /* Validar campos personalizados del formulario */
+  const { data: camposReq } = await supabase
+    .from('event_form_fields').select('id, etiqueta, requerido').eq('evento_id', evento.id);
+  const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
+  for (const c of camposReq || []) {
+    if (c.requerido) {
+      const v = respuestas[c.id];
+      if (v === undefined || v === null || v === '') {
+        return res.status(400).json({ error: `El campo "${c.etiqueta}" es obligatorio.` });
+      }
+    }
+  }
+
   const codigo = generarCodigo();
   const { data: ticket, error: e3 } = await supabase
     .from('tickets')
@@ -342,6 +355,7 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
       guest_nombre  : nombre.trim(),
       codigo,
       estado        : 'emitido',
+      respuestas    : Object.keys(respuestas).length ? respuestas : null,
     })
     .select().single();
   if (e3) return res.status(500).json({ error: e3.message });

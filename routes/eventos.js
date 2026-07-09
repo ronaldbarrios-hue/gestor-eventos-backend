@@ -189,6 +189,82 @@ router.patch('/:id', async (req, res) => {
   res.json({ evento: data });
 });
 
+/* Helper: ¿puede este usuario editar el evento (owner o miembro con permiso)? */
+async function puedeEditarEvento(req, eventoId) {
+  const { data: ev } = await supabase
+    .from('eventos').select('id, owner_id').eq('id', eventoId).is('deleted_at', null).maybeSingle();
+  if (!ev) return { ok: false, status: 404, error: 'Evento no encontrado.' };
+  if (ev.owner_id === req.user.id) return { ok: true };
+
+  const { data: m } = await supabase
+    .from('event_members')
+    .select('custom_permissions, rol_detail:event_roles!rol_id(permissions)')
+    .eq('evento_id', eventoId).eq('user_id', req.user.id).eq('status', 'active')
+    .maybeSingle();
+  if (!m) return { ok: false, status: 403, error: 'No autorizado.' };
+
+  const perms = new Set([...(m.rol_detail?.permissions || []), ...(m.custom_permissions || [])]);
+  if (!perms.has('editar_evento')) return { ok: false, status: 403, error: 'Tu rol no puede editar este evento.' };
+  return { ok: true };
+}
+
+const TIPOS_CAMPO_VALIDOS = ['texto', 'numero', 'fecha', 'seleccion', 'checkbox'];
+
+/* GET /eventos/:id/formulario — campos personalizados del formulario de compra */
+router.get('/:id/formulario', async (req, res) => {
+  const permiso = await puedeEditarEvento(req, req.params.id);
+  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
+
+  const { data, error } = await supabase
+    .from('event_form_fields')
+    .select('id, tipo, etiqueta, opciones, requerido, orden')
+    .eq('evento_id', req.params.id)
+    .order('orden', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ campos: data });
+});
+
+/* PUT /eventos/:id/formulario — reemplaza la lista completa de campos personalizados.
+   Body: { campos: [{ tipo, etiqueta, opciones, requerido }, ...] } (sin id — se regeneran) */
+router.put('/:id/formulario', async (req, res) => {
+  const permiso = await puedeEditarEvento(req, req.params.id);
+  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
+
+  const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
+  if (campos.length > 20) return res.status(400).json({ error: 'Máximo 20 campos personalizados.' });
+
+  for (const c of campos) {
+    if (!c.etiqueta?.trim()) return res.status(400).json({ error: 'Cada campo necesita una etiqueta.' });
+    if (!TIPOS_CAMPO_VALIDOS.includes(c.tipo)) return res.status(400).json({ error: `Tipo de campo inválido: ${c.tipo}` });
+    if (c.tipo === 'seleccion' && (!Array.isArray(c.opciones) || c.opciones.length === 0)) {
+      return res.status(400).json({ error: `El campo "${c.etiqueta}" necesita al menos una opción.` });
+    }
+  }
+
+  const { error: eDel } = await supabase.from('event_form_fields').delete().eq('evento_id', req.params.id);
+  if (eDel) return res.status(500).json({ error: eDel.message });
+
+  if (campos.length === 0) return res.json({ campos: [] });
+
+  const filas = campos.map((c, i) => ({
+    evento_id: req.params.id,
+    tipo: c.tipo,
+    etiqueta: c.etiqueta.trim(),
+    opciones: c.tipo === 'seleccion' ? c.opciones : null,
+    requerido: Boolean(c.requerido),
+    orden: i,
+  }));
+
+  const { data, error } = await supabase
+    .from('event_form_fields')
+    .insert(filas)
+    .select('id, tipo, etiqueta, opciones, requerido, orden');
+  if (error) return res.status(500).json({ error: error.message });
+
+  auditar(req, req.params.id, 'evento.formulario.editar', { entidad: 'evento', entidadId: req.params.id, detalle: { total_campos: data.length } });
+  res.json({ campos: data });
+});
+
 /* DELETE /eventos/:id — soft delete */
 router.delete('/:id', async (req, res) => {
   const { data: actual } = await supabase

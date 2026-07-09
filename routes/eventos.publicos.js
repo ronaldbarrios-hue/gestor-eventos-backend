@@ -123,6 +123,13 @@ router.get('/slug/:slug', async (req, res) => {
     .filter(t => t.activo)
     .sort((a, b) => (a.orden || 0) - (b.orden || 0));
 
+  const { data: camposForm } = await supabase
+    .from('event_form_fields')
+    .select('id, tipo, etiqueta, opciones, requerido, orden')
+    .eq('evento_id', evento.id)
+    .order('orden', { ascending: true });
+  evento.campos_formulario = camposForm || [];
+
   if (evento.organizador) {
     const o = evento.organizador;
     o.plan = (o.plan === 'pro' && (!o.plan_expires_at || new Date(o.plan_expires_at) > new Date()))
@@ -199,6 +206,19 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     return res.status(400).json({ error: 'Este ticket requiere pago. Usá el flujo de checkout MP.' });
   }
 
+  /* Validar campos personalizados del formulario */
+  const { data: camposReq } = await supabase
+    .from('event_form_fields').select('id, etiqueta, requerido').eq('evento_id', evento.id);
+  const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
+  for (const c of camposReq || []) {
+    if (c.requerido) {
+      const v = respuestas[c.id];
+      if (v === undefined || v === null || v === '') {
+        return res.status(400).json({ error: `El campo "${c.etiqueta}" es obligatorio.` });
+      }
+    }
+  }
+
   const codigo = generarCodigo();
   const estado = esGratis ? 'pagado' : 'emitido';
 
@@ -213,6 +233,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
       estado,
       precio_pagado : esGratis ? 0 : null,
       pagado_at     : esGratis ? new Date().toISOString() : null,
+      respuestas    : Object.keys(respuestas).length ? respuestas : null,
     })
     .select()
     .single();

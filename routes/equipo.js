@@ -4,7 +4,7 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar } = require('../lib/notificar.js');
 const { auditar } = require('../lib/auditar.js');
 const { assertPermiso } = require('../lib/acceso.js');
-const { sendMail } = require('../lib/email.js');
+const { sendMail, plantillaInvitacionEquipo } = require('../lib/email.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -93,22 +93,17 @@ router.post('/:eventoId/equipo', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     const { data: ev } = await supabase
-      .from('eventos').select('titulo').eq('id', eventoId).maybeSingle();
+      .from('eventos').select('titulo, cover_url').eq('id', eventoId).maybeSingle();
 
     const resultEmail = await sendMail({
       to: email.toLowerCase(),
       subject: `Te invitaron al equipo de "${ev?.titulo || 'un evento'}" en GESTEK`,
-      html: `
-        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:40px 24px;background:#070C18;color:#E5E5E5;">
-          <h2 style="color:#F1F5F9;">¡Te sumaron a un equipo!</h2>
-          <p style="color:#94A3B8;">Fuiste invitado como <strong style="color:#F1F5F9;">${rol.nombre}</strong> en el evento <strong style="color:#F1F5F9;">${ev?.titulo || 'un evento'}</strong>.</p>
-          <a href="${process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app'}/eventos/${eventoId}"
-             style="display:inline-block;margin-top:24px;background:#fafafa;color:#0a0a0a;padding:13px 26px;border-radius:999px;text-decoration:none;font-weight:600;">
-            Ver el evento
-          </a>
-          <p style="font-size:12px;color:#71717A;margin-top:28px;">Enviado por GESTEK Event OS.</p>
-        </div>
-      `,
+      html: plantillaInvitacionEquipo({
+        eventoTitulo: ev?.titulo,
+        eventoCoverUrl: ev?.cover_url,
+        rolNombre: rol.nombre,
+        link: `${process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app'}/eventos/${eventoId}`,
+      }),
     });
     console.log('[equipo] email invitación resultado:', resultEmail);
 

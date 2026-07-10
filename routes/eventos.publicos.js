@@ -5,7 +5,7 @@ const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
-const { sendMail } = require('../lib/email.js');
+const { sendMail, plantillaTicket } = require('../lib/email.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -161,7 +161,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
 
   const { data: evento, error: e1 } = await supabase
     .from('eventos')
-    .select('id, owner_id, titulo, estado, deleted_at, aforo_total, aforo_vendido, pago_llave, pago_qr_url, pago_instrucciones')
+    .select('id, owner_id, titulo, cover_url, fecha_inicio, location_nombre, estado, deleted_at, aforo_total, aforo_vendido, pago_llave, pago_qr_url, pago_instrucciones')
     .eq('slug', slug).maybeSingle();
   if (e1) return res.status(500).json({ error: e1.message });
   if (!evento || evento.deleted_at || evento.estado !== 'publicado')
@@ -252,21 +252,17 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     sendMail({
       to: ticket.guest_email,
       subject: `Tu entrada para "${evento.titulo}" está confirmada`,
-      html: `
-        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:40px 24px;background:#070C18;color:#E5E5E5;">
-          <h2 style="color:#F1F5F9;">¡Reserva confirmada!</h2>
-          <p style="color:#94A3B8;">Hola ${ticket.guest_nombre || ''}, tu entrada para <strong style="color:#F1F5F9;">${evento.titulo}</strong> ya está lista.</p>
-          <div style="background:#0D1525;border:1px solid #1e293b;border-radius:16px;padding:18px;margin:24px 0;">
-            <p style="margin:0 0 6px;font-size:13px;color:#94A3B8;">Código de tu entrada</p>
-            <p style="margin:0;font-size:20px;font-weight:700;color:#F1F5F9;letter-spacing:.05em;">${ticket.codigo}</p>
-          </div>
-          <a href="${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${ticket.codigo}"
-             style="display:inline-block;background:#fafafa;color:#0a0a0a;padding:13px 26px;border-radius:999px;text-decoration:none;font-weight:600;">
-            Ver mi entrada
-          </a>
-          <p style="font-size:12px;color:#71717A;margin-top:28px;">Enviado por GESTEK Event OS.</p>
-        </div>
-      `,
+      html: plantillaTicket({
+        eventoTitulo: evento.titulo,
+        eventoCoverUrl: evento.cover_url,
+        eventoFecha: evento.fecha_inicio,
+        eventoLugar: evento.location_nombre,
+        nombre: ticket.guest_nombre,
+        codigo: ticket.codigo,
+        tipoNombre: tipo.nombre,
+        linkTicket: `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${ticket.codigo}`,
+        gratis: true,
+      }),
     }).then(r => console.log('[reservar] email confirmación resultado:', r));
   }
 

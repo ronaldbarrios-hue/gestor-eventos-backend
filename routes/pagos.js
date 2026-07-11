@@ -471,7 +471,7 @@ async function procesarPago(pago) {
       .eq('id', ticket.evento_id).single();
     const { data: tFull } = await supabase
       .from('tickets')
-      .select('codigo, guest_nombre, guest_email, ticket_type_id')
+      .select('codigo, guest_nombre, guest_email, ticket_type_id, qr_token')
       .eq('id', ticketId).single();
     let tipoNombre = null;
     if (tFull?.ticket_type_id) {
@@ -497,6 +497,7 @@ async function procesarPago(pago) {
           eventoLugar: evWh?.location_nombre,
           nombre: tFull.guest_nombre,
           codigo: tFull.codigo,
+          qrToken: tFull.qr_token,
           tipoNombre,
           linkTicket: `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${tFull.codigo}`,
           gratis: false,

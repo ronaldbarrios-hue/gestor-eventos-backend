@@ -259,6 +259,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
         eventoLugar: evento.location_nombre,
         nombre: ticket.guest_nombre,
         codigo: ticket.codigo,
+        qrToken: ticket.qr_token,
         tipoNombre: tipo.nombre,
         linkTicket: `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${ticket.codigo}`,
         gratis: true,

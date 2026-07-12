@@ -167,40 +167,10 @@ router.delete('/:eventoId/equipo/:miembroId', async (req, res) => {
   }
 });
 
-/* GET /eventos/invitacion-pendiente?email=... — verifica si un email tiene
-   una invitación de equipo pendiente (sin cuenta creada aún). Público, sin auth,
-   porque se usa desde el formulario de registro antes de tener sesión. */
-router.get('/invitacion-pendiente', async (req, res) => {
-  const email = (req.query.email || '').toLowerCase().trim();
-  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Email inválido.' });
-
-  const { data, error } = await supabase
-    .from('event_members')
-    .select(`
-      id, rol, evento_id,
-      evento:eventos!evento_id(id, titulo)
-    `)
-    .eq('email', email)
-    .eq('status', 'invited')
-    .order('invited_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.json({ invitado: false });
-
-  res.json({
-    invitado: true,
-    rol: data.rol,
-    eventoId: data.evento_id,
-    eventoTitulo: data.evento?.titulo || null,
-  });
-});
-
 /* POST /eventos/vincular-invitaciones — vincula todas las invitaciones pendientes
    de este usuario recién autenticado (por email) a su cuenta nueva, marcándolas
    como aceptadas. Se llama justo después de registro/login exitoso. */
-router.post('/vincular-invitaciones', verifySupabaseJWT, async (req, res) => {
+router.post('/vincular-invitaciones', async (req, res) => {
   const email = (req.user.email || '').toLowerCase().trim();
   if (!email) return res.json({ vinculadas: 0 });
 

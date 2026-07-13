@@ -5,6 +5,7 @@ const express = require('express');
 const Sentry  = require('@sentry/node');
 const env     = require('./config/env.js');
 const { applySecurity, authLimiter } = require('./config/security.js');
+const { iniciarCronRecordatorios } = require('./lib/recordatorios.js');
 
 const app = express();
 
@@ -118,6 +119,8 @@ function listarRutas() {
   walk(app._router?.stack || app.router?.stack || []);
   return rutas;
 }
+
+iniciarCronRecordatorios();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

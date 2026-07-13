@@ -169,19 +169,26 @@ router.delete('/:eventoId/equipo/:miembroId', async (req, res) => {
 
 /* POST /eventos/vincular-invitaciones — vincula todas las invitaciones pendientes
    de este usuario recién autenticado (por email) a su cuenta nueva, marcándolas
-   como aceptadas. Se llama justo después de registro/login exitoso. */
+   como aceptadas. Se llama justo después de registro/login exitoso.
+   Devuelve rol y título del evento de la primera invitación (la más reciente),
+   para que el frontend pueda mostrar el mensaje de bienvenida sin tener que
+   volver a consultar por separado (evita condición de carrera con el status). */
 router.post('/vincular-invitaciones', async (req, res) => {
   const email = (req.user.email || '').toLowerCase().trim();
-  if (!email) return res.json({ vinculadas: 0 });
+  if (!email) return res.json({ vinculadas: 0, invitaciones: [] });
 
   const { data: pendientes, error: e1 } = await supabase
     .from('event_members')
-    .select('id, evento_id')
+    .select(`
+      id, evento_id, rol,
+      evento:eventos!evento_id(id, titulo)
+    `)
     .eq('email', email)
     .eq('status', 'invited')
-    .is('user_id', null);
+    .is('user_id', null)
+    .order('invited_at', { ascending: false });
   if (e1) return res.status(500).json({ error: e1.message });
-  if (!pendientes || pendientes.length === 0) return res.json({ vinculadas: 0 });
+  if (!pendientes || pendientes.length === 0) return res.json({ vinculadas: 0, invitaciones: [] });
 
   const { error: e2 } = await supabase
     .from('event_members')
@@ -191,7 +198,14 @@ router.post('/vincular-invitaciones', async (req, res) => {
     .is('user_id', null);
   if (e2) return res.status(500).json({ error: e2.message });
 
-  res.json({ vinculadas: pendientes.length, eventos: pendientes.map(p => p.evento_id) });
+  res.json({
+    vinculadas: pendientes.length,
+    invitaciones: pendientes.map(p => ({
+      eventoId: p.evento_id,
+      rol: p.rol,
+      eventoTitulo: p.evento?.titulo || null,
+    })),
+  });
 });
 
 module.exports = router;

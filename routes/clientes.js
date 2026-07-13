@@ -53,7 +53,7 @@ router.get('/:eventoId/clientes', async (req, res) => {
       .from('tickets')
       .select(`
         id, codigo, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, created_at,
-        guest_email, guest_nombre,
+        guest_email, guest_nombre, respuestas,
         usuario:profiles!user_id(id, nombre, email, avatar_url),
         tipo:ticket_types!ticket_type_id(id, nombre, precio, currency)
       `, { count: 'exact' })

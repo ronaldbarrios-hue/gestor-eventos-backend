@@ -72,7 +72,11 @@ function generarCodigo() {
   return code;
 }
 
-/* GET /eventos/publicos/ticket/:codigo */
+/* GET /eventos/publicos/ticket/:codigo
+   Incluye `respuestas` (del formulario personalizado, si ya se llenaron) y
+   `evento.campos_formulario` (para saber qué preguntas hacen falta) —
+   así el frontend puede detectar si a esta boleta le falta el formulario
+   (por ejemplo, justo después de una transferencia). */
 router.get('/ticket/:codigo', async (req, res) => {
   const codigo = req.params.codigo.toUpperCase().trim();
   if (!codigo || codigo.length < 4) return res.status(400).json({ error: 'Código inválido.' });
@@ -80,7 +84,7 @@ router.get('/ticket/:codigo', async (req, res) => {
   const { data, error } = await supabase
     .from('tickets')
     .select(`
-      id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at,
+      id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
       guest_nombre, guest_email,
       tipo:ticket_types!ticket_type_id(nombre, descripcion, currency),
       evento:eventos!evento_id(id, slug, titulo, fecha_inicio, location_nombre, cover_url)
@@ -90,7 +94,58 @@ router.get('/ticket/:codigo', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Boleta no encontrada.' });
+
+  if (data.evento?.id) {
+    const { data: campos } = await supabase
+      .from('event_form_fields')
+      .select('id, tipo, etiqueta, opciones, requerido, orden')
+      .eq('evento_id', data.evento.id)
+      .order('orden', { ascending: true });
+    data.evento.campos_formulario = campos || [];
+  }
+
   res.json({ ticket: data });
+});
+
+/* POST /eventos/publicos/ticket/:codigo/formulario — completa las respuestas
+   del formulario personalizado de UNA boleta ya existente. Se usa cuando la
+   boleta no tiene respuestas todavía (por ejemplo, justo después de que se
+   transfirió a otra persona y quedaron limpias a propósito). No se puede
+   usar para sobrescribir respuestas que ya existan. */
+router.post('/ticket/:codigo/formulario', async (req, res) => {
+  const codigo = req.params.codigo.toUpperCase().trim();
+  const respuestas = req.body?.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
+
+  const { data: ticket, error: e1 } = await supabase
+    .from('tickets')
+    .select('id, evento_id, respuestas')
+    .eq('codigo', codigo)
+    .maybeSingle();
+  if (e1) return res.status(500).json({ error: e1.message });
+  if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.' });
+  if (ticket.respuestas) return res.status(400).json({ error: 'Esta boleta ya tiene el formulario completado.' });
+
+  const { data: campos } = await supabase
+    .from('event_form_fields')
+    .select('id, etiqueta, requerido')
+    .eq('evento_id', ticket.evento_id);
+
+  for (const c of campos || []) {
+    if (c.requerido) {
+      const v = respuestas[c.id];
+      if (v === undefined || v === null || v === '' || v === false) {
+        return res.status(400).json({ error: `El campo "${c.etiqueta}" es obligatorio.` });
+      }
+    }
+  }
+
+  const { error: e2 } = await supabase
+    .from('tickets')
+    .update({ respuestas: Object.keys(respuestas).length ? respuestas : {} })
+    .eq('id', ticket.id);
+  if (e2) return res.status(500).json({ error: e2.message });
+
+  res.json({ ok: true });
 });
 
 /* GET /eventos/publicos/slug/:slug */

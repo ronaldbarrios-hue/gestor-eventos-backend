@@ -224,8 +224,17 @@ router.get('/:id/formulario', async (req, res) => {
   res.json({ campos: data });
 });
 
-/* PUT /eventos/:id/formulario — reemplaza la lista completa de campos personalizados.
-   Body: { campos: [{ tipo, etiqueta, opciones, requerido }, ...] } (sin id — se regeneran) */
+/* PUT /eventos/:id/formulario — guarda la lista de campos personalizados.
+   Body: { campos: [{ id?, tipo, etiqueta, opciones, requerido }, ...] }
+   IMPORTANTE: a diferencia de la versión anterior (que borraba todo y
+   recreaba con IDs nuevos cada vez), esta versión hace un "diff":
+   - Campos que ya traen `id` y siguen en la lista → se ACTUALIZAN in-place,
+     conservando su ID original.
+   - Campos sin `id` (nuevos, agregados en el frontend) → se INSERTAN.
+   - Campos que existían en la base pero ya no vienen en la lista → se BORRAN.
+   Esto evita que las respuestas ya guardadas en boletas existentes queden
+   "huérfanas" (mostrando "Pregunta eliminada") cada vez que el organizador
+   solo reordena o edita ligeramente el formulario. */
 router.put('/:id/formulario', async (req, res) => {
   const permiso = await puedeEditarEvento(req, req.params.id);
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
@@ -241,28 +250,66 @@ router.put('/:id/formulario', async (req, res) => {
     }
   }
 
-  const { error: eDel } = await supabase.from('event_form_fields').delete().eq('evento_id', req.params.id);
-  if (eDel) return res.status(500).json({ error: eDel.message });
-
-  if (campos.length === 0) return res.json({ campos: [] });
-
-  const filas = campos.map((c, i) => ({
-    evento_id: req.params.id,
-    tipo: c.tipo,
-    etiqueta: c.etiqueta.trim(),
-    opciones: c.tipo === 'seleccion' ? c.opciones : null,
-    requerido: Boolean(c.requerido),
-    orden: i,
-  }));
-
-  const { data, error } = await supabase
+  const { data: existentes, error: eGet } = await supabase
     .from('event_form_fields')
-    .insert(filas)
-    .select('id, tipo, etiqueta, opciones, requerido, orden');
-  if (error) return res.status(500).json({ error: error.message });
+    .select('id')
+    .eq('evento_id', req.params.id);
+  if (eGet) return res.status(500).json({ error: eGet.message });
 
-  auditar(req, req.params.id, 'evento.formulario.editar', { entidad: 'evento', entidadId: req.params.id, detalle: { total_campos: data.length } });
-  res.json({ campos: data });
+  const idsExistentes = new Set((existentes || []).map(c => c.id));
+  const idsEnviados = new Set(campos.filter(c => c.id && idsExistentes.has(c.id)).map(c => c.id));
+
+  /* 1) Borrar los que ya no vienen en la lista */
+  const idsABorrar = [...idsExistentes].filter(id => !idsEnviados.has(id));
+  if (idsABorrar.length > 0) {
+    const { error: eDel } = await supabase.from('event_form_fields').delete().in('id', idsABorrar);
+    if (eDel) return res.status(500).json({ error: eDel.message });
+  }
+
+  /* 2) Actualizar los que conservan su id (mantiene el vínculo con respuestas ya guardadas) */
+  for (let i = 0; i < campos.length; i++) {
+    const c = campos[i];
+    if (c.id && idsExistentes.has(c.id)) {
+      const { error: eUpd } = await supabase
+        .from('event_form_fields')
+        .update({
+          tipo: c.tipo,
+          etiqueta: c.etiqueta.trim(),
+          opciones: c.tipo === 'seleccion' ? c.opciones : null,
+          requerido: Boolean(c.requerido),
+          orden: i,
+        })
+        .eq('id', c.id);
+      if (eUpd) return res.status(500).json({ error: eUpd.message });
+    }
+  }
+
+  /* 3) Insertar los nuevos (sin id, o con id que ya no existe) */
+  const nuevos = campos
+    .map((c, i) => ({ ...c, _orden: i }))
+    .filter(c => !c.id || !idsExistentes.has(c.id));
+  if (nuevos.length > 0) {
+    const filas = nuevos.map(c => ({
+      evento_id: req.params.id,
+      tipo: c.tipo,
+      etiqueta: c.etiqueta.trim(),
+      opciones: c.tipo === 'seleccion' ? c.opciones : null,
+      requerido: Boolean(c.requerido),
+      orden: c._orden,
+    }));
+    const { error: eIns } = await supabase.from('event_form_fields').insert(filas);
+    if (eIns) return res.status(500).json({ error: eIns.message });
+  }
+
+  const { data: final, error: eFinal } = await supabase
+    .from('event_form_fields')
+    .select('id, tipo, etiqueta, opciones, requerido, orden')
+    .eq('evento_id', req.params.id)
+    .order('orden', { ascending: true });
+  if (eFinal) return res.status(500).json({ error: eFinal.message });
+
+  auditar(req, req.params.id, 'evento.formulario.editar', { entidad: 'evento', entidadId: req.params.id, detalle: { total_campos: final.length } });
+  res.json({ campos: final });
 });
 
 /* DELETE /eventos/:id — soft delete */

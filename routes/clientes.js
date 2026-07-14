@@ -82,10 +82,20 @@ router.get('/:eventoId/clientes', async (req, res) => {
       return acc;
     }, { total: 0, ingresos: 0 });
 
+    /* Campos del formulario personalizado (id + etiqueta), para que el
+       frontend pueda "traducir" las claves de `respuestas` (que se guardan
+       por id de campo) a su texto real en vez de mostrar el UUID crudo. */
+    const { data: camposForm } = await supabase
+      .from('event_form_fields')
+      .select('id, etiqueta, tipo, orden')
+      .eq('evento_id', eventoId)
+      .order('orden', { ascending: true });
+
     res.json({
       clientes: data || [],
       total: count ?? 0,
       stats,
+      campos_formulario: camposForm || [],
     });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });

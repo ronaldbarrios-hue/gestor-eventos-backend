@@ -1,312 +1,292 @@
 const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
-const { slugify, uniqueEventoSlug } = require('../lib/slug.js');
-const { otorgarBadge } = require('../lib/gamificacion.js');
-const { auditar } = require('../lib/auditar.js');
-const { esUrlImagenSegura } = require('../lib/urls.js');
+const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
+const { otorgarPuntos, otorgarBadge } = require('../lib/gamificacion.js');
 const { dispatch } = require('../lib/webhooks.js');
+const { assertPermiso } = require('../lib/acceso.js');
+
+function generarCodigo() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-const CAMPOS_EDITABLES = [
-  'titulo', 'descripcion', 'cover_url', 'modalidad',
-  'fecha_inicio', 'fecha_fin', 'timezone',
-  'location_nombre', 'location_direccion', 'lat', 'lng', 'url_virtual',
-  'links', 'gallery',
-  'currency', 'edad_minima', 'aforo_total',
-  'categoria_id', 'page_json', 'email_reminders',
-  'pago_llave', 'pago_qr_url', 'pago_instrucciones',
-];
+/* Owner o miembro con permiso. Por defecto 'gestionar_clientes'
+   (editar/importar); el listado acepta también 'ver_clientes'. */
+function assertOwner(eventoId, userId, perms = ['gestionar_clientes']) {
+  return assertPermiso(eventoId, userId, perms, 'id, owner_id');
+}
 
-const ESTADOS_VALIDOS = ['borrador', 'publicado', 'cancelado', 'finalizado'];
+/* Verifica que el usuario es owner O miembro con permiso 'checkin'. */
+async function assertCheckinAccess(eventoId, userId) {
+  const { data: ev } = await supabase
+    .from('eventos').select('id, owner_id').eq('id', eventoId).maybeSingle();
+  if (!ev) throw new Error('Evento no encontrado.');
+  if (ev.owner_id === userId) return ev;
 
-/* GET /eventos — lista de mis eventos + eventos donde soy miembro activo */
-router.get('/', async (req, res) => {
-  const { q, estado, modalidad, page = 1, limit = 20 } = req.query;
+  const { data: m } = await supabase
+    .from('event_members')
+    .select('id, rol_detail:event_roles!rol_id(permissions)')
+    .eq('evento_id', eventoId).eq('user_id', userId).eq('status', 'active')
+    .maybeSingle();
+  const permisos = m?.rol_detail?.permissions || [];
+  if (!permisos.includes('checkin')) throw new Error('No autorizado.');
+  return ev;
+}
+
+/* GET /eventos/:eventoId/clientes — listar tickets emitidos del evento */
+router.get('/:eventoId/clientes', async (req, res) => {
+  const { eventoId } = req.params;
+  const { q, estado, ticket_type_id, limit = 100, page = 1 } = req.query;
   const desde = (Number(page) - 1) * Number(limit);
   const hasta = desde + Number(limit) - 1;
 
-  const { data: memberships } = await supabase
-    .from('event_members')
-    .select('evento_id')
-    .eq('user_id', req.user.id)
-    .eq('status', 'active');
+  try {
+    await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);
 
-  const memberEventIds = (memberships || []).map(m => m.evento_id);
+    let query = supabase
+      .from('tickets')
+      .select(`
+        id, codigo, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, created_at,
+        guest_email, guest_nombre, respuestas,
+        usuario:profiles!user_id(id, nombre, email, avatar_url),
+        tipo:ticket_types!ticket_type_id(id, nombre, precio, currency)
+      `, { count: 'exact' })
+      .eq('evento_id', eventoId)
+      .order('created_at', { ascending: false })
+      .range(desde, hasta);
 
-  let query = supabase
-    .from('eventos')
-    .select('*, categoria:categorias(slug, nombre)', { count: 'exact' })
-    .or(`owner_id.eq.${req.user.id}${memberEventIds.length ? `,id.in.(${memberEventIds.join(',')})` : ''}`)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .range(desde, hasta);
+    if (estado)         query = query.eq('estado', estado);
+    if (ticket_type_id) query = query.eq('ticket_type_id', ticket_type_id);
+    if (q) {
+      /* Búsqueda en email o nombre del invitado */
+      query = query.or(`guest_email.ilike.%${q}%,guest_nombre.ilike.%${q}%,codigo.ilike.%${q}%`);
+    }
 
-  if (q)         query = query.ilike('titulo', `%${q}%`);
-  if (estado)    query = query.eq('estado', estado);
-  if (modalidad) query = query.eq('modalidad', modalidad);
+    const { data, count, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
 
-  const { data, error, count } = await query;
-  if (error) return res.status(500).json({ error: error.message });
+    /* Stats agregados */
+    const { data: all } = await supabase
+      .from('tickets').select('estado, precio_pagado').eq('evento_id', eventoId);
 
-  const memberSet = new Set(memberEventIds);
-  const eventos = (data || []).map(e => ({
-    ...e,
-    soyOwner: String(e.owner_id) === String(req.user.id),
-    esMiembro: memberSet.has(e.id),
-  }));
+    const stats = (all || []).reduce((acc, t) => {
+      acc.total++;
+      acc[t.estado] = (acc[t.estado] || 0) + 1;
+      acc.ingresos += Number(t.precio_pagado) || 0;
+      return acc;
+    }, { total: 0, ingresos: 0 });
 
-  res.json({ eventos, total: count ?? 0 });
-});
+    /* Campos del formulario personalizado (id + etiqueta), para que el
+       frontend pueda "traducir" las claves de `respuestas` (que se guardan
+       por id de campo) a su texto real en vez de mostrar el UUID crudo. */
+    const { data: camposForm } = await supabase
+      .from('event_form_fields')
+      .select('id, etiqueta, tipo, orden')
+      .eq('evento_id', eventoId)
+      .order('orden', { ascending: true });
 
-/* GET /eventos/:id — evento del owner O de un miembro activo */
-router.get('/:id', async (req, res) => {
-  const { data, error } = await supabase
-    .from('eventos')
-    .select('*, categoria:categorias(slug, nombre)')
-    .eq('id', req.params.id)
-    .is('deleted_at', null)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Evento no encontrado.' });
-
-  if (String(data.owner_id) === String(req.user.id)) {
-    return res.json({ evento: data, soyOwner: true, permisos: ['*'] });
-  }
-
-  const { data: m } = await supabase
-    .from('event_members')
-    .select('custom_permissions, rol, rol_detail:event_roles!rol_id(permissions)')
-    .eq('evento_id', data.id)
-    .eq('user_id', req.user.id)
-    .eq('status', 'active')
-    .maybeSingle();
-  if (!m) return res.status(404).json({ error: 'Evento no encontrado.' });
-
-  const permisos = [...new Set([
-    ...(m.rol_detail?.permissions || []),
-    ...(m.custom_permissions || []),
-  ])];
-  res.json({ evento: data, soyOwner: false, mi_rol: m.rol, permisos });
-});
-
-/* POST /eventos — crear */
-router.post('/', async (req, res) => {
-  const { titulo, fecha_inicio } = req.body;
-  if (!titulo)       return res.status(400).json({ error: 'titulo requerido.' });
-  if (!fecha_inicio) return res.status(400).json({ error: 'fecha_inicio requerida.' });
-
-  const insert = { owner_id: req.user.id, estado: 'borrador' };
-  for (const k of CAMPOS_EDITABLES) {
-    if (k in req.body) insert[k] = req.body[k];
-  }
-  insert.slug = await uniqueEventoSlug(supabase, req.body.slug || titulo);
-
-  const { data, error } = await supabase
-    .from('eventos')
-    .insert(insert)
-    .select('*, categoria:categorias(slug, nombre)')
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-
-  supabase.from('eventos').select('id', { count: 'exact', head: true })
-    .eq('owner_id', req.user.id).is('deleted_at', null)
-    .then(({ count }) => {
-      if ((count || 0) >= 1) otorgarBadge(req.user.id, 'primer_evento');
-      if ((count || 0) >= 5) otorgarBadge(req.user.id, 'organizador_pro');
+    res.json({
+      clientes: data || [],
+      total: count ?? 0,
+      stats,
+      campos_formulario: camposForm || [],
     });
-
-  auditar(req, data.id, 'evento.crear', { entidad: 'evento', entidadId: data.id, detalle: { titulo: data.titulo } });
-  res.status(201).json({ evento: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
 });
 
-/* PATCH /eventos/:id — editar */
-router.patch('/:id', async (req, res) => {
-  const { data: actual, error: e1 } = await supabase
-    .from('eventos')
-    .select('id, owner_id, slug, titulo')
-    .eq('id', req.params.id)
-    .is('deleted_at', null)
-    .maybeSingle();
-  if (e1) return res.status(500).json({ error: e1.message });
-  if (!actual) return res.status(404).json({ error: 'Evento no encontrado.' });
+/* PATCH /eventos/:eventoId/clientes/:ticketId — cambiar estado (anular, marcar pagado, etc) */
+router.patch('/:eventoId/clientes/:ticketId', async (req, res) => {
+  const { eventoId, ticketId } = req.params;
+  const ESTADOS = ['emitido', 'pagado', 'usado', 'reembolsado', 'invalido'];
+  const { estado } = req.body;
+  if (!ESTADOS.includes(estado)) return res.status(400).json({ error: 'Estado inválido.' });
 
-  let camposPermitidos = null;
-  if (actual.owner_id !== req.user.id) {
-    const { data: m } = await supabase
-      .from('event_members')
-      .select('custom_permissions, rol_detail:event_roles!rol_id(permissions)')
-      .eq('evento_id', actual.id).eq('user_id', req.user.id).eq('status', 'active')
-      .maybeSingle();
-    if (!m) return res.status(403).json({ error: 'No autorizado.' });
+  try {
+    await assertOwner(eventoId, req.user.id);
+    const { data, error } = await supabase
+      .from('tickets').update({ estado })
+      .eq('id', ticketId).eq('evento_id', eventoId)
+      .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ticket: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
 
-    const perms = new Set([
-      ...(m.rol_detail?.permissions || []),
-      ...(m.custom_permissions || []),
-    ]);
-    camposPermitidos = new Set();
-    if (perms.has('editar_pagina_publica')) camposPermitidos.add('page_json');
-    if (perms.has('gestionar_imagenes')) { camposPermitidos.add('cover_url'); camposPermitidos.add('gallery'); }
-    if (perms.has('editar_evento')) {
-      for (const c of CAMPOS_EDITABLES) {
-        if (!c.startsWith('pago_') && c !== 'page_json') camposPermitidos.add(c);
+/* POST /eventos/:eventoId/clientes/importar — import masivo desde CSV.
+   Body: { ticket_type_id, marcar_pagado, rows: [{ nombre, email, telefono? }] }
+   Crea N tickets en estado 'pagado' (si marcar_pagado=true) o 'emitido'.
+   Genera codigo + qr_token para cada uno. Reporta éxitos y errores fila por fila. */
+router.post('/:eventoId/clientes/importar', async (req, res) => {
+  const { eventoId } = req.params;
+  const { ticket_type_id, marcar_pagado, rows } = req.body;
+
+  if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona el tipo de boleta para los importados.' });
+  if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No hay filas para importar.' });
+  if (rows.length > 1000) return res.status(400).json({ error: 'Máximo 1000 filas por import. Divide el archivo.' });
+
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const { data: tipo, error: et } = await supabase
+      .from('ticket_types').select('*').eq('id', ticket_type_id).eq('evento_id', eventoId).maybeSingle();
+    if (et) return res.status(500).json({ error: et.message });
+    if (!tipo) return res.status(404).json({ error: 'Tipo de boleta no encontrado.' });
+
+    /* Emails ya existentes para no duplicar */
+    const emails = rows.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean);
+    const { data: existentes } = await supabase
+      .from('tickets').select('guest_email')
+      .eq('evento_id', eventoId)
+      .in('guest_email', emails);
+    const dup = new Set((existentes || []).map(r => r.guest_email));
+
+    const ok = [];
+    const errores = [];
+    const estado = marcar_pagado ? 'pagado' : 'emitido';
+    const precio_efectivo = marcar_pagado ? Number(tipo.precio) : null;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const email = (r.email || '').toLowerCase().trim();
+      const nombre = (r.nombre || '').trim();
+      if (!email || !email.includes('@')) { errores.push({ fila: i + 1, motivo: 'Email inválido.', row: r }); continue; }
+      if (!nombre)                         { errores.push({ fila: i + 1, motivo: 'Nombre vacío.',    row: r }); continue; }
+      if (dup.has(email))                  { errores.push({ fila: i + 1, motivo: 'Ya existe ticket con ese email.', row: r }); continue; }
+
+      const codigo = generarCodigo();
+      const { data: ticket, error: ei } = await supabase
+        .from('tickets').insert({
+          evento_id: eventoId,
+          ticket_type_id: tipo.id,
+          guest_email: email,
+          guest_nombre: nombre,
+          codigo,
+          estado,
+          precio_pagado: precio_efectivo,
+          pagado_at: marcar_pagado ? new Date().toISOString() : null,
+        }).select('id, codigo').single();
+      if (ei) { errores.push({ fila: i + 1, motivo: ei.message, row: r }); continue; }
+
+      const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: eventoId, codigo: ticket.codigo });
+      await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
+      dup.add(email);
+      ok.push({ fila: i + 1, codigo, email });
+    }
+
+    /* Bumpear contadores best-effort */
+    if (ok.length > 0) {
+      await supabase.from('ticket_types').update({ vendidos: (tipo.vendidos || 0) + ok.length }).eq('id', tipo.id);
+      if (marcar_pagado) {
+        const { data: ev } = await supabase.from('eventos').select('aforo_vendido').eq('id', eventoId).single();
+        if (ev) await supabase.from('eventos').update({ aforo_vendido: (ev.aforo_vendido || 0) + ok.length }).eq('id', eventoId);
       }
     }
-    if (camposPermitidos.size === 0) {
-      return res.status(403).json({ error: 'Tu rol no puede editar este evento.' });
+
+    res.json({ creados: ok.length, errores, ok });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* POST /eventos/:eventoId/checkin — validar QR o código y marcar 'usado'.
+   Body: { qr_token } o { codigo }
+   Owner siempre puede. Miembros del equipo necesitan permiso 'checkin'. */
+router.post('/:eventoId/checkin', async (req, res) => {
+  const { eventoId } = req.params;
+  const { qr_token, codigo } = req.body;
+  if (!qr_token && !codigo) return res.status(400).json({ error: 'qr_token o codigo requerido.' });
+
+  try {
+    const evCtx = await assertCheckinAccess(eventoId, req.user.id);
+
+    /* Resolver el ticket: por qr_token (verificar firma) o por código corto */
+    let ticketQuery;
+    if (qr_token) {
+      const r = verifyTicketQR(qr_token);
+      if (!r.ok) return res.status(400).json({ error: 'QR inválido.', detalle: r.error });
+      if (r.evento_id !== eventoId) return res.status(400).json({ error: 'Este QR es de otro evento.' });
+      ticketQuery = supabase.from('tickets').select(`*, tipo:ticket_types!ticket_type_id(nombre)`).eq('id', r.ticket_id).maybeSingle();
+    } else {
+      ticketQuery = supabase.from('tickets').select(`*, tipo:ticket_types!ticket_type_id(nombre)`).eq('codigo', codigo.toUpperCase().trim()).eq('evento_id', eventoId).maybeSingle();
     }
-  }
 
-  const puede = (k) => camposPermitidos === null || camposPermitidos.has(k);
-  const updates = {};
-  for (const k of CAMPOS_EDITABLES) {
-    if (k in req.body && puede(k)) updates[k] = req.body[k];
-  }
+    const { data: ticket, error: e1 } = await ticketQuery;
+    if (e1) return res.status(500).json({ error: e1.message });
+    if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.', sound: 'error' });
+    if (ticket.evento_id !== eventoId) return res.status(400).json({ error: 'Boleta de otro evento.', sound: 'error' });
 
-  if (camposPermitidos === null && req.body.slug && req.body.slug !== actual.slug) {
-    updates.slug = await uniqueEventoSlug(supabase, req.body.slug);
-  }
-  if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: 'Sin cambios.' });
-  }
-
-  for (const campo of ['cover_url', 'pago_qr_url']) {
-    if (campo in updates && !esUrlImagenSegura(updates[campo])) {
-      return res.status(400).json({ error: `URL inválida en ${campo}.` });
+    /* Reglas */
+    if (ticket.estado === 'invalido' || ticket.estado === 'reembolsado') {
+      return res.status(400).json({ error: `Boleta ${ticket.estado}.`, ticket, sound: 'error' });
     }
-  }
-
-  const { data, error } = await supabase
-    .from('eventos')
-    .update(updates)
-    .eq('id', req.params.id)
-    .select('*, categoria:categorias(slug, nombre)')
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-
-  auditar(req, data.id, 'evento.editar', { entidad: 'evento', entidadId: data.id, detalle: { campos: Object.keys(updates) } });
-  res.json({ evento: data });
-});
-
-/* Helper: ¿puede este usuario editar el evento (owner o miembro con permiso)? */
-async function puedeEditarEvento(req, eventoId) {
-  const { data: ev } = await supabase
-    .from('eventos').select('id, owner_id').eq('id', eventoId).is('deleted_at', null).maybeSingle();
-  if (!ev) return { ok: false, status: 404, error: 'Evento no encontrado.' };
-  if (ev.owner_id === req.user.id) return { ok: true };
-
-  const { data: m } = await supabase
-    .from('event_members')
-    .select('custom_permissions, rol_detail:event_roles!rol_id(permissions)')
-    .eq('evento_id', eventoId).eq('user_id', req.user.id).eq('status', 'active')
-    .maybeSingle();
-  if (!m) return { ok: false, status: 403, error: 'No autorizado.' };
-
-  const perms = new Set([...(m.rol_detail?.permissions || []), ...(m.custom_permissions || [])]);
-  if (!perms.has('editar_evento')) return { ok: false, status: 403, error: 'Tu rol no puede editar este evento.' };
-  return { ok: true };
-}
-
-const TIPOS_CAMPO_VALIDOS = ['texto', 'numero', 'fecha', 'seleccion', 'checkbox'];
-
-/* GET /eventos/:id/formulario — campos personalizados del formulario de compra */
-router.get('/:id/formulario', async (req, res) => {
-  const permiso = await puedeEditarEvento(req, req.params.id);
-  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
-
-  const { data, error } = await supabase
-    .from('event_form_fields')
-    .select('id, tipo, etiqueta, opciones, requerido, orden')
-    .eq('evento_id', req.params.id)
-    .order('orden', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ campos: data });
-});
-
-/* PUT /eventos/:id/formulario — reemplaza la lista completa de campos personalizados.
-   Body: { campos: [{ tipo, etiqueta, opciones, requerido }, ...] } (sin id — se regeneran) */
-router.put('/:id/formulario', async (req, res) => {
-  const permiso = await puedeEditarEvento(req, req.params.id);
-  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
-
-  const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
-  if (campos.length > 20) return res.status(400).json({ error: 'Máximo 20 campos personalizados.' });
-
-  for (const c of campos) {
-    if (!c.etiqueta?.trim()) return res.status(400).json({ error: 'Cada campo necesita una etiqueta.' });
-    if (!TIPOS_CAMPO_VALIDOS.includes(c.tipo)) return res.status(400).json({ error: `Tipo de campo inválido: ${c.tipo}` });
-    if (c.tipo === 'seleccion' && (!Array.isArray(c.opciones) || c.opciones.length === 0)) {
-      return res.status(400).json({ error: `El campo "${c.etiqueta}" necesita al menos una opción.` });
+    if (ticket.estado === 'usado') {
+      return res.status(409).json({
+        error: 'Esta boleta ya fue usada.',
+        ticket,
+        sound: 'error',
+        ya_usada: true,
+        checked_in_at: ticket.checked_in_at,
+      });
     }
+    /* estado 'emitido' (pago pendiente) — depende. Aceptamos pero advertimos. */
+    const advertencia = ticket.estado === 'emitido' ? 'Boleta emitida sin pago confirmado.' : null;
+
+    const { data: updated, error: e2 } = await supabase
+      .from('tickets')
+      .update({ estado: 'usado', checked_in_at: new Date().toISOString() })
+      .eq('id', ticket.id)
+      .select(`*, tipo:ticket_types!ticket_type_id(nombre)`)
+      .single();
+    if (e2) return res.status(500).json({ error: e2.message });
+
+    /* Gamificación escopada por organizador (best-effort) */
+    const organizadorId = evCtx?.owner_id;
+    if (organizadorId) {
+      /* Cliente con cuenta: acumula puntos de fidelidad con este organizador */
+      if (updated.user_id) {
+        otorgarPuntos({
+          userId: updated.user_id, organizadorId, audiencia: 'cliente',
+          eventoId, accion: 'asistencia',
+        }).then(async () => {
+          /* Badge "fiel": 5+ asistencias al mismo organizador */
+          const { count } = await supabase
+            .from('points_log').select('id', { count: 'exact', head: true })
+            .eq('user_id', updated.user_id).eq('organizador_id', organizadorId)
+            .eq('audiencia', 'cliente').eq('accion', 'asistencia');
+          if ((count || 0) >= 5) otorgarBadge(updated.user_id, 'fiel');
+        });
+      }
+      /* Empleado que operó el check-in (si no es el propio owner) */
+      if (req.user.id !== organizadorId) {
+        otorgarPuntos({
+          userId: req.user.id, organizadorId, audiencia: 'empleado',
+          eventoId, accion: 'checkin_operado',
+        });
+      }
+    }
+
+    if (organizadorId) {
+      dispatch(organizadorId, 'checkin.realizado', {
+        ticket_id: updated.id, evento_id: eventoId, codigo: updated.codigo,
+        nombre: updated.guest_nombre, email: updated.guest_email,
+        checked_in_at: updated.checked_in_at,
+      });
+    }
+
+    res.json({ ok: true, ticket: updated, advertencia, sound: 'ok' });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
-
-  const { error: eDel } = await supabase.from('event_form_fields').delete().eq('evento_id', req.params.id);
-  if (eDel) return res.status(500).json({ error: eDel.message });
-
-  if (campos.length === 0) return res.json({ campos: [] });
-
-  const filas = campos.map((c, i) => ({
-    evento_id: req.params.id,
-    tipo: c.tipo,
-    etiqueta: c.etiqueta.trim(),
-    opciones: c.tipo === 'seleccion' ? c.opciones : null,
-    requerido: Boolean(c.requerido),
-    orden: i,
-  }));
-
-  const { data, error } = await supabase
-    .from('event_form_fields')
-    .insert(filas)
-    .select('id, tipo, etiqueta, opciones, requerido, orden');
-  if (error) return res.status(500).json({ error: error.message });
-
-  auditar(req, req.params.id, 'evento.formulario.editar', { entidad: 'evento', entidadId: req.params.id, detalle: { total_campos: data.length } });
-  res.json({ campos: data });
-});
-
-/* DELETE /eventos/:id — soft delete */
-router.delete('/:id', async (req, res) => {
-  const { data: actual } = await supabase
-    .from('eventos').select('owner_id').eq('id', req.params.id).maybeSingle();
-  if (!actual) return res.status(404).json({ error: 'Evento no encontrado.' });
-  if (actual.owner_id !== req.user.id) return res.status(403).json({ error: 'No autorizado.' });
-
-  const { error } = await supabase
-    .from('eventos')
-    .update({ deleted_at: new Date().toISOString(), estado: 'cancelado' })
-    .eq('id', req.params.id);
-  if (error) return res.status(500).json({ error: error.message });
-
-  auditar(req, req.params.id, 'evento.borrar', { entidad: 'evento', entidadId: req.params.id });
-  res.json({ ok: true });
-});
-
-/* POST /eventos/:id/estado — cambiar estado */
-router.post('/:id/estado', async (req, res) => {
-  const { estado } = req.body;
-  if (!ESTADOS_VALIDOS.includes(estado)) {
-    return res.status(400).json({ error: `estado inválido. Usa: ${ESTADOS_VALIDOS.join(', ')}.` });
-  }
-
-  const { data: actual } = await supabase
-    .from('eventos').select('owner_id').eq('id', req.params.id).maybeSingle();
-  if (!actual) return res.status(404).json({ error: 'Evento no encontrado.' });
-  if (actual.owner_id !== req.user.id) return res.status(403).json({ error: 'No autorizado.' });
-
-  const updates = { estado };
-  if (estado === 'publicado') updates.published_at = new Date().toISOString();
-
-  const { data, error } = await supabase
-    .from('eventos').update(updates).eq('id', req.params.id)
-    .select('*, categoria:categorias(slug, nombre)').single();
-  if (error) return res.status(500).json({ error: error.message });
-
-  auditar(req, req.params.id, 'evento.estado', { entidad: 'evento', entidadId: req.params.id, detalle: { estado } });
-  if (estado === 'publicado') {
-    dispatch(req.user.id, 'evento.publicado', { evento_id: data.id, titulo: data.titulo, slug: data.slug });
-  }
-  res.json({ evento: data });
 });
 
 module.exports = router;

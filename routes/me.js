@@ -99,7 +99,9 @@ router.get('/boletas', async (req, res) => {
 /* POST /me/boletas/:id/transferir — transfiere una boleta propia a otro correo.
    Body: { email, nombre? }
    Reglas: solo boletas en estado 'pagado' (no usadas, no reembolsadas/inválidas),
-   y que le pertenezcan al usuario logueado (por user_id o por guest_email). */
+   y que le pertenezcan al usuario logueado (por user_id o por guest_email).
+   Las respuestas del formulario personalizado se limpian (quedan en null),
+   para que la nueva persona tenga que completarlo con sus propios datos. */
 router.post('/boletas/:id/transferir', async (req, res) => {
   const { id } = req.params;
   const { email, nombre } = req.body || {};
@@ -148,6 +150,10 @@ router.post('/boletas/:id/transferir', async (req, res) => {
         guest_email: nuevoEmail,
         guest_nombre: nombre?.trim() || null,
         codigo: nuevoCodigo,
+        /* Se limpian las respuestas del formulario personalizado: la nueva
+           persona debe llenar sus propios datos (cédula, edad, etc.), no
+           heredar los del dueño anterior. */
+        respuestas: null,
       })
       .eq('id', id)
       .select('id, codigo')

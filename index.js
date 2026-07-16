@@ -86,6 +86,7 @@ app.use('/eventos',          require('./routes/tareas.js'));
 app.use('/eventos',          require('./routes/waitlist.js'));
 app.use('/eventos',          require('./routes/auditoria.js'));
 app.use('/eventos',          require('./routes/analytics.js'));
+app.use('/eventos',          require('./routes/networking.js'));
 app.use('/eventos',          require('./routes/eventos.js'));
 
 if (process.env.NODE_ENV !== 'production') {

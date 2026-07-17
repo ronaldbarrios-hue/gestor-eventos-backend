@@ -74,9 +74,7 @@ function generarCodigo() {
 
 /* GET /eventos/publicos/ticket/:codigo
    Incluye `respuestas` (del formulario personalizado, si ya se llenaron) y
-   `evento.campos_formulario` (para saber qué preguntas hacen falta) —
-   así el frontend puede detectar si a esta boleta le falta el formulario
-   (por ejemplo, justo después de una transferencia). */
+   `evento.campos_formulario` (para saber qué preguntas hacen falta). */
 router.get('/ticket/:codigo', async (req, res) => {
   const codigo = req.params.codigo.toUpperCase().trim();
   if (!codigo || codigo.length < 4) return res.status(400).json({ error: 'Código inválido.' });
@@ -108,10 +106,7 @@ router.get('/ticket/:codigo', async (req, res) => {
 });
 
 /* POST /eventos/publicos/ticket/:codigo/formulario — completa las respuestas
-   del formulario personalizado de UNA boleta ya existente. Se usa cuando la
-   boleta no tiene respuestas todavía (por ejemplo, justo después de que se
-   transfirió a otra persona y quedaron limpias a propósito). No se puede
-   usar para sobrescribir respuestas que ya existan. */
+   del formulario personalizado de UNA boleta ya existente. */
 router.post('/ticket/:codigo/formulario', async (req, res) => {
   const codigo = req.params.codigo.toUpperCase().trim();
   const respuestas = req.body?.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
@@ -185,6 +180,15 @@ router.get('/slug/:slug', async (req, res) => {
     .order('orden', { ascending: true });
   evento.campos_formulario = camposForm || [];
 
+  /* Bandera para saber si el evento tiene módulo de Rueda de Negocios
+     activo (al menos un expositor cargado), y así mostrar el botón en
+     la página pública solo cuando aplica. */
+  const { count: expCount } = await supabase
+    .from('networking_expositores')
+    .select('id', { count: 'exact', head: true })
+    .eq('evento_id', evento.id);
+  evento.tiene_networking = (expCount || 0) > 0;
+
   if (evento.organizador) {
     const o = evento.organizador;
     o.plan = (o.plan === 'pro' && (!o.plan_expires_at || new Date(o.plan_expires_at) > new Date()))
@@ -202,9 +206,7 @@ router.get('/slug/:slug', async (req, res) => {
   res.json({ evento });
 });
 
-/* GET /eventos/publicos/invitacion-pendiente?email=... — verifica si un email
-   tiene una invitación de equipo pendiente (sin cuenta creada aún). Es público
-   (sin auth) porque se usa desde el formulario de registro antes de tener sesión. */
+/* GET /eventos/publicos/invitacion-pendiente?email=... */
 router.get('/invitacion-pendiente', async (req, res) => {
   const email = (req.query.email || '').toLowerCase().trim();
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Email inválido.' });
@@ -291,7 +293,6 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     return res.status(400).json({ error: 'Este ticket requiere pago. Usá el flujo de checkout MP.' });
   }
 
-  /* Validar campos personalizados del formulario */
   const { data: camposReq } = await supabase
     .from('event_form_fields').select('id, etiqueta, requerido').eq('evento_id', evento.id);
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
@@ -333,7 +334,6 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   if (esGratis) {
     await supabase.from('eventos').update({ aforo_vendido: (evento.aforo_vendido || 0) + 1 }).eq('id', evento.id);
 
-    /* Correo de confirmación al comprador (boleta gratis, confirmada de inmediato) */
     sendMail({
       to: ticket.guest_email,
       subject: `Tu entrada para "${evento.titulo}" está confirmada`,

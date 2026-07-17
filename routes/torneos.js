@@ -233,4 +233,96 @@ router.post('/:eventoId/torneo/:torneoId/generar', async (req, res) => {
   }
 });
 
-/* Helper: marca
+/* Helper: marca un partido como jugado (bye o resultado normal) y, si tiene
+   siguiente_partido_id, coloca al ganador en el slot libre correspondiente
+   del partido de la siguiente ronda. */
+async function avanzarGanador(partidoId, ganadorId) {
+  const { data: partido } = await supabase.from('torneo_partidos').select('*').eq('id', partidoId).maybeSingle();
+  await supabase.from('torneo_partidos').update({ estado: 'jugado' }).eq('id', partidoId);
+  if (!partido?.siguiente_partido_id) return;
+
+  const { data: siguiente } = await supabase.from('torneo_partidos').select('*').eq('id', partido.siguiente_partido_id).maybeSingle();
+  if (!siguiente) return;
+
+  if (!siguiente.equipo_a_id) {
+    await supabase.from('torneo_partidos').update({ equipo_a_id: ganadorId }).eq('id', siguiente.id);
+  } else if (!siguiente.equipo_b_id) {
+    await supabase.from('torneo_partidos').update({ equipo_b_id: ganadorId }).eq('id', siguiente.id);
+  }
+}
+
+/* ────────────── Resultados ────────────── */
+
+/* PATCH /eventos/:eventoId/torneo/:torneoId/partidos/:id — registrar resultado.
+   Body: { marcador_a, marcador_b, cancha?, fecha_hora? } */
+router.patch('/:eventoId/torneo/:torneoId/partidos/:id', async (req, res) => {
+  const { eventoId, torneoId, id } = req.params;
+  const { marcador_a, marcador_b, cancha, fecha_hora } = req.body;
+
+  try {
+    await assertGestionaTorneo(eventoId, req.user.id);
+
+    const { data: partido } = await supabase.from('torneo_partidos').select('*').eq('id', id).eq('torneo_id', torneoId).maybeSingle();
+    if (!partido) return res.status(404).json({ error: 'Partido no encontrado.' });
+    if (!partido.equipo_a_id || !partido.equipo_b_id) return res.status(400).json({ error: 'Este partido todavía no tiene ambos equipos definidos.' });
+
+    const updates = {};
+    if (cancha !== undefined) updates.cancha = cancha || null;
+    if (fecha_hora !== undefined) updates.fecha_hora = fecha_hora || null;
+
+    if (marcador_a != null && marcador_b != null) {
+      if (marcador_a === marcador_b) {
+        const { data: torneo } = await supabase.from('torneos').select('formato').eq('id', torneoId).maybeSingle();
+        if (torneo?.formato === 'eliminacion') {
+          return res.status(400).json({ error: 'En eliminación directa no puede haber empate. Define un ganador.' });
+        }
+      }
+      updates.marcador_a = marcador_a;
+      updates.marcador_b = marcador_b;
+      updates.estado = 'jugado';
+    }
+
+    const { data: actualizado, error } = await supabase
+      .from('torneo_partidos').update(updates).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    /* Si se cargó resultado y es eliminación, avanzar al ganador */
+    if (updates.estado === 'jugado' && partido.siguiente_partido_id) {
+      const ganadorId = marcador_a > marcador_b ? partido.equipo_a_id : partido.equipo_b_id;
+      await avanzarGanador(id, ganadorId);
+    }
+
+    res.json({ partido: actualizado });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* GET /eventos/:eventoId/torneo/:torneoId/posiciones — tabla de posiciones (solo formato liga) */
+router.get('/:eventoId/torneo/:torneoId/posiciones', async (req, res) => {
+  const { torneoId } = req.params;
+
+  const { data: equipos } = await supabase.from('torneo_equipos').select('id, nombre, foto_url').eq('torneo_id', torneoId);
+  const { data: partidos } = await supabase.from('torneo_partidos').select('*').eq('torneo_id', torneoId).eq('estado', 'jugado');
+
+  const tabla = new Map((equipos || []).map(e => [e.id, {
+    ...e, pj: 0, pg: 0, pe: 0, pp: 0, gf: 0, gc: 0, puntos: 0,
+  }]));
+
+  for (const p of partidos || []) {
+    const a = tabla.get(p.equipo_a_id);
+    const b = tabla.get(p.equipo_b_id);
+    if (!a || !b) continue;
+    a.pj++; b.pj++;
+    a.gf += p.marcador_a; a.gc += p.marcador_b;
+    b.gf += p.marcador_b; b.gc += p.marcador_a;
+    if (p.marcador_a > p.marcador_b) { a.pg++; a.puntos += 3; b.pp++; }
+    else if (p.marcador_a < p.marcador_b) { b.pg++; b.puntos += 3; a.pp++; }
+    else { a.pe++; b.pe++; a.puntos += 1; b.puntos += 1; }
+  }
+
+  const resultado = [...tabla.values()].sort((x, y) => y.puntos - x.puntos || (y.gf - y.gc) - (x.gf - x.gc));
+  res.json({ posiciones: resultado });
+});
+
+module.exports = router;

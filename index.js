@@ -73,9 +73,10 @@ app.use('/',                 require('./routes/notificaciones.js'));
 app.use('/',                 require('./routes/solicitudes.js'));
 app.use('/',                 require('./routes/recompensas.js'));
 app.use('/',                 require('./routes/loyalty.js'));
-/* Estos dos se montan en /eventos y definen sus paths con :eventoId internamente
-   (evita issues con path-to-regexp v6 al usar param en mount path).
-   Van ANTES del router general de /eventos para que sus rutas más específicas matcheen primero. */
+/* Estos routers se montan en /eventos y definen sus paths con :eventoId
+   internamente (evita issues con path-to-regexp v6 al usar param en mount
+   path). Van ANTES del router general de /eventos para que sus rutas más
+   específicas matcheen primero. */
 app.use('/eventos',          require('./routes/equipo.js'));
 app.use('/eventos',          require('./routes/roles.js'));
 app.use('/eventos',          require('./routes/tickets.js'));
@@ -87,6 +88,7 @@ app.use('/eventos',          require('./routes/waitlist.js'));
 app.use('/eventos',          require('./routes/auditoria.js'));
 app.use('/eventos',          require('./routes/analytics.js'));
 app.use('/eventos',          require('./routes/networking.js'));
+app.use('/eventos',          require('./routes/torneos.js'));
 app.use('/eventos',          require('./routes/eventos.js'));
 
 if (process.env.NODE_ENV !== 'production') {

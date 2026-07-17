@@ -2,12 +2,18 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const agente = require('../lib/agente.js');
-
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
+/* Cuentas con acceso a Gestbot sin necesidad de plan Pro — uso personal
+   del desarrollador para pruebas, mientras el resto de usuarios sigue
+   necesitando Pro normalmente. Debe coincidir con EMAILS_DESBLOQUEADOS
+   en src/pages/agente/GestbotPage.jsx del frontend. */
+const EMAILS_DESBLOQUEADOS = ['ronaldbarrios890@gmail.com'];
+
 /* Gestbot es una función del plan Pro. */
-async function esPro(userId) {
+async function esPro(userId, userEmail) {
+  if (EMAILS_DESBLOQUEADOS.includes((userEmail || '').toLowerCase())) return true;
   const { data } = await supabase
     .from('profiles').select('plan, plan_expires_at').eq('id', userId).maybeSingle();
   return data?.plan === 'pro' &&
@@ -16,7 +22,7 @@ async function esPro(userId) {
 
 /* GET /me/agente/estado — disponibilidad + si el usuario es Pro */
 router.get('/me/agente/estado', async (req, res) => {
-  const pro = await esPro(req.user.id);
+  const pro = await esPro(req.user.id, req.user.email);
   res.json({
     disponible: agente.disponible,
     provider: agente.provider || null,
@@ -32,19 +38,17 @@ router.post('/me/agente/chat', async (req, res) => {
       mood: 'error',
     });
   }
-  if (!(await esPro(req.user.id))) {
+  if (!(await esPro(req.user.id, req.user.email))) {
     return res.status(402).json({
       error: 'Gestbot es una función del plan Pro. Activa Pro para usar el asistente.',
       requierePro: true,
       mood: 'error',
     });
   }
-
   const { mensajes, archivos } = req.body || {};
   if (!Array.isArray(mensajes) || mensajes.length === 0) {
     return res.status(400).json({ error: 'mensajes requerido.' });
   }
-
   try {
     const out = await agente.chat(req.user.id, mensajes, archivos);
     res.json(out);

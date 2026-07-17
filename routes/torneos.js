@@ -91,6 +91,76 @@ router.delete('/:eventoId/torneo/:torneoId', async (req, res) => {
 
 /* ────────────── Equipos ────────────── */
 
+/* GET /eventos/:eventoId/torneo/:torneoId/campos-disponibles — lista los
+   campos del formulario de compra del evento, para que el organizador elija
+   cuáles usar como "nombre de equipo" y "foto de equipo" al importar. */
+router.get('/:eventoId/torneo/:torneoId/campos-disponibles', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertGestionaTorneo(eventoId, req.user.id);
+    const { data: campos } = await supabase
+      .from('event_form_fields')
+      .select('id, tipo, etiqueta')
+      .eq('evento_id', eventoId)
+      .in('tipo', ['texto', 'foto'])
+      .order('orden', { ascending: true });
+    res.json({ campos: campos || [] });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* POST /eventos/:eventoId/torneo/:torneoId/importar-equipos
+   Body: { campo_nombre_id, campo_foto_id? }
+   Recorre todas las boletas del evento, y por cada una que tenga una
+   respuesta en `campo_nombre_id`, crea un equipo (si no hay ya uno con
+   ese nombre exacto en el torneo). La foto es opcional. */
+router.post('/:eventoId/torneo/:torneoId/importar-equipos', async (req, res) => {
+  const { eventoId, torneoId } = req.params;
+  const { campo_nombre_id, campo_foto_id } = req.body;
+  if (!campo_nombre_id) return res.status(400).json({ error: 'Selecciona qué campo usar como nombre del equipo.' });
+
+  try {
+    await assertGestionaTorneo(eventoId, req.user.id);
+
+    const { data: torneo } = await supabase.from('torneos').select('id, estado').eq('id', torneoId).eq('evento_id', eventoId).maybeSingle();
+    if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
+    if (torneo.estado !== 'armando') return res.status(400).json({ error: 'No se pueden importar equipos: el torneo ya inició.' });
+
+    const { data: tickets, error: eT } = await supabase
+      .from('tickets')
+      .select('id, respuestas')
+      .eq('evento_id', eventoId)
+      .not('respuestas', 'is', null);
+    if (eT) return res.status(500).json({ error: eT.message });
+
+    const { data: existentes } = await supabase.from('torneo_equipos').select('nombre').eq('torneo_id', torneoId);
+    const nombresExistentes = new Set((existentes || []).map(e => e.nombre.toLowerCase().trim()));
+
+    const nuevos = [];
+    let omitidos = 0;
+
+    for (const t of tickets || []) {
+      const nombre = t.respuestas?.[campo_nombre_id];
+      const foto = campo_foto_id ? t.respuestas?.[campo_foto_id] : null;
+      if (!nombre || typeof nombre !== 'string' || !nombre.trim()) { omitidos++; continue; }
+      const nombreLimpio = nombre.trim();
+      if (nombresExistentes.has(nombreLimpio.toLowerCase())) { omitidos++; continue; }
+      nombresExistentes.add(nombreLimpio.toLowerCase());
+      nuevos.push({ torneo_id: torneoId, nombre: nombreLimpio, foto_url: typeof foto === 'string' ? foto : null });
+    }
+
+    if (nuevos.length > 0) {
+      const { error: eIns } = await supabase.from('torneo_equipos').insert(nuevos);
+      if (eIns) return res.status(500).json({ error: eIns.message });
+    }
+
+    res.json({ importados: nuevos.length, omitidos, total_boletas_revisadas: (tickets || []).length });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 /* POST /eventos/:eventoId/torneo/:torneoId/equipos — registrar un equipo */
 router.post('/:eventoId/torneo/:torneoId/equipos', async (req, res) => {
   const { eventoId, torneoId } = req.params;
@@ -184,7 +254,6 @@ router.post('/:eventoId/torneo/:torneoId/generar', async (req, res) => {
       const totalRondas = Math.log2(size);
       const partidosPorRonda = {};
       let rondaActual = 1;
-      let partidosRondaAnterior = null;
 
       /* Ronda 1: se llena directo con los equipos */
       const ronda1 = [];

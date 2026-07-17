@@ -1,286 +1,359 @@
-const express = require('express');
-const supabase = require('../lib/supabase.js');
-const { verifySupabaseJWT } = require('../middleware/auth.js');
-const { assertPermiso } = require('../lib/acceso.js');
+import { useState, useEffect } from 'react';
+import { confirmDialog } from '../../components/ui/Confirm.jsx';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { eventosApi } from '../../api/eventos.js';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { useToast } from '../../context/ToastContext.jsx';
+import { EstadoBadge, ModalidadBadge } from '../../components/ui/Badge.jsx';
+import Spinner from '../../components/ui/Spinner.jsx';
+import GLoader from '../../components/ui/GLoader.jsx';
 
-const router = express.Router();
-router.use(verifySupabaseJWT);
+import ResumenTab        from './tabs/ResumenTab.jsx';
+import PaginaPublicaTab  from './tabs/PaginaPublicaTab.jsx';
+import EquipoTab         from './tabs/EquipoTab.jsx';
+import TicketsTab        from './tabs/TicketsTab.jsx';
+import FormularioTab     from './tabs/FormularioTab.jsx';
+import ClientesTab       from './tabs/ClientesTab.jsx';
+import CheckinTab        from './tabs/CheckinTab.jsx';
+import ChatTab           from './tabs/ChatTab.jsx';
+import AgendaTab         from './tabs/AgendaTab.jsx';
+import TareasTab         from './tabs/TareasTab.jsx';
+import SolicitudesTab    from './tabs/SolicitudesTab.jsx';
+import RankingTab        from './tabs/RankingTab.jsx';
+import AnalyticsTab      from './tabs/AnalyticsTab.jsx';
+import BroadcastModal    from './BroadcastModal.jsx';
+import PlaceholderTab    from './tabs/PlaceholderTab.jsx';
+import WaitlistTab      from './tabs/WaitlistTab.jsx';
+import NetworkingTab    from './tabs/NetworkingTab.jsx';
 
-function assertOwner(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
+/* Workspace por evento. Header + tabs. Cada tab carga su contenido. */
+
+/* Categorías donde tiene sentido la Rueda de Negocios — debe coincidir con
+   CATEGORIAS_PERMITIDAS en routes/networking.js del backend. */
+const CATEGORIAS_NETWORKING = ['negocios', 'marketing', 'tecnologia'];
+
+const GRUPOS = [
+  { label: 'General', items: [
+    { id: 'resumen', label: 'Resumen' },
+    { id: 'publica', label: 'Página pública' },
+    { id: 'ranking', label: 'Ranking' },
+  ] },
+  { label: 'Organización', items: [
+    { id: 'equipo',  label: 'Equipo y roles' },
+    { id: 'tareas',  label: 'Tareas' },
+    { id: 'solicitudes', label: 'Sugerencias' },
+    { id: 'agenda',  label: 'Agenda' },
+    { id: 'networking', label: 'Rueda de negocios' },
+  ] },
+  { label: 'Facturación', items: [
+    { id: 'tickets',   label: 'Boletas' },
+    { id: 'formulario', label: 'Formulario' },
+    { id: 'pagos',     label: 'Pagos' },
+    { id: 'analytics', label: 'Analytics' },
+  ] },
+  { label: 'Asistentes', items: [
+    { id: 'checkin',  label: 'Check-in' },
+    { id: 'gente',    label: 'Clientes' },
+    { id: 'waitlist', label: 'Lista de espera' },
+  ] },
+];
+const TAB_GRUPO = Object.fromEntries(
+  GRUPOS.flatMap(g => g.items.map(it => [it.id, g.label]))
+);
+
+/* Permiso requerido para que un MIEMBRO (no owner) vea cada tab.
+   null = visible para todo el equipo. El owner siempre ve todo. */
+const TAB_PERM = {
+  resumen: null, publica: 'editar_pagina_publica',
+  tickets: 'gestionar_tickets', pagos: 'ver_pagos', analytics: 'ver_analytics',
+  formulario: 'gestionar_tickets',
+  checkin: 'checkin', gente: 'ver_clientes', waitlist: '__solo_owner__',
+  equipo: ['gestionar_roles', 'invitar_staff', 'remover_miembros'],
+  agenda: null, tareas: null, solicitudes: null, chat: null, ranking: null,
+  networking: null,
+};
+function puedeVerTab(id, soyOwner, permisos) {
+  if (soyOwner) return true;
+  const req = TAB_PERM[id];
+  if (req == null) return true;
+  const arr = Array.isArray(req) ? req : [req];
+  return arr.some(p => (permisos || []).includes(p));
 }
 
-/* El organizador siempre puede; cualquier otro usuario necesita tener al
-   menos una boleta (en cualquier estado) para ese evento. Así, solo
-   quienes efectivamente asisten al evento pueden agendar citas de
-   networking — no cualquiera con cuenta en GESTEK. */
-async function assertPuedeParticipar(eventoId, user) {
-  const { data: ev } = await supabase.from('eventos').select('owner_id').eq('id', eventoId).maybeSingle();
-  if (!ev) throw new Error('Evento no encontrado.');
-  if (ev.owner_id === user.id) return;
+export default function EventDetailPage() {
+  const { id }                       = useParams();
+  const navigate                     = useNavigate();
+  const { usuario, hasPermiso }      = useAuth();
+  const { success, error: toastErr } = useToast();
 
-  const email = (user.email || '').toLowerCase();
-  const { data: ticket } = await supabase
-    .from('tickets')
-    .select('id')
-    .eq('evento_id', eventoId)
-    .or(`user_id.eq.${user.id},guest_email.eq.${email}`)
-    .limit(1)
-    .maybeSingle();
+  const [evento,  setEvento]  = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [tab,     setTab]     = useState('resumen');
+  const [err,     setErr]     = useState('');
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [soyOwner, setSoyOwner] = useState(true);
+  const [permisos, setPermisos] = useState(['*']);
 
-  if (!ticket) throw new Error('Necesitas una boleta para este evento para participar en la Rueda de Negocios.');
-}
+  useEffect(() => {
+    setLoading(true);
+    eventosApi.get(id)
+      .then(data => {
+        setEvento(data.evento);
+        const owner = data.soyOwner !== false;
+        setSoyOwner(owner);
+        setPermisos(data.permisos || ['*']);
+        if (!owner) {
+          setTab(t => puedeVerTab(t, false, data.permisos || []) ? t : 'resumen');
+        }
+      })
+      .catch(e   => setErr(e.message))
+      .finally(()=> setLoading(false));
+  }, [id]);
 
-/* GET /eventos/:eventoId/networking/expositores — lista pública (para
-   asistentes con boleta u organizador) con sus horarios y si cada
-   horario ya está reservado. */
-router.get('/:eventoId/networking/expositores', async (req, res) => {
-  const { eventoId } = req.params;
+  const reload = async () => {
+    try { const d = await eventosApi.get(id); setEvento(d.evento); } catch {}
+  };
 
-  try {
-    await assertPuedeParticipar(eventoId, req.user);
-  } catch (e) {
-    return res.status(403).json({ error: e.message });
-  }
-
-  const { data: expositores, error: e1 } = await supabase
-    .from('networking_expositores')
-    .select('id, nombre, descripcion, logo_url, stand')
-    .eq('evento_id', eventoId)
-    .order('nombre', { ascending: true });
-  if (e1) return res.status(500).json({ error: e1.message });
-
-  const { data: horarios, error: e2 } = await supabase
-    .from('networking_horarios')
-    .select('id, expositor_id, inicio, fin')
-    .in('expositor_id', (expositores || []).map(e => e.id).length ? expositores.map(e => e.id) : ['00000000-0000-0000-0000-000000000000'])
-    .order('inicio', { ascending: true });
-  if (e2) return res.status(500).json({ error: e2.message });
-
-  const { data: citas, error: e3 } = await supabase
-    .from('networking_citas')
-    .select('id, horario_id, user_id, estado')
-    .eq('evento_id', eventoId)
-    .eq('estado', 'confirmada');
-  if (e3) return res.status(500).json({ error: e3.message });
-
-  const citaPorHorario = new Map((citas || []).map(c => [c.horario_id, c]));
-
-  const resultado = (expositores || []).map(exp => ({
-    ...exp,
-    horarios: (horarios || [])
-      .filter(h => h.expositor_id === exp.id)
-      .map(h => {
-        const cita = citaPorHorario.get(h.id);
-        return {
-          id: h.id,
-          inicio: h.inicio,
-          fin: h.fin,
-          disponible: !cita,
-          esMio: cita?.user_id === req.user.id,
-        };
-      }),
-  }));
-
-  res.json({ expositores: resultado });
-});
-
-/* GET /eventos/:eventoId/networking/mis-citas — agenda del usuario logueado */
-router.get('/:eventoId/networking/mis-citas', async (req, res) => {
-  const { eventoId } = req.params;
-
-  try {
-    await assertPuedeParticipar(eventoId, req.user);
-  } catch (e) {
-    return res.status(403).json({ error: e.message });
-  }
-
-  const { data, error } = await supabase
-    .from('networking_citas')
-    .select(`
-      id, estado, created_at,
-      horario:networking_horarios!horario_id(id, inicio, fin,
-        expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
-    `)
-    .eq('evento_id', eventoId)
-    .eq('user_id', req.user.id)
-    .eq('estado', 'confirmada');
-  if (error) return res.status(500).json({ error: error.message });
-
-  const citas = (data || []).sort((a, b) => new Date(a.horario?.inicio) - new Date(b.horario?.inicio));
-  res.json({ citas });
-});
-
-/* POST /eventos/:eventoId/networking/horarios/:horarioId/reservar
-   Confirmación automática — si el horario ya está tomado, falla con 409. */
-router.post('/:eventoId/networking/horarios/:horarioId/reservar', async (req, res) => {
-  const { eventoId, horarioId } = req.params;
-
-  try {
-    await assertPuedeParticipar(eventoId, req.user);
-  } catch (e) {
-    return res.status(403).json({ error: e.message });
-  }
-
-  const { data: horario, error: e1 } = await supabase
-    .from('networking_horarios')
-    .select('id, expositor_id, networking_expositores!expositor_id(evento_id)')
-    .eq('id', horarioId)
-    .maybeSingle();
-  if (e1) return res.status(500).json({ error: e1.message });
-  if (!horario || horario.networking_expositores?.evento_id !== eventoId) {
-    return res.status(404).json({ error: 'Horario no encontrado.' });
-  }
-
-  const { data: cita, error: e2 } = await supabase
-    .from('networking_citas')
-    .insert({ horario_id: horarioId, evento_id: eventoId, user_id: req.user.id, estado: 'confirmada' })
-    .select('id')
-    .single();
-
-  if (e2) {
-    if (e2.code === '23505') return res.status(409).json({ error: 'Ese horario ya fue reservado por alguien más.' });
-    return res.status(500).json({ error: e2.message });
-  }
-
-  res.status(201).json({ ok: true, cita_id: cita.id });
-});
-
-/* DELETE /eventos/:eventoId/networking/citas/:citaId — cancelar mi propia cita.
-   Se filtra por user_id, así que ya está implícitamente protegido. */
-router.delete('/:eventoId/networking/citas/:citaId', async (req, res) => {
-  const { citaId } = req.params;
-  const { error } = await supabase
-    .from('networking_citas')
-    .delete()
-    .eq('id', citaId)
-    .eq('user_id', req.user.id);
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true });
-});
-
-/* ────────────── Gestión del organizador ────────────── */
-
-/* GET /eventos/:eventoId/networking/admin — expositores + horarios + quién reservó cada uno */
-router.get('/:eventoId/networking/admin', async (req, res) => {
-  const { eventoId } = req.params;
-  try {
-    await assertOwner(eventoId, req.user.id);
-
-    const { data: expositores } = await supabase
-      .from('networking_expositores')
-      .select('id, nombre, descripcion, logo_url, stand')
-      .eq('evento_id', eventoId)
-      .order('nombre', { ascending: true });
-
-    const ids = (expositores || []).map(e => e.id);
-    const { data: horarios } = ids.length
-      ? await supabase.from('networking_horarios').select('id, expositor_id, inicio, fin').in('expositor_id', ids).order('inicio', { ascending: true })
-      : { data: [] };
-
-    const { data: citas } = await supabase
-      .from('networking_citas')
-      .select('id, horario_id, estado, usuario:profiles!user_id(nombre, email)')
-      .eq('evento_id', eventoId)
-      .eq('estado', 'confirmada');
-
-    const citaPorHorario = new Map((citas || []).map(c => [c.horario_id, c]));
-    const resultado = (expositores || []).map(exp => ({
-      ...exp,
-      horarios: (horarios || []).filter(h => h.expositor_id === exp.id).map(h => ({
-        ...h,
-        cita: citaPorHorario.get(h.id) || null,
-      })),
-    }));
-
-    res.json({ expositores: resultado });
-  } catch (e) {
-    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
-  }
-});
-
-/* POST /eventos/:eventoId/networking/expositores — crear expositor */
-router.post('/:eventoId/networking/expositores', async (req, res) => {
-  const { eventoId } = req.params;
-  const { nombre, descripcion, logo_url, stand } = req.body;
-  if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del expositor es requerido.' });
-
-  try {
-    await assertOwner(eventoId, req.user.id);
-    const { data, error } = await supabase
-      .from('networking_expositores')
-      .insert({ evento_id: eventoId, nombre: nombre.trim(), descripcion: descripcion || null, logo_url: logo_url || null, stand: stand || null })
-      .select()
-      .single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json({ expositor: data });
-  } catch (e) {
-    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
-  }
-});
-
-/* DELETE /eventos/:eventoId/networking/expositores/:id */
-router.delete('/:eventoId/networking/expositores/:id', async (req, res) => {
-  const { eventoId, id } = req.params;
-  try {
-    await assertOwner(eventoId, req.user.id);
-    const { error } = await supabase.from('networking_expositores').delete().eq('id', id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
-  }
-});
-
-/* POST /eventos/:eventoId/networking/expositores/:id/horarios
-   Body: { inicio, fin, duracion_min } — genera bloques consecutivos de
-   `duracion_min` minutos entre `inicio` y `fin`, todo en un solo llamado
-   (así el organizador no crea horario por horario a mano). */
-router.post('/:eventoId/networking/expositores/:id/horarios', async (req, res) => {
-  const { eventoId, id } = req.params;
-  const { inicio, fin, duracion_min = 15 } = req.body;
-  if (!inicio || !fin) return res.status(400).json({ error: 'inicio y fin son requeridos.' });
-
-  try {
-    await assertOwner(eventoId, req.user.id);
-
-    const { data: exp } = await supabase.from('networking_expositores').select('id').eq('id', id).eq('evento_id', eventoId).maybeSingle();
-    if (!exp) return res.status(404).json({ error: 'Expositor no encontrado.' });
-
-    const bloques = [];
-    let cursor = new Date(inicio);
-    const finDate = new Date(fin);
-    const durMs = duracion_min * 60 * 1000;
-    while (cursor.getTime() + durMs <= finDate.getTime()) {
-      const bloqueInicio = new Date(cursor);
-      const bloqueFin = new Date(cursor.getTime() + durMs);
-      bloques.push({ expositor_id: id, inicio: bloqueInicio.toISOString(), fin: bloqueFin.toISOString() });
-      cursor = bloqueFin;
+  const doAction = async (action, confirmMsg) => {
+    if (confirmMsg && !(await confirmDialog({ message:(confirmMsg), danger:true }))) return;
+    setWorking(true);
+    try {
+      if (action === 'publicar') await eventosApi.publicar(id);
+      if (action === 'cancelar') await eventosApi.cancelar(id);
+      await reload();
+      success('Acción aplicada.');
+    } catch (e) {
+      toastErr(e.message);
+    } finally {
+      setWorking(false);
     }
-    if (bloques.length === 0) return res.status(400).json({ error: 'El rango de tiempo es muy corto para generar bloques.' });
-    if (bloques.length > 100) return res.status(400).json({ error: 'Demasiados bloques (máximo 100 por generación).' });
+  };
 
-    const { data, error } = await supabase.from('networking_horarios').insert(bloques).select();
-    if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json({ horarios: data, creados: data.length });
-  } catch (e) {
-    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
-  }
-});
+  const handleDelete = async () => {
+    if (!(await confirmDialog({ message:('¿Eliminar este evento? Esta acción no se puede deshacer.'), danger:true }))) return;
+    setWorking(true);
+    try {
+      await eventosApi.delete(id);
+      success('Evento eliminado.');
+      navigate('/eventos');
+    } catch (e) {
+      toastErr(e.message);
+      setWorking(false);
+    }
+  };
 
-/* DELETE /eventos/:eventoId/networking/horarios/:id — borrar un bloque (solo si no tiene cita) */
-router.delete('/:eventoId/networking/horarios/:id', async (req, res) => {
-  const { eventoId, id } = req.params;
-  try {
-    await assertOwner(eventoId, req.user.id);
-    const { data: cita } = await supabase.from('networking_citas').select('id').eq('horario_id', id).eq('estado', 'confirmada').maybeSingle();
-    if (cita) return res.status(400).json({ error: 'Ese horario ya tiene una cita confirmada. Cancélala primero.' });
-    const { error } = await supabase.from('networking_horarios').delete().eq('id', id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
-  }
-});
+  if (loading) return (
+    <GLoader size="lg" message="Cargando evento..." />
+  );
 
-module.exports = router;
+  if (!evento) return (
+    <div className="max-w-lg mx-auto mt-12 text-center">
+      <p className="text-text-2 mb-4">{err || 'Evento no encontrado.'}</p>
+      <Link to="/eventos" className="btn-secondary">← Volver a eventos</Link>
+    </div>
+  );
+
+  const esDueno = String(evento.owner_id) === String(usuario?.id) || usuario?.rol === 'admin_global';
+  const permiteNetworking = CATEGORIAS_NETWORKING.includes(evento.categoria?.slug);
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-5 animate-[fadeUp_0.4s_ease_both]">
+      {/* HEADER */}
+      <WorkspaceHeader
+        evento={evento}
+        esDueno={esDueno}
+        hasPermiso={hasPermiso}
+        working={working}
+        onPublicar={() => doAction('publicar')}
+        onCancelar={() => doAction('cancelar', '¿Cancelar este evento?')}
+        onDelete={handleDelete}
+        onBroadcast={() => setBroadcastOpen(true)}
+      />
+
+      {/* NAV agrupada: grupos + Chat aparte; sub-tabs del grupo activo */}
+      {(() => {
+        const esChat = tab === 'chat';
+        const gruposVis = GRUPOS
+          .map(g => ({
+            ...g,
+            items: g.items
+              .filter(it => puedeVerTab(it.id, soyOwner, permisos))
+              /* La pestaña de Rueda de Negocios solo aparece si la categoría
+                 del evento admite este módulo (Negocios, Marketing, Tecnología). */
+              .filter(it => it.id !== 'networking' || permiteNetworking),
+          }))
+          .filter(g => g.items.length);
+        const grupoActivo = esChat ? null : (TAB_GRUPO[tab] || gruposVis[0]?.label);
+        const grupo = gruposVis.find(g => g.label === grupoActivo);
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
+              {gruposVis.map(g => {
+                const act = g.label === grupoActivo;
+                return (
+                  <button
+                    key={g.label}
+                    onClick={() => setTab(g.items[0].id)}
+                    className={`px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all
+                      ${act
+                        ? 'bg-gradient-primary text-white shadow-glow-sm'
+                        : 'bg-surface-2 text-text-3 hover:text-text-1 border border-border'}`}
+                  >
+                    {g.label}
+                  </button>
+                );
+              })}
+              <span className="w-px h-6 bg-border mx-1 flex-shrink-0" />
+              <button
+                onClick={() => setTab('chat')}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold
+                  whitespace-nowrap transition-all
+                  ${esChat
+                    ? 'bg-gradient-primary text-white shadow-glow-sm'
+                    : 'bg-surface-2 text-text-3 hover:text-text-1 border border-border'}`}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Chat
+              </button>
+            </div>
+            {grupo && (
+              <div className="flex gap-1 overflow-x-auto no-scrollbar border-b border-border
+                              -mx-4 px-4 sm:mx-0 sm:px-0">
+                {grupo.items.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    className={`relative px-4 py-3 text-[15px] font-medium whitespace-nowrap transition-colors
+                      ${tab === t.id ? 'text-text-1' : 'text-text-3 hover:text-text-2'}`}
+                  >
+                    {t.label}
+                    {tab === t.id && (
+                      <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-primary animate-[fadeIn_0.2s_ease_both]" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* TAB CONTENT */}
+      <div key={tab} className="animate-[fadeUp_0.3s_cubic-bezier(0.16,1,0.3,1)_both]">
+        {tab === 'resumen'   && <ResumenTab evento={evento} />}
+        {tab === 'publica'   && <PaginaPublicaTab evento={evento} />}
+        {tab === 'equipo'    && <EquipoTab evento={evento} />}
+        {tab === 'tickets'   && <TicketsTab evento={evento} />}
+        {tab === 'formulario' && <FormularioTab evento={evento} />}
+        {tab === 'gente'     && <ClientesTab evento={evento} />}
+        {tab === 'checkin'   && <CheckinTab evento={evento} />}
+        {tab === 'agenda'      && <AgendaTab evento={evento} />}
+        {tab === 'tareas'      && <TareasTab evento={evento} />}
+        {tab === 'solicitudes' && <SolicitudesTab evento={evento} />}
+        {tab === 'ranking'     && <RankingTab evento={evento} />}
+        {tab === 'networking'  && permiteNetworking && <NetworkingTab evento={evento} soyOwner={soyOwner} />}
+        {tab === 'pagos'     && <PlaceholderTab title="Pagos" desc="Configura tu llave BRE-B, recibe transacciones, emite reembolsos." icon="wallet" />}
+        {tab === 'chat'      && <ChatTab evento={evento} />}
+        {tab === 'analytics' && <AnalyticsTab evento={evento} />}
+        {tab === 'waitlist'  && <WaitlistTab evento={evento} />}
+      </div>
+
+      {broadcastOpen && (
+        <BroadcastModal evento={evento} onClose={() => setBroadcastOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function WorkspaceHeader({ evento, esDueno, hasPermiso, working, onPublicar, onCancelar, onDelete, onBroadcast }) {
+  return (
+    <header className="rounded-3xl border border-border overflow-hidden bg-surface/40">
+      {/* Cover banner */}
+      <div className="relative h-48 sm:h-64 overflow-hidden bg-gradient-to-br from-surface-2 via-surface to-bg">
+        {(evento.cover_url || evento.gallery?.[0]) ? (
+          <img
+            src={evento.cover_url || evento.gallery[0]}
+            alt={evento.titulo}
+            className="absolute inset-0 w-full h-full object-cover scale-105 animate-[fadeIn_0.7s_ease_both]"
+          />
+        ) : (
+          /* Patrón decorativo si no hay cover */
+          <div className="absolute inset-0">
+            <div className="absolute -top-20 left-1/3 w-96 h-96 rounded-full bg-primary/15 blur-3xl" />
+            <div className="absolute -bottom-20 right-1/4 w-96 h-96 rounded-full bg-accent/15 blur-3xl" />
+            <div className="absolute inset-0 opacity-[0.04]"
+              style={{ backgroundImage: "url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32' fill='none' stroke='%23ffffff'%3e%3cpath d='M0 .5H31.5V32'/%3e%3c/svg%3e\")" }} />
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/70 to-transparent" />
+      </div>
+
+      <div className="px-6 sm:px-8 -mt-12 relative">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
+              <EstadoBadge estado={evento.estado} />
+              <ModalidadBadge modalidad={evento.modalidad} />
+            </div>
+            <h1 className="text-3xl sm:text-4xl font-bold font-display text-text-1 tracking-tight">{evento.titulo}</h1>
+            {evento.descripcion && (
+              <p className="text-base text-text-2 mt-2 max-w-2xl line-clamp-2 leading-relaxed">{evento.descripcion}</p>
+            )}
+            <p className="text-sm text-text-3 mt-3 font-mono">
+              /explorar/{evento.slug}
+            </p>
+          </div>
+
+          {/* Acciones */}
+          {esDueno && (
+            <div className="flex items-center gap-2 flex-wrap pt-2">
+              {hasPermiso('eventos:editar') && evento.estado !== 'cancelado' && (
+                <Link to={`/eventos/${evento.id}/editar`} className="btn-secondary btn-sm">
+                  <EditIcon className="w-4 h-4" /> Editar info
+                </Link>
+              )}
+              {hasPermiso('eventos:publicar') && evento.estado === 'borrador' && (
+                <button onClick={onPublicar} disabled={working} className="btn-gradient btn-sm">
+                  <RocketIcon className="w-4 h-4" /> Publicar
+                </button>
+              )}
+              {hasPermiso('eventos:editar') && evento.estado === 'publicado' && (
+                <button onClick={onCancelar} disabled={working} className="btn-secondary btn-sm">
+                  Cancelar
+                </button>
+              )}
+              {evento.estado === 'publicado' && (
+                <button onClick={onBroadcast} className="btn-secondary btn-sm" title="Enviar notificación al equipo del evento (Pro)">
+                  <BellIcon className="w-4 h-4" /> Notificar
+                </button>
+              )}
+              {hasPermiso('eventos:eliminar') && (
+                <button onClick={onDelete} disabled={working} className="btn-ghost btn-sm text-danger/80 hover:text-danger" aria-label="Eliminar">
+                  <TrashIcon className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="h-6" />
+      </div>
+    </header>
+  );
+}
+
+function BellIcon({ className }) {
+  return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>;
+}
+function EditIcon({ className }) {
+  return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>;
+}
+function RocketIcon({ className }) {
+  return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>;
+}
+function TrashIcon({ className }) {
+  return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
+}

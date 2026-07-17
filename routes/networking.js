@@ -10,11 +10,38 @@ function assertOwner(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
 }
 
-/* GET /eventos/:eventoId/networking/expositores — lista pública (cualquier
-   miembro del evento o asistente autenticado) con sus horarios y si cada
+/* El organizador siempre puede; cualquier otro usuario necesita tener al
+   menos una boleta (en cualquier estado) para ese evento. Así, solo
+   quienes efectivamente asisten al evento pueden agendar citas de
+   networking — no cualquiera con cuenta en GESTEK. */
+async function assertPuedeParticipar(eventoId, user) {
+  const { data: ev } = await supabase.from('eventos').select('owner_id').eq('id', eventoId).maybeSingle();
+  if (!ev) throw new Error('Evento no encontrado.');
+  if (ev.owner_id === user.id) return;
+
+  const email = (user.email || '').toLowerCase();
+  const { data: ticket } = await supabase
+    .from('tickets')
+    .select('id')
+    .eq('evento_id', eventoId)
+    .or(`user_id.eq.${user.id},guest_email.eq.${email}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (!ticket) throw new Error('Necesitas una boleta para este evento para participar en la Rueda de Negocios.');
+}
+
+/* GET /eventos/:eventoId/networking/expositores — lista pública (para
+   asistentes con boleta u organizador) con sus horarios y si cada
    horario ya está reservado. */
 router.get('/:eventoId/networking/expositores', async (req, res) => {
   const { eventoId } = req.params;
+
+  try {
+    await assertPuedeParticipar(eventoId, req.user);
+  } catch (e) {
+    return res.status(403).json({ error: e.message });
+  }
 
   const { data: expositores, error: e1 } = await supabase
     .from('networking_expositores')
@@ -61,6 +88,13 @@ router.get('/:eventoId/networking/expositores', async (req, res) => {
 /* GET /eventos/:eventoId/networking/mis-citas — agenda del usuario logueado */
 router.get('/:eventoId/networking/mis-citas', async (req, res) => {
   const { eventoId } = req.params;
+
+  try {
+    await assertPuedeParticipar(eventoId, req.user);
+  } catch (e) {
+    return res.status(403).json({ error: e.message });
+  }
+
   const { data, error } = await supabase
     .from('networking_citas')
     .select(`
@@ -82,6 +116,12 @@ router.get('/:eventoId/networking/mis-citas', async (req, res) => {
 router.post('/:eventoId/networking/horarios/:horarioId/reservar', async (req, res) => {
   const { eventoId, horarioId } = req.params;
 
+  try {
+    await assertPuedeParticipar(eventoId, req.user);
+  } catch (e) {
+    return res.status(403).json({ error: e.message });
+  }
+
   const { data: horario, error: e1 } = await supabase
     .from('networking_horarios')
     .select('id, expositor_id, networking_expositores!expositor_id(evento_id)')
@@ -92,9 +132,6 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', async (req, re
     return res.status(404).json({ error: 'Horario no encontrado.' });
   }
 
-  /* Evitar que el mismo usuario tenga dos citas que se superpongan no es
-     estrictamente necesario para la v1 — solo evitamos doble reserva del
-     mismo horario, gracias al unique constraint en horario_id. */
   const { data: cita, error: e2 } = await supabase
     .from('networking_citas')
     .insert({ horario_id: horarioId, evento_id: eventoId, user_id: req.user.id, estado: 'confirmada' })
@@ -109,7 +146,8 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', async (req, re
   res.status(201).json({ ok: true, cita_id: cita.id });
 });
 
-/* DELETE /eventos/:eventoId/networking/citas/:citaId — cancelar mi propia cita */
+/* DELETE /eventos/:eventoId/networking/citas/:citaId — cancelar mi propia cita.
+   Se filtra por user_id, así que ya está implícitamente protegido. */
 router.delete('/:eventoId/networking/citas/:citaId', async (req, res) => {
   const { citaId } = req.params;
   const { error } = await supabase

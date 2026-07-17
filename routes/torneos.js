@@ -8,13 +8,12 @@ router.use(verifySupabaseJWT);
 
 /* Solo eventos de categoría Deportes pueden tener torneos. */
 const CATEGORIA_PERMITIDA = 'deportes';
+const FORMATOS_VALIDOS = ['eliminacion', 'liga', 'grupos_eliminacion'];
 
 function assertOwner(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
 }
 
-/* Miembro con permiso 'gestionar_torneo' (o el owner) puede administrar
-   equipos/resultados, no solo el dueño del evento. */
 function assertGestionaTorneo(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['gestionar_torneo', 'editar_evento'], 'id, owner_id');
 }
@@ -50,12 +49,25 @@ router.get('/:eventoId/torneo', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/torneo — crear el torneo del evento (uno solo).
-   Body: { nombre, formato: 'eliminacion' | 'liga' } */
+   Body: { nombre, formato: 'eliminacion' | 'liga' | 'grupos_eliminacion',
+           num_grupos?, avanzan_por_grupo? }
+   Para 'grupos_eliminacion' se piden num_grupos y avanzan_por_grupo. */
 router.post('/:eventoId/torneo', async (req, res) => {
   const { eventoId } = req.params;
-  const { nombre, formato } = req.body;
+  const { nombre, formato, num_grupos, avanzan_por_grupo } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del torneo es requerido.' });
-  if (!['eliminacion', 'liga'].includes(formato)) return res.status(400).json({ error: 'Formato inválido.' });
+  if (!FORMATOS_VALIDOS.includes(formato)) return res.status(400).json({ error: 'Formato inválido.' });
+
+  const insert = { nombre: nombre.trim(), formato, evento_id: eventoId };
+  if (formato === 'grupos_eliminacion') {
+    const ng = Number(num_grupos);
+    const apg = Number(avanzan_por_grupo);
+    if (!Number.isInteger(ng) || ng < 2) return res.status(400).json({ error: 'Indica un número válido de grupos (mínimo 2).' });
+    if (!Number.isInteger(apg) || apg < 1) return res.status(400).json({ error: 'Indica cuántos equipos avanzan por grupo (mínimo 1).' });
+    insert.num_grupos = ng;
+    insert.avanzan_por_grupo = apg;
+    insert.fase_actual = 'unica'; // pasa a 'grupos' al generar el fixture
+  }
 
   try {
     await assertOwner(eventoId, req.user.id);
@@ -64,11 +76,7 @@ router.post('/:eventoId/torneo', async (req, res) => {
     const { data: existente } = await supabase.from('torneos').select('id').eq('evento_id', eventoId).maybeSingle();
     if (existente) return res.status(400).json({ error: 'Este evento ya tiene un torneo creado.' });
 
-    const { data, error } = await supabase
-      .from('torneos')
-      .insert({ evento_id: eventoId, nombre: nombre.trim(), formato })
-      .select()
-      .single();
+    const { data, error } = await supabase.from('torneos').insert(insert).select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.status(201).json({ torneo: data });
   } catch (e) {
@@ -91,9 +99,6 @@ router.delete('/:eventoId/torneo/:torneoId', async (req, res) => {
 
 /* ────────────── Equipos ────────────── */
 
-/* GET /eventos/:eventoId/torneo/:torneoId/campos-disponibles — lista los
-   campos del formulario de compra del evento, para que el organizador elija
-   cuáles usar como "nombre de equipo" y "foto de equipo" al importar. */
 router.get('/:eventoId/torneo/:torneoId/campos-disponibles', async (req, res) => {
   const { eventoId } = req.params;
   try {
@@ -112,9 +117,9 @@ router.get('/:eventoId/torneo/:torneoId/campos-disponibles', async (req, res) =>
 
 /* POST /eventos/:eventoId/torneo/:torneoId/importar-equipos
    Body: { campo_nombre_id, campo_foto_id? }
-   Recorre todas las boletas del evento, y por cada una que tenga una
-   respuesta en `campo_nombre_id`, crea un equipo (si no hay ya uno con
-   ese nombre exacto en el torneo). La foto es opcional. */
+   Además de nombre/foto, guarda el contacto (email + user_id si tiene
+   cuenta) de cada boleta como "capitán" del equipo — se usa después para
+   avisarle automáticamente cuándo juega su equipo. */
 router.post('/:eventoId/torneo/:torneoId/importar-equipos', async (req, res) => {
   const { eventoId, torneoId } = req.params;
   const { campo_nombre_id, campo_foto_id } = req.body;
@@ -129,7 +134,7 @@ router.post('/:eventoId/torneo/:torneoId/importar-equipos', async (req, res) => 
 
     const { data: tickets, error: eT } = await supabase
       .from('tickets')
-      .select('id, respuestas')
+      .select('id, respuestas, guest_email, user_id')
       .eq('evento_id', eventoId)
       .not('respuestas', 'is', null);
     if (eT) return res.status(500).json({ error: eT.message });
@@ -147,7 +152,13 @@ router.post('/:eventoId/torneo/:torneoId/importar-equipos', async (req, res) => 
       const nombreLimpio = nombre.trim();
       if (nombresExistentes.has(nombreLimpio.toLowerCase())) { omitidos++; continue; }
       nombresExistentes.add(nombreLimpio.toLowerCase());
-      nuevos.push({ torneo_id: torneoId, nombre: nombreLimpio, foto_url: typeof foto === 'string' ? foto : null });
+      nuevos.push({
+        torneo_id: torneoId,
+        nombre: nombreLimpio,
+        foto_url: typeof foto === 'string' ? foto : null,
+        contacto_email: t.guest_email || null,
+        contacto_user_id: t.user_id || null,
+      });
     }
 
     if (nuevos.length > 0) {
@@ -161,10 +172,10 @@ router.post('/:eventoId/torneo/:torneoId/importar-equipos', async (req, res) => 
   }
 });
 
-/* POST /eventos/:eventoId/torneo/:torneoId/equipos — registrar un equipo */
+/* POST /eventos/:eventoId/torneo/:torneoId/equipos — registrar un equipo manual */
 router.post('/:eventoId/torneo/:torneoId/equipos', async (req, res) => {
   const { eventoId, torneoId } = req.params;
-  const { nombre, foto_url } = req.body;
+  const { nombre, foto_url, contacto_email } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del equipo es requerido.' });
 
   try {
@@ -176,7 +187,12 @@ router.post('/:eventoId/torneo/:torneoId/equipos', async (req, res) => {
 
     const { data, error } = await supabase
       .from('torneo_equipos')
-      .insert({ torneo_id: torneoId, nombre: nombre.trim(), foto_url: foto_url || null })
+      .insert({
+        torneo_id: torneoId,
+        nombre: nombre.trim(),
+        foto_url: foto_url || null,
+        contacto_email: contacto_email?.trim() || null,
+      })
       .select()
       .single();
     if (error) return res.status(500).json({ error: error.message });
@@ -203,7 +219,7 @@ router.delete('/:eventoId/torneo/:torneoId/equipos/:id', async (req, res) => {
   }
 });
 
-/* ────────────── Generar el fixture (arma los partidos según el formato) ────────────── */
+/* ────────────── Generación de fixtures ────────────── */
 
 function siguientePotenciaDe2(n) {
   let p = 1;
@@ -211,10 +227,67 @@ function siguientePotenciaDe2(n) {
   return p;
 }
 
+/* Baraja un array in-place (Fisher-Yates). */
+function barajar(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/* Genera un bracket de eliminación directa para una lista de equipoIds,
+   insertando en torneo_partidos con la fase indicada. Reutilizable tanto
+   para formato 'eliminacion' puro como para la fase final de
+   'grupos_eliminacion'. Devuelve los partidos de la ronda 1 ya insertados. */
+async function generarBracketEliminacion(torneoId, equipoIds, fase) {
+  const size = siguientePotenciaDe2(equipoIds.length);
+  const slots = [...equipoIds, ...Array(size - equipoIds.length).fill(null)];
+  barajar(slots);
+
+  const totalRondas = Math.log2(size);
+  const partidosPorRonda = {};
+
+  const ronda1 = [];
+  for (let i = 0; i < slots.length; i += 2) {
+    ronda1.push({
+      torneo_id: torneoId, ronda: 1, orden: ronda1.length, fase,
+      equipo_a_id: slots[i], equipo_b_id: slots[i + 1], estado: 'pendiente',
+    });
+  }
+  const { data: ronda1Insertada, error: e1 } = await supabase.from('torneo_partidos').insert(ronda1).select();
+  if (e1) throw new Error(e1.message);
+  partidosPorRonda[1] = ronda1Insertada;
+
+  for (let ronda = 2; ronda <= totalRondas; ronda++) {
+    const anterior = partidosPorRonda[ronda - 1];
+    const actual = [];
+    for (let i = 0; i < anterior.length; i += 2) {
+      actual.push({ torneo_id: torneoId, ronda, orden: actual.length, fase, estado: 'pendiente' });
+    }
+    const { data: insertada, error: eN } = await supabase.from('torneo_partidos').insert(actual).select();
+    if (eN) throw new Error(eN.message);
+    partidosPorRonda[ronda] = insertada;
+
+    for (let i = 0; i < anterior.length; i++) {
+      const destino = insertada[Math.floor(i / 2)];
+      await supabase.from('torneo_partidos').update({ siguiente_partido_id: destino.id }).eq('id', anterior[i].id);
+    }
+  }
+
+  for (const p of ronda1Insertada) {
+    if (p.equipo_a_id && !p.equipo_b_id) await avanzarGanador(p.id, p.equipo_a_id);
+    if (!p.equipo_a_id && p.equipo_b_id) await avanzarGanador(p.id, p.equipo_b_id);
+  }
+  return ronda1Insertada;
+}
+
 /* POST /eventos/:eventoId/torneo/:torneoId/generar — arma los partidos.
-   Eliminación: crea el bracket completo (rondas), rellenando con "bye"
-   (pase directo) si el número de equipos no es potencia de 2.
-   Liga: crea todos los partidos posibles (todos contra todos, una vuelta). */
+   - 'liga': todos contra todos (fase 'unica').
+   - 'eliminacion': bracket completo directo (fase 'unica').
+   - 'grupos_eliminacion': reparte equipos en N grupos y arma todos-contra-
+     todos DENTRO de cada grupo (fase 'grupos'). La eliminación se genera
+     después, con /cerrar-grupos, una vez jugados los partidos de grupo. */
 router.post('/:eventoId/torneo/:torneoId/generar', async (req, res) => {
   const { eventoId, torneoId } = req.params;
   try {
@@ -232,79 +305,131 @@ router.post('/:eventoId/torneo/:torneoId/generar', async (req, res) => {
       for (let i = 0; i < equipos.length; i++) {
         for (let j = i + 1; j < equipos.length; j++) {
           partidos.push({
-            torneo_id: torneoId, ronda: 1, orden: partidos.length,
+            torneo_id: torneoId, ronda: 1, orden: partidos.length, fase: 'unica',
             equipo_a_id: equipos[i].id, equipo_b_id: equipos[j].id, estado: 'pendiente',
           });
         }
       }
       const { error } = await supabase.from('torneo_partidos').insert(partidos);
       if (error) return res.status(500).json({ error: error.message });
-    } else {
-      /* Eliminación directa: arma un bracket de tamaño = siguiente potencia de 2.
-         Los slots sobrantes quedan sin equipo (bye) — ese equipo avanza solo. */
-      const size = siguientePotenciaDe2(equipos.length);
-      const slots = [...equipos.map(e => e.id), ...Array(size - equipos.length).fill(null)];
 
-      /* Mezclar el orden para que los byes no queden todos juntos (barajado simple) */
-      for (let i = slots.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [slots[i], slots[j]] = [slots[j], slots[i]];
+    } else if (torneo.formato === 'eliminacion') {
+      await generarBracketEliminacion(torneoId, equipos.map(e => e.id), 'unica');
+
+    } else if (torneo.formato === 'grupos_eliminacion') {
+      const ng = torneo.num_grupos;
+      if (equipos.length < ng * 2) {
+        return res.status(400).json({ error: `Necesitas al menos ${ng * 2} equipos para ${ng} grupos.` });
       }
+      const letras = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const idsBarajados = barajar(equipos.map(e => e.id));
+      /* Reparte equipos en grupos lo más parejo posible (round-robin de asignación) */
+      const grupos = Array.from({ length: ng }, () => []);
+      idsBarajados.forEach((id, i) => grupos[i % ng].push(id));
 
-      const totalRondas = Math.log2(size);
-      const partidosPorRonda = {};
-      let rondaActual = 1;
-
-      /* Ronda 1: se llena directo con los equipos */
-      const ronda1 = [];
-      for (let i = 0; i < slots.length; i += 2) {
-        ronda1.push({
-          torneo_id: torneoId, ronda: 1, orden: ronda1.length,
-          equipo_a_id: slots[i], equipo_b_id: slots[i + 1], estado: 'pendiente',
-        });
-      }
-      const { data: ronda1Insertada, error: e1 } = await supabase.from('torneo_partidos').insert(ronda1).select();
-      if (e1) return res.status(500).json({ error: e1.message });
-      partidosPorRonda[1] = ronda1Insertada;
-
-      /* Rondas siguientes: vacías, se van llenando a medida que se juegan resultados */
-      for (rondaActual = 2; rondaActual <= totalRondas; rondaActual++) {
-        const anterior = partidosPorRonda[rondaActual - 1];
-        const actual = [];
-        for (let i = 0; i < anterior.length; i += 2) {
-          actual.push({ torneo_id: torneoId, ronda: rondaActual, orden: actual.length, estado: 'pendiente' });
+      for (let g = 0; g < ng; g++) {
+        const letra = letras[g];
+        for (const equipoId of grupos[g]) {
+          await supabase.from('torneo_equipos').update({ grupo: letra }).eq('id', equipoId);
         }
-        const { data: insertada, error: eN } = await supabase.from('torneo_partidos').insert(actual).select();
-        if (eN) return res.status(500).json({ error: eN.message });
-        partidosPorRonda[rondaActual] = insertada;
-
-        /* Vincular cada partido de la ronda anterior con su "siguiente_partido_id" */
-        for (let i = 0; i < anterior.length; i++) {
-          const destino = insertada[Math.floor(i / 2)];
-          await supabase.from('torneo_partidos').update({ siguiente_partido_id: destino.id }).eq('id', anterior[i].id);
+        const equiposGrupo = grupos[g];
+        const partidos = [];
+        for (let i = 0; i < equiposGrupo.length; i++) {
+          for (let j = i + 1; j < equiposGrupo.length; j++) {
+            partidos.push({
+              torneo_id: torneoId, ronda: 1, orden: partidos.length, fase: 'grupos', grupo: letra,
+              equipo_a_id: equiposGrupo[i], equipo_b_id: equiposGrupo[j], estado: 'pendiente',
+            });
+          }
+        }
+        if (partidos.length > 0) {
+          const { error } = await supabase.from('torneo_partidos').insert(partidos);
+          if (error) return res.status(500).json({ error: error.message });
         }
       }
-
-      /* Resolver byes automáticamente: si un partido de ronda 1 tiene un solo
-         equipo (el otro es null), ese equipo avanza solo, sin necesidad de jugar. */
-      for (const p of ronda1Insertada) {
-        if (p.equipo_a_id && !p.equipo_b_id) await avanzarGanador(p.id, p.equipo_a_id);
-        if (!p.equipo_a_id && p.equipo_b_id) await avanzarGanador(p.id, p.equipo_b_id);
-      }
+      await supabase.from('torneos').update({ fase_actual: 'grupos' }).eq('id', torneoId);
     }
 
-    const { error: eUpd } = await supabase.from('torneos').update({ estado: 'en_curso' }).eq('id', torneoId);
-    if (eUpd) return res.status(500).json({ error: eUpd.message });
-
+    await supabase.from('torneos').update({ estado: 'en_curso' }).eq('id', torneoId);
     res.json({ ok: true });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
 });
 
-/* Helper: marca un partido como jugado (bye o resultado normal) y, si tiene
-   siguiente_partido_id, coloca al ganador en el slot libre correspondiente
-   del partido de la siguiente ronda. */
+/* POST /eventos/:eventoId/torneo/:torneoId/cerrar-grupos — cierra la fase
+   de grupos (solo formato grupos_eliminacion) y genera el bracket de
+   eliminación con los clasificados de cada grupo. Requiere que todos los
+   partidos de la fase de grupos ya estén jugados. */
+router.post('/:eventoId/torneo/:torneoId/cerrar-grupos', async (req, res) => {
+  const { eventoId, torneoId } = req.params;
+  try {
+    await assertGestionaTorneo(eventoId, req.user.id);
+
+    const { data: torneo } = await supabase.from('torneos').select('*').eq('id', torneoId).eq('evento_id', eventoId).maybeSingle();
+    if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
+    if (torneo.formato !== 'grupos_eliminacion') return res.status(400).json({ error: 'Este torneo no usa fase de grupos.' });
+    if (torneo.fase_actual !== 'grupos') return res.status(400).json({ error: 'La fase de grupos ya se cerró.' });
+
+    const { data: partidosGrupo } = await supabase
+      .from('torneo_partidos').select('*').eq('torneo_id', torneoId).eq('fase', 'grupos');
+    const pendientes = (partidosGrupo || []).filter(p => p.estado !== 'jugado');
+    if (pendientes.length > 0) {
+      return res.status(400).json({ error: `Faltan ${pendientes.length} partido(s) de la fase de grupos por jugar.` });
+    }
+
+    const { data: equipos } = await supabase.from('torneo_equipos').select('id, nombre, grupo').eq('torneo_id', torneoId);
+
+    /* Calcular tabla por grupo (mismo criterio que /posiciones: 3 pts
+       victoria, 1 empate, desempate por diferencia de gol). */
+    const porGrupo = {};
+    for (const eq of equipos || []) {
+      porGrupo[eq.grupo] = porGrupo[eq.grupo] || [];
+      porGrupo[eq.grupo].push({ ...eq, pj: 0, pg: 0, pe: 0, pp: 0, gf: 0, gc: 0, puntos: 0 });
+    }
+    for (const p of partidosGrupo || []) {
+      const grupo = porGrupo[p.grupo];
+      if (!grupo) continue;
+      const a = grupo.find(e => e.id === p.equipo_a_id);
+      const b = grupo.find(e => e.id === p.equipo_b_id);
+      if (!a || !b) continue;
+      a.pj++; b.pj++;
+      a.gf += p.marcador_a; a.gc += p.marcador_b;
+      b.gf += p.marcador_b; b.gc += p.marcador_a;
+      if (p.marcador_a > p.marcador_b) { a.pg++; a.puntos += 3; b.pp++; }
+      else if (p.marcador_a < p.marcador_b) { b.pg++; b.puntos += 3; a.pp++; }
+      else { a.pe++; b.pe++; a.puntos += 1; b.puntos += 1; }
+    }
+
+    /* Clasificados: los N primeros de cada grupo, ordenados por posición
+       (1°, 2°, ...) — se usa este orden para intentar evitar que en la
+       primera ronda de eliminación se enfrenten equipos del mismo grupo. */
+    const clasificadosPorPosicion = []; // [[1eros...], [2dos...], ...]
+    for (let pos = 0; pos < torneo.avanzan_por_grupo; pos++) {
+      const deEstaPos = [];
+      for (const letra of Object.keys(porGrupo)) {
+        const tabla = porGrupo[letra].sort((x, y) => y.puntos - x.puntos || (y.gf - y.gc) - (x.gf - x.gc));
+        if (tabla[pos]) deEstaPos.push(tabla[pos].id);
+      }
+      barajar(deEstaPos);
+      clasificadosPorPosicion.push(deEstaPos);
+    }
+    const clasificados = clasificadosPorPosicion.flat();
+    if (clasificados.length < 2) {
+      return res.status(400).json({ error: 'No hay suficientes equipos clasificados para armar la eliminación.' });
+    }
+
+    await generarBracketEliminacion(torneoId, clasificados, 'eliminacion');
+    await supabase.from('torneos').update({ fase_actual: 'eliminacion' }).eq('id', torneoId);
+
+    res.json({ ok: true, clasificados: clasificados.length });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* Helper: marca un partido como jugado y, si tiene siguiente_partido_id,
+   coloca al ganador en el slot libre del partido de la siguiente ronda. */
 async function avanzarGanador(partidoId, ganadorId) {
   const { data: partido } = await supabase.from('torneo_partidos').select('*').eq('id', partidoId).maybeSingle();
   await supabase.from('torneo_partidos').update({ estado: 'jugado' }).eq('id', partidoId);
@@ -322,8 +447,6 @@ async function avanzarGanador(partidoId, ganadorId) {
 
 /* ────────────── Resultados ────────────── */
 
-/* PATCH /eventos/:eventoId/torneo/:torneoId/partidos/:id — registrar resultado.
-   Body: { marcador_a, marcador_b, cancha?, fecha_hora? } */
 router.patch('/:eventoId/torneo/:torneoId/partidos/:id', async (req, res) => {
   const { eventoId, torneoId, id } = req.params;
   const { marcador_a, marcador_b, cancha, fecha_hora } = req.body;
@@ -340,11 +463,8 @@ router.patch('/:eventoId/torneo/:torneoId/partidos/:id', async (req, res) => {
     if (fecha_hora !== undefined) updates.fecha_hora = fecha_hora || null;
 
     if (marcador_a != null && marcador_b != null) {
-      if (marcador_a === marcador_b) {
-        const { data: torneo } = await supabase.from('torneos').select('formato').eq('id', torneoId).maybeSingle();
-        if (torneo?.formato === 'eliminacion') {
-          return res.status(400).json({ error: 'En eliminación directa no puede haber empate. Define un ganador.' });
-        }
+      if (marcador_a === marcador_b && partido.fase === 'eliminacion') {
+        return res.status(400).json({ error: 'En eliminación directa no puede haber empate. Define un ganador.' });
       }
       updates.marcador_a = marcador_a;
       updates.marcador_b = marcador_b;
@@ -355,10 +475,16 @@ router.patch('/:eventoId/torneo/:torneoId/partidos/:id', async (req, res) => {
       .from('torneo_partidos').update(updates).eq('id', id).select().single();
     if (error) return res.status(500).json({ error: error.message });
 
-    /* Si se cargó resultado y es eliminación, avanzar al ganador */
     if (updates.estado === 'jugado' && partido.siguiente_partido_id) {
       const ganadorId = marcador_a > marcador_b ? partido.equipo_a_id : partido.equipo_b_id;
       await avanzarGanador(id, ganadorId);
+    }
+
+    /* Notificar a los capitanes cuándo/dónde juega su equipo, si se fijó
+       o cambió el horario de un partido pendiente. Best-effort (no rompe
+       la respuesta si falla el envío). */
+    if ((cancha !== undefined || fecha_hora !== undefined) && updates.fecha_hora) {
+      notificarHorarioPartido(actualizado).catch(err => console.warn('[torneo] notificar horario falló:', err.message));
     }
 
     res.json({ partido: actualizado });
@@ -367,31 +493,89 @@ router.patch('/:eventoId/torneo/:torneoId/partidos/:id', async (req, res) => {
   }
 });
 
-/* GET /eventos/:eventoId/torneo/:torneoId/posiciones — tabla de posiciones (solo formato liga) */
+/* Avisa por push (si tiene cuenta vinculada) y por email al contacto de
+   cada equipo de un partido, cuando se fija/cambia su horario. */
+async function notificarHorarioPartido(partido) {
+  const { notificar } = require('./../lib/notificar.js');
+  const { sendMail } = require('./../lib/email.js');
+
+  const { data: equipos } = await supabase
+    .from('torneo_equipos')
+    .select('id, nombre, contacto_email, contacto_user_id')
+    .in('id', [partido.equipo_a_id, partido.equipo_b_id]);
+
+  const { data: torneo } = await supabase.from('torneos').select('nombre, evento_id').eq('id', partido.torneo_id).maybeSingle();
+  const { data: evento } = torneo ? await supabase.from('eventos').select('titulo').eq('id', torneo.evento_id).maybeSingle() : { data: null };
+
+  const eqA = equipos?.find(e => e.id === partido.equipo_a_id);
+  const eqB = equipos?.find(e => e.id === partido.equipo_b_id);
+  const fechaTxt = new Date(partido.fecha_hora).toLocaleString('es-CO', { weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' });
+
+  for (const [equipo, rival] of [[eqA, eqB], [eqB, eqA]]) {
+    if (!equipo) continue;
+    const cuerpo = `Tu equipo "${equipo.nombre}" juega contra "${rival?.nombre || 'rival por definir'}" el ${fechaTxt}${partido.cancha ? ` en ${partido.cancha}` : ''}.`;
+
+    if (equipo.contacto_user_id) {
+      notificar({
+        userId: equipo.contacto_user_id, tipo: 'torneo',
+        titulo: `${torneo?.nombre || 'Torneo'}: hora de tu partido`,
+        cuerpo, link: `/explorar`, eventoId: torneo?.evento_id,
+      }).catch(() => {});
+    }
+    if (equipo.contacto_email) {
+      sendMail({
+        to: equipo.contacto_email,
+        subject: `${evento?.titulo || 'Torneo'} — ${equipo.nombre} juega el ${fechaTxt}`,
+        html: `<div style="font-family:system-ui,Arial,sans-serif;background:#0D1525;color:#F1F5F9;padding:24px;border-radius:12px">
+          <h2 style="margin:0 0 12px;color:#A78BFA">${torneo?.nombre || 'Torneo'}</h2>
+          <p style="font-size:15px;line-height:1.6;color:#CBD5E1">${cuerpo}</p>
+        </div>`,
+      }).catch(() => {});
+    }
+  }
+}
+
+/* GET /eventos/:eventoId/torneo/:torneoId/posiciones — tabla de posiciones.
+   Para formato liga: una sola tabla. Para grupos_eliminacion en fase
+   'grupos': una tabla POR GRUPO. */
 router.get('/:eventoId/torneo/:torneoId/posiciones', async (req, res) => {
   const { torneoId } = req.params;
 
-  const { data: equipos } = await supabase.from('torneo_equipos').select('id, nombre, foto_url').eq('torneo_id', torneoId);
+  const { data: torneo } = await supabase.from('torneos').select('formato, fase_actual').eq('id', torneoId).maybeSingle();
+  const { data: equipos } = await supabase.from('torneo_equipos').select('id, nombre, foto_url, grupo').eq('torneo_id', torneoId);
   const { data: partidos } = await supabase.from('torneo_partidos').select('*').eq('torneo_id', torneoId).eq('estado', 'jugado');
 
-  const tabla = new Map((equipos || []).map(e => [e.id, {
-    ...e, pj: 0, pg: 0, pe: 0, pp: 0, gf: 0, gc: 0, puntos: 0,
-  }]));
-
-  for (const p of partidos || []) {
-    const a = tabla.get(p.equipo_a_id);
-    const b = tabla.get(p.equipo_b_id);
-    if (!a || !b) continue;
-    a.pj++; b.pj++;
-    a.gf += p.marcador_a; a.gc += p.marcador_b;
-    b.gf += p.marcador_b; b.gc += p.marcador_a;
-    if (p.marcador_a > p.marcador_b) { a.pg++; a.puntos += 3; b.pp++; }
-    else if (p.marcador_a < p.marcador_b) { b.pg++; b.puntos += 3; a.pp++; }
-    else { a.pe++; b.pe++; a.puntos += 1; b.puntos += 1; }
+  function calcularTabla(listaEquipos, listaPartidos) {
+    const tabla = new Map(listaEquipos.map(e => [e.id, { ...e, pj: 0, pg: 0, pe: 0, pp: 0, gf: 0, gc: 0, puntos: 0 }]));
+    for (const p of listaPartidos) {
+      const a = tabla.get(p.equipo_a_id);
+      const b = tabla.get(p.equipo_b_id);
+      if (!a || !b) continue;
+      a.pj++; b.pj++;
+      a.gf += p.marcador_a; a.gc += p.marcador_b;
+      b.gf += p.marcador_b; b.gc += p.marcador_a;
+      if (p.marcador_a > p.marcador_b) { a.pg++; a.puntos += 3; b.pp++; }
+      else if (p.marcador_a < p.marcador_b) { b.pg++; b.puntos += 3; a.pp++; }
+      else { a.pe++; b.pe++; a.puntos += 1; b.puntos += 1; }
+    }
+    return [...tabla.values()].sort((x, y) => y.puntos - x.puntos || (y.gf - y.gc) - (x.gf - x.gc));
   }
 
-  const resultado = [...tabla.values()].sort((x, y) => y.puntos - x.puntos || (y.gf - y.gc) - (x.gf - x.gc));
-  res.json({ posiciones: resultado });
+  if (torneo?.formato === 'grupos_eliminacion' && torneo.fase_actual === 'grupos') {
+    const grupos = {};
+    for (const eq of equipos || []) {
+      grupos[eq.grupo] = grupos[eq.grupo] || [];
+      grupos[eq.grupo].push(eq);
+    }
+    const partidosGrupos = (partidos || []).filter(p => p.fase === 'grupos');
+    const resultado = Object.keys(grupos).sort().map(letra => ({
+      grupo: letra,
+      posiciones: calcularTabla(grupos[letra], partidosGrupos.filter(p => p.grupo === letra)),
+    }));
+    return res.json({ por_grupo: true, grupos: resultado });
+  }
+
+  res.json({ por_grupo: false, posiciones: calcularTabla(equipos || [], partidos || []) });
 });
 
 module.exports = router;

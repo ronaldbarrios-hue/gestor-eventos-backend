@@ -208,7 +208,10 @@ async function puedeEditarEvento(req, eventoId) {
   return { ok: true };
 }
 
-const TIPOS_CAMPO_VALIDOS = ['texto', 'numero', 'fecha', 'seleccion', 'checkbox'];
+/* Tipos de campo soportados por el formulario de compra personalizado.
+   'foto' guarda una URL de imagen (subida a Supabase Storage desde el
+   frontend) en vez de texto libre. */
+const TIPOS_CAMPO_VALIDOS = ['texto', 'numero', 'fecha', 'seleccion', 'checkbox', 'foto'];
 
 /* GET /eventos/:id/formulario — campos personalizados del formulario de compra */
 router.get('/:id/formulario', async (req, res) => {
@@ -226,15 +229,10 @@ router.get('/:id/formulario', async (req, res) => {
 
 /* PUT /eventos/:id/formulario — guarda la lista de campos personalizados.
    Body: { campos: [{ id?, tipo, etiqueta, opciones, requerido }, ...] }
-   IMPORTANTE: a diferencia de la versión anterior (que borraba todo y
-   recreaba con IDs nuevos cada vez), esta versión hace un "diff":
-   - Campos que ya traen `id` y siguen en la lista → se ACTUALIZAN in-place,
-     conservando su ID original.
-   - Campos sin `id` (nuevos, agregados en el frontend) → se INSERTAN.
-   - Campos que existían en la base pero ya no vienen en la lista → se BORRAN.
-   Esto evita que las respuestas ya guardadas en boletas existentes queden
-   "huérfanas" (mostrando "Pregunta eliminada") cada vez que el organizador
-   solo reordena o edita ligeramente el formulario. */
+   Hace un "diff": campos con `id` existente se ACTUALIZAN in-place
+   (conservan su id, así las respuestas ya guardadas en boletas no quedan
+   huérfanas); campos sin `id` se INSERTAN; campos que ya no vienen en la
+   lista se BORRAN. */
 router.put('/:id/formulario', async (req, res) => {
   const permiso = await puedeEditarEvento(req, req.params.id);
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });

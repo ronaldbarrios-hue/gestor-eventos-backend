@@ -180,14 +180,17 @@ router.get('/slug/:slug', async (req, res) => {
     .order('orden', { ascending: true });
   evento.campos_formulario = camposForm || [];
 
-  /* Bandera para saber si el evento tiene módulo de Rueda de Negocios
-     activo (al menos un expositor cargado), y así mostrar el botón en
-     la página pública solo cuando aplica. */
+  /* Banderas para mostrar botones opcionales en la página pública, solo
+     cuando el módulo correspondiente está realmente configurado. */
   const { count: expCount } = await supabase
     .from('networking_expositores')
     .select('id', { count: 'exact', head: true })
     .eq('evento_id', evento.id);
   evento.tiene_networking = (expCount || 0) > 0;
+
+  const { data: torneoRow } = await supabase
+    .from('torneos').select('id').eq('evento_id', evento.id).maybeSingle();
+  evento.tiene_torneo = !!torneoRow;
 
   if (evento.organizador) {
     const o = evento.organizador;
@@ -204,6 +207,33 @@ router.get('/slug/:slug', async (req, res) => {
   }).then(() => {}, () => {});
 
   res.json({ evento });
+});
+
+/* GET /eventos/publicos/slug/:slug/torneo — vista de solo lectura del
+   torneo de un evento publicado, sin necesidad de login ni boleta. No
+   expone nada sensible (solo nombres de equipo, foto, marcadores, horarios). */
+router.get('/slug/:slug/torneo', async (req, res) => {
+  const { slug } = req.params;
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, estado').eq('slug', slug).is('deleted_at', null).maybeSingle();
+  if (!evento || evento.estado !== 'publicado') return res.status(404).json({ error: 'Evento no disponible.' });
+
+  const { data: torneo } = await supabase
+    .from('torneos').select('id, nombre, formato, estado').eq('evento_id', evento.id).maybeSingle();
+  if (!torneo) return res.json({ torneo: null });
+
+  const { data: equipos } = await supabase
+    .from('torneo_equipos').select('id, nombre, foto_url').eq('torneo_id', torneo.id).order('created_at', { ascending: true });
+
+  const { data: partidos } = await supabase
+    .from('torneo_partidos')
+    .select('id, ronda, orden, equipo_a_id, equipo_b_id, marcador_a, marcador_b, estado, cancha, fecha_hora')
+    .eq('torneo_id', torneo.id)
+    .order('ronda', { ascending: true })
+    .order('orden', { ascending: true });
+
+  res.json({ torneo, equipos: equipos || [], partidos: partidos || [] });
 });
 
 /* GET /eventos/publicos/invitacion-pendiente?email=... */

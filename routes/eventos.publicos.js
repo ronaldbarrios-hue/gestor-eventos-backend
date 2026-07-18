@@ -192,6 +192,13 @@ router.get('/slug/:slug', async (req, res) => {
     .from('torneos').select('id').eq('evento_id', evento.id).maybeSingle();
   evento.tiene_torneo = !!torneoRow;
 
+  const CATEGORIAS_AGENDA = ['educacion', 'tecnologia', 'cultura', 'musica'];
+  const { count: sessionsCount } = await supabase
+    .from('agenda_sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('evento_id', evento.id);
+  evento.tiene_agenda = (sessionsCount || 0) > 0 && CATEGORIAS_AGENDA.includes(evento.categoria?.slug);
+
   if (evento.organizador) {
     const o = evento.organizador;
     o.plan = (o.plan === 'pro' && (!o.plan_expires_at || new Date(o.plan_expires_at) > new Date()))
@@ -210,8 +217,7 @@ router.get('/slug/:slug', async (req, res) => {
 });
 
 /* GET /eventos/publicos/slug/:slug/torneo — vista de solo lectura del
-   torneo de un evento publicado, sin necesidad de login ni boleta. No
-   expone nada sensible (solo nombres de equipo, foto, marcadores, horarios). */
+   torneo de un evento publicado, sin necesidad de login ni boleta. */
 router.get('/slug/:slug/torneo', async (req, res) => {
   const { slug } = req.params;
 
@@ -234,6 +240,26 @@ router.get('/slug/:slug/torneo', async (req, res) => {
     .order('orden', { ascending: true });
 
   res.json({ torneo, equipos: equipos || [], partidos: partidos || [] });
+});
+
+/* GET /eventos/publicos/slug/:slug/agenda — agenda completa de solo
+   lectura (todas las salas/tracks), sin necesidad de login ni boleta.
+   Los favoritos personales se consultan aparte (requieren boleta), vía
+   /eventos/:eventoId/agenda/mis-favoritos. */
+router.get('/slug/:slug/agenda', async (req, res) => {
+  const { slug } = req.params;
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, estado').eq('slug', slug).is('deleted_at', null).maybeSingle();
+  if (!evento || evento.estado !== 'publicado') return res.status(404).json({ error: 'Evento no disponible.' });
+
+  const { data: sessions } = await supabase
+    .from('agenda_sessions')
+    .select(`id, titulo, descripcion, inicio, fin, track, ubicacion, speaker:speakers!speaker_id(id, nombre, foto_url, empresa)`)
+    .eq('evento_id', evento.id)
+    .order('inicio', { ascending: true });
+
+  res.json({ evento_id: evento.id, sessions: sessions || [] });
 });
 
 /* GET /eventos/publicos/invitacion-pendiente?email=... */

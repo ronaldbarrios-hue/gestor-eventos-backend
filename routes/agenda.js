@@ -11,6 +11,26 @@ function assertOwner(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
 }
 
+/* El organizador siempre puede; cualquier otro usuario necesita tener al
+   menos una boleta para el evento — mismo criterio que Rueda de Negocios,
+   para poder marcar favoritos en su itinerario personal. */
+async function assertPuedeParticipar(eventoId, user) {
+  const { data: ev } = await supabase.from('eventos').select('owner_id').eq('id', eventoId).maybeSingle();
+  if (!ev) throw new Error('Evento no encontrado.');
+  if (ev.owner_id === user.id) return;
+
+  const email = (user.email || '').toLowerCase();
+  const { data: ticket } = await supabase
+    .from('tickets')
+    .select('id')
+    .eq('evento_id', eventoId)
+    .or(`user_id.eq.${user.id},guest_email.eq.${email}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (!ticket) throw new Error('Necesitas una boleta para este evento para armar tu itinerario personal.');
+}
+
 /* ─────────── SPEAKERS ─────────── */
 
 /* GET /eventos/:eventoId/speakers */
@@ -157,6 +177,54 @@ router.delete('/:eventoId/sessions/:sessionId', async (req, res) => {
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
+});
+
+/* ─────────── FAVORITOS (itinerario personal) ─────────── */
+
+/* GET /eventos/:eventoId/agenda/mis-favoritos — IDs de sesiones marcadas
+   por el usuario logueado en este evento. Requiere boleta (u ser owner). */
+router.get('/:eventoId/agenda/mis-favoritos', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertPuedeParticipar(eventoId, req.user);
+    const { data, error } = await supabase
+      .from('agenda_favoritos')
+      .select('session_id')
+      .eq('evento_id', eventoId)
+      .eq('user_id', req.user.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ favoritos: (data || []).map(f => f.session_id) });
+  } catch (e) {
+    res.status(403).json({ error: e.message });
+  }
+});
+
+/* POST /eventos/:eventoId/agenda/favoritos/:sessionId — marcar como favorita */
+router.post('/:eventoId/agenda/favoritos/:sessionId', async (req, res) => {
+  const { eventoId, sessionId } = req.params;
+  try {
+    await assertPuedeParticipar(eventoId, req.user);
+    const { error } = await supabase
+      .from('agenda_favoritos')
+      .insert({ evento_id: eventoId, session_id: sessionId, user_id: req.user.id });
+    if (error && error.code !== '23505') return res.status(500).json({ error: error.message });
+    res.status(201).json({ ok: true });
+  } catch (e) {
+    res.status(403).json({ error: e.message });
+  }
+});
+
+/* DELETE /eventos/:eventoId/agenda/favoritos/:sessionId — quitar de favoritas */
+router.delete('/:eventoId/agenda/favoritos/:sessionId', async (req, res) => {
+  const { eventoId, sessionId } = req.params;
+  const { error } = await supabase
+    .from('agenda_favoritos')
+    .delete()
+    .eq('evento_id', eventoId)
+    .eq('session_id', sessionId)
+    .eq('user_id', req.user.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 module.exports = router;

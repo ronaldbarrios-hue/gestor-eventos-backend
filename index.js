@@ -66,6 +66,11 @@ app.use('/me',               require('./routes/integraciones.js'));
    con auth global para que esas rutas públicas no sean interceptadas. */
 app.use('/', authLimiter,    require('./routes/pagos.js'));
 app.use('/',                 require('./routes/push.js'));
+/* Promociones aplica auth POR RUTA y expone la validación pública de cupón
+   (checkout anónimo) → debe ir aquí, antes del grupo con auth global.
+   Emails también usa auth por ruta (servicio de correo del evento). */
+app.use('/',                 require('./routes/promociones.js'));
+app.use('/',                 require('./routes/emails.js'));
 /* Routers con router.use(verifySupabaseJWT) GLOBAL montados en '/':
    van AL FINAL del grupo '/' para no bloquear lo público de arriba. */
 app.use('/',                 require('./routes/agente.js'));

@@ -121,6 +121,72 @@ router.post('/', async (req, res) => {
   res.status(201).json({ evento: data });
 });
 
+/* POST /eventos/:id/duplicar — clona un evento con toda su estructura.
+   Copia la CONFIGURACION (landing, branding, correos, checkout, SEO, boletas,
+   formulario, speakers, patrocinadores y roles propios) pero NO las personas
+   ni las ventas: el clon nace en borrador, sin asistentes ni aforo vendido.
+   Se usa tanto en "Duplicar" de la lista como al crear desde una plantilla. */
+router.post('/:id/duplicar', async (req, res) => {
+  const { data: origen, error: e1 } = await supabase
+    .from('eventos').select('*')
+    .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+  if (e1) return res.status(500).json({ error: e1.message });
+  if (!origen) return res.status(404).json({ error: 'Evento no encontrado.' });
+  if (String(origen.owner_id) !== String(req.user.id)) {
+    return res.status(403).json({ error: 'Solo el dueño del evento puede duplicarlo.' });
+  }
+
+  const titulo = String(req.body?.titulo || '').trim() || `${origen.titulo} (copia)`;
+
+  /* page_json se copia salvo `documentos`: esos archivos pertenecen al evento
+     original y arrastrar sus referencias confundiria al organizador. */
+  const page_json = { ...(origen.page_json || {}) };
+  delete page_json.documentos;
+
+  const insert = { owner_id: req.user.id, estado: 'borrador', titulo, page_json, aforo_vendido: 0 };
+  for (const k of CAMPOS_EDITABLES) {
+    if (k === 'titulo' || k === 'page_json') continue;
+    if (origen[k] !== undefined) insert[k] = origen[k];
+  }
+  insert.slug = await uniqueEventoSlug(supabase, titulo);
+
+  const { data: nuevo, error: e2 } = await supabase
+    .from('eventos').insert(insert)
+    .select('*, categoria:categorias(slug, nombre)').single();
+  if (e2) return res.status(500).json({ error: e2.message });
+
+  /* Clona las tablas hijas. Best-effort: si una falla, el clon no se pierde. */
+  const copiado = {};
+  const clonar = async (tabla, transformar = (r) => r, filtro = null) => {
+    try {
+      let q = supabase.from(tabla).select('*').eq('evento_id', origen.id);
+      if (filtro) q = filtro(q);
+      const { data: filasOrigen } = await q;
+      if (!filasOrigen?.length) return;
+      const filas = filasOrigen.map(r => {
+        const copia = { ...r, evento_id: nuevo.id };
+        delete copia.id; delete copia.created_at; delete copia.updated_at;
+        return transformar(copia);
+      });
+      const { error } = await supabase.from(tabla).insert(filas);
+      if (!error) copiado[tabla] = filas.length;
+    } catch { /* una tabla que falle no debe tumbar la duplicacion */ }
+  };
+
+  await clonar('ticket_types', r => ({ ...r, vendidos: 0 }));
+  await clonar('event_form_fields');
+  await clonar('speakers');
+  await clonar('sponsors');
+  /* Los roles de sistema los crea sola la BD al insertar el evento. */
+  await clonar('event_roles', r => r, q => q.eq('is_system', false));
+
+  auditar(req, nuevo.id, 'evento.crear', {
+    entidad: 'evento', entidadId: nuevo.id,
+    detalle: { titulo: nuevo.titulo, duplicado_de: origen.id },
+  });
+  res.status(201).json({ evento: nuevo, copiado });
+});
+
 /* PATCH /eventos/:id — editar */
 router.patch('/:id', async (req, res) => {
   const { data: actual, error: e1 } = await supabase

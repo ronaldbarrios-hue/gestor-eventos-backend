@@ -178,6 +178,24 @@ router.delete('/:eventoId/networking/citas/:citaId', async (req, res) => {
 
 /* ────────────── Gestión del organizador ────────────── */
 
+/* GET /eventos/:eventoId/expositores — lista de expositores para el MAPA y el
+   directorio (staff). Incluye borradores; sin gate de categoría. */
+router.get('/:eventoId/expositores', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+    const { data, error } = await supabase
+      .from('networking_expositores')
+      .select('id, nombre, logo_url, stand, activo, estado_ficha')
+      .eq('evento_id', eventoId).eq('activo', true)
+      .order('orden', { ascending: true }).order('nombre', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ expositores: data || [] });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 /* GET /eventos/:eventoId/networking/admin — expositores + horarios + quién reservó cada uno */
 router.get('/:eventoId/networking/admin', async (req, res) => {
   const { eventoId } = req.params;

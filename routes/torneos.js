@@ -6,8 +6,6 @@ const { assertPermiso } = require('../lib/acceso.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-/* Solo eventos de categoría Deportes pueden tener torneos. */
-const CATEGORIA_PERMITIDA = 'deportes';
 const FORMATOS_VALIDOS = ['eliminacion', 'liga', 'grupos_eliminacion'];
 
 function assertOwner(eventoId, userId) {
@@ -18,47 +16,70 @@ function assertGestionaTorneo(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['gestionar_torneo', 'editar_evento'], 'id, owner_id');
 }
 
-async function assertCategoriaPermitida(eventoId) {
-  const { data: ev } = await supabase
-    .from('eventos')
-    .select('categoria:categorias(slug)')
-    .eq('id', eventoId)
-    .maybeSingle();
-  if (ev?.categoria?.slug !== CATEGORIA_PERMITIDA) {
-    throw new Error('El módulo de Torneo solo está disponible para eventos de categoría Deportes.');
-  }
-}
+/* ────────────── Torneos (VARIOS por evento) ──────────────
+   Un evento puede tener varios torneos con distinta disciplina (Smash,
+   Tekken, boxeo, fútbol…). El módulo ya no se limita a categoría Deportes:
+   una convención de videojuegos también organiza torneos. */
 
-/* ────────────── Torneo (uno por evento, por ahora) ────────────── */
-
-/* GET /eventos/:eventoId/torneo — trae el torneo del evento (si existe), con equipos y partidos */
-router.get('/:eventoId/torneo', async (req, res) => {
+/* GET /eventos/:eventoId/torneos — lista de torneos del evento (metadatos +
+   cuántos equipos tiene cada uno, para el selector). */
+router.get('/:eventoId/torneos', async (req, res) => {
   const { eventoId } = req.params;
+  const { data: torneos, error } = await supabase
+    .from('torneos').select('*').eq('evento_id', eventoId)
+    .order('orden', { ascending: true }).order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
 
-  const { data: torneo } = await supabase
-    .from('torneos').select('*').eq('evento_id', eventoId).maybeSingle();
-  if (!torneo) return res.json({ torneo: null });
-
-  const { data: equipos } = await supabase
-    .from('torneo_equipos').select('*').eq('torneo_id', torneo.id).order('created_at', { ascending: true });
-
-  const { data: partidos } = await supabase
-    .from('torneo_partidos').select('*').eq('torneo_id', torneo.id).order('ronda', { ascending: true }).order('orden', { ascending: true });
-
-  res.json({ torneo, equipos: equipos || [], partidos: partidos || [] });
+  const lista = torneos || [];
+  if (lista.length) {
+    const ids = lista.map(t => t.id);
+    const { data: eqs } = await supabase.from('torneo_equipos').select('torneo_id').in('torneo_id', ids);
+    const conteo = {};
+    for (const e of (eqs || [])) conteo[e.torneo_id] = (conteo[e.torneo_id] || 0) + 1;
+    for (const t of lista) t.equipos_count = conteo[t.id] || 0;
+  }
+  res.json({ torneos: lista });
 });
 
-/* POST /eventos/:eventoId/torneo — crear el torneo del evento (uno solo).
-   Body: { nombre, formato: 'eliminacion' | 'liga' | 'grupos_eliminacion',
-           num_grupos?, avanzan_por_grupo? }
-   Para 'grupos_eliminacion' se piden num_grupos y avanzan_por_grupo. */
+/* Carga completa de un torneo (equipos + partidos). Reutilizado por el GET
+   por-id y por el GET singular retrocompatible. */
+async function cargarTorneo(torneo) {
+  const { data: equipos } = await supabase
+    .from('torneo_equipos').select('*').eq('torneo_id', torneo.id).order('created_at', { ascending: true });
+  const { data: partidos } = await supabase
+    .from('torneo_partidos').select('*').eq('torneo_id', torneo.id).order('ronda', { ascending: true }).order('orden', { ascending: true });
+  return { torneo, equipos: equipos || [], partidos: partidos || [] };
+}
+
+/* GET /eventos/:eventoId/torneos/:torneoId — un torneo con equipos y partidos. */
+router.get('/:eventoId/torneos/:torneoId', async (req, res) => {
+  const { eventoId, torneoId } = req.params;
+  const { data: torneo } = await supabase
+    .from('torneos').select('*').eq('id', torneoId).eq('evento_id', eventoId).maybeSingle();
+  if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
+  res.json(await cargarTorneo(torneo));
+});
+
+/* GET /eventos/:eventoId/torneo — RETROCOMPAT: primer torneo del evento. */
+router.get('/:eventoId/torneo', async (req, res) => {
+  const { eventoId } = req.params;
+  const { data: torneo } = await supabase
+    .from('torneos').select('*').eq('evento_id', eventoId)
+    .order('orden', { ascending: true }).order('created_at', { ascending: true })
+    .limit(1).maybeSingle();
+  if (!torneo) return res.json({ torneo: null, torneos: [] });
+  res.json(await cargarTorneo(torneo));
+});
+
+/* POST /eventos/:eventoId/torneo — crear UN torneo (se pueden crear varios).
+   Body: { nombre, formato, disciplina?, num_grupos?, avanzan_por_grupo? } */
 router.post('/:eventoId/torneo', async (req, res) => {
   const { eventoId } = req.params;
-  const { nombre, formato, num_grupos, avanzan_por_grupo } = req.body;
+  const { nombre, formato, disciplina, num_grupos, avanzan_por_grupo } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del torneo es requerido.' });
   if (!FORMATOS_VALIDOS.includes(formato)) return res.status(400).json({ error: 'Formato inválido.' });
 
-  const insert = { nombre: nombre.trim(), formato, evento_id: eventoId };
+  const insert = { nombre: nombre.trim(), formato, evento_id: eventoId, disciplina: disciplina?.trim() || null };
   if (formato === 'grupos_eliminacion') {
     const ng = Number(num_grupos);
     const apg = Number(avanzan_por_grupo);
@@ -71,10 +92,11 @@ router.post('/:eventoId/torneo', async (req, res) => {
 
   try {
     await assertOwner(eventoId, req.user.id);
-    await assertCategoriaPermitida(eventoId);
 
-    const { data: existente } = await supabase.from('torneos').select('id').eq('evento_id', eventoId).maybeSingle();
-    if (existente) return res.status(400).json({ error: 'Este evento ya tiene un torneo creado.' });
+    /* Orden = al final de los que ya existen. */
+    const { count } = await supabase.from('torneos')
+      .select('id', { count: 'exact', head: true }).eq('evento_id', eventoId);
+    insert.orden = count || 0;
 
     const { data, error } = await supabase.from('torneos').insert(insert).select().single();
     if (error) return res.status(500).json({ error: error.message });

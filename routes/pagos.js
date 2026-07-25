@@ -285,11 +285,13 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   const precioEfectivo = hasEarly ? Number(tipo.early_bird_precio) : Number(tipo.precio);
   if (precioEfectivo <= 0)
     return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usá la reserva directa.' });
-  /* Validar campos personalizados del formulario */
+  /* Validar campos personalizados del formulario aplicables a este tipo de
+     boleta (globales + específicos de `tipo`). */
   const { data: camposReq } = await supabase
-    .from('event_form_fields').select('id, etiqueta, requerido').eq('evento_id', evento.id);
+    .from('event_form_fields').select('id, etiqueta, requerido, ticket_type_id').eq('evento_id', evento.id);
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
   for (const c of camposReq || []) {
+    if (c.ticket_type_id && c.ticket_type_id !== tipo.id) continue;
     if (c.requerido) {
       const v = respuestas[c.id];
       if (v === undefined || v === null || v === '') {

@@ -58,6 +58,9 @@ app.use('/api/v1',           require('./routes/api.js'));
    porque al estar montados en '/' interceptan TODA petición (incluida
    /eventos/publicos y /categorias) y devolverían 401 sin token. */
 app.use('/categorias',       require('./routes/categorias.js'));
+/* Panel del expositor (público, auth por código de su boleta-Stand). Antes de
+   eventos.publicos para que /expositor/:codigo/* tenga prioridad. */
+app.use('/eventos/publicos/expositor', require('./routes/expositor.js'));
 app.use('/eventos/publicos', require('./routes/eventos.publicos.js'));
 app.use('/me',               require('./routes/me.js'));
 app.use('/me',               require('./routes/integraciones.js'));
@@ -94,6 +97,7 @@ app.use('/eventos',          require('./routes/auditoria.js'));
 app.use('/eventos',          require('./routes/analytics.js'));
 app.use('/eventos',          require('./routes/networking.js'));
 app.use('/eventos',          require('./routes/torneos.js'));
+app.use('/eventos',          require('./routes/interacciones.js'));
 app.use('/eventos',          require('./routes/eventos.js'));
 
 if (process.env.NODE_ENV !== 'production') {

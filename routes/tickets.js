@@ -15,7 +15,7 @@ function assertOwner(eventoId, userId) {
 const CAMPOS_EDITABLES = [
   'nombre', 'descripcion', 'precio', 'currency',
   'cupo', 'early_bird_precio', 'early_bird_hasta', 'venta_hasta',
-  'zonas_acceso', 'orden', 'activo',
+  'zonas_acceso', 'orden', 'activo', 'es_expositor',
 ];
 
 function sanitize(body, defaults = {}) {
@@ -24,6 +24,7 @@ function sanitize(body, defaults = {}) {
     if (k in body) {
       let v = body[k];
       if (v === '' && (k.includes('precio') || k.includes('hasta') || k === 'cupo')) v = null;
+      if (k === 'es_expositor') v = Boolean(v);
       out[k] = v;
     }
   }

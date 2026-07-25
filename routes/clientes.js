@@ -2,7 +2,7 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
-const { otorgarPuntos, otorgarBadge } = require('../lib/gamificacion.js');
+const { otorgarPuntos, otorgarBadge, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
 
@@ -52,7 +52,7 @@ router.get('/:eventoId/clientes', async (req, res) => {
     let query = supabase
       .from('tickets')
       .select(`
-        id, codigo, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, created_at,
+        id, codigo, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, acceso, created_at,
         guest_email, guest_nombre, respuestas,
         usuario:profiles!user_id(id, nombre, email, avatar_url),
         tipo:ticket_types!ticket_type_id(id, nombre, precio, currency)
@@ -135,7 +135,7 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
   if (rows.length > 1000) return res.status(400).json({ error: 'Máximo 1000 filas por import. Divide el archivo.' });
 
   try {
-    await assertOwner(eventoId, req.user.id);
+    const evImp = await assertOwner(eventoId, req.user.id);
 
     const { data: tipo, error: et } = await supabase
       .from('ticket_types').select('*').eq('id', ticket_type_id).eq('evento_id', eventoId).maybeSingle();
@@ -190,6 +190,21 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
         const { data: ev } = await supabase.from('eventos').select('aforo_vendido').eq('id', eventoId).single();
         if (ev) await supabase.from('eventos').update({ aforo_vendido: (ev.aforo_vendido || 0) + ok.length }).eq('id', eventoId);
       }
+
+      /* Gamificación: el staff que inscribe suma puntos por asistente
+         registrado (no el owner consigo mismo). Un solo asiento en el balance
+         para todo el lote; el detalle por-lote se registra con `puntos`. */
+      const organizadorId = evImp?.owner_id;
+      if (organizadorId && req.user.id !== organizadorId) {
+        const reglas = await reglasPuntosDeEvento(eventoId);
+        if (reglas.activo && reglas.registro_operado > 0) {
+          otorgarPuntos({
+            userId: req.user.id, organizadorId, audiencia: 'empleado',
+            eventoId, accion: 'registro_operado',
+            puntos: reglas.registro_operado * ok.length,
+          });
+        }
+      }
     }
 
     res.json({ creados: ok.length, errores, ok });
@@ -203,11 +218,20 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
    Owner siempre puede. Miembros del equipo necesitan permiso 'checkin'. */
 router.post('/:eventoId/checkin', async (req, res) => {
   const { eventoId } = req.params;
-  const { qr_token, codigo } = req.body;
+  const { qr_token, codigo, acceso_id } = req.body;
   if (!qr_token && !codigo) return res.status(400).json({ error: 'qr_token o codigo requerido.' });
 
   try {
     const evCtx = await assertCheckinAccess(eventoId, req.user.id);
+
+    /* Puerta/acceso (opcional): config en page_json.accesos. Valida qué tipos
+       de boleta admite y registra por dónde entró la persona. */
+    let puerta = null;
+    if (acceso_id) {
+      const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
+      const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
+      puerta = accesos.find(a => a.id === acceso_id) || null;
+    }
 
     /* Resolver el ticket: por qr_token (verificar firma) o por código corto */
     let ticketQuery;
@@ -239,11 +263,19 @@ router.post('/:eventoId/checkin', async (req, res) => {
       });
     }
     /* estado 'emitido' (pago pendiente) — depende. Aceptamos pero advertimos. */
-    const advertencia = ticket.estado === 'emitido' ? 'Boleta emitida sin pago confirmado.' : null;
+    let advertencia = ticket.estado === 'emitido' ? 'Boleta emitida sin pago confirmado.' : null;
+
+    /* Puerta restringida a ciertos tipos: si la boleta no aplica, se advierte
+       (no se bloquea, para que el staff decida). Ej. "Entrada VIP" con una
+       boleta General. */
+    if (puerta && Array.isArray(puerta.tipos) && puerta.tipos.length
+        && !puerta.tipos.includes(ticket.ticket_type_id)) {
+      advertencia = `Esta boleta (${ticket.tipo?.nombre || 'sin tipo'}) no corresponde a ${puerta.nombre}.`;
+    }
 
     const { data: updated, error: e2 } = await supabase
       .from('tickets')
-      .update({ estado: 'usado', checked_in_at: new Date().toISOString() })
+      .update({ estado: 'usado', checked_in_at: new Date().toISOString(), acceso: puerta?.nombre || null })
       .eq('id', ticket.id)
       .select(`*, tipo:ticket_types!ticket_type_id(nombre)`)
       .single();

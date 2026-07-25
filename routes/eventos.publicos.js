@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const supabase = require('../lib/supabase.js');
+const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { notificar } = require('../lib/notificar.js');
@@ -84,7 +85,7 @@ router.get('/ticket/:codigo', async (req, res) => {
     .select(`
       id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
       guest_nombre, guest_email,
-      tipo:ticket_types!ticket_type_id(nombre, descripcion, currency),
+      tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor),
       evento:eventos!evento_id(id, slug, titulo, fecha_inicio, location_nombre, cover_url)
     `)
     .eq('codigo', codigo)
@@ -96,11 +97,39 @@ router.get('/ticket/:codigo', async (req, res) => {
   if (data.evento?.id) {
     const { data: campos } = await supabase
       .from('event_form_fields')
-      .select('id, tipo, etiqueta, opciones, requerido, orden')
+      .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
       .eq('evento_id', data.evento.id)
       .order('orden', { ascending: true });
     data.evento.campos_formulario = campos || [];
   }
+
+  /* Puntos, historial y qué puede reclamar: es lo que vuelve híbrida la
+     escarapela — el asistente ve en su móvil lo que le fueron marcando y a
+     qué le alcanza. El saldo respeta el alcance que fijó el organizador. */
+  const { data: inter } = await supabase
+    .from('ticket_interacciones')
+    .select('id, tipo, puntos, motivo_texto, nota, lugar, created_at')
+    .eq('ticket_id', data.id)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  data.interacciones = inter || [];
+
+  if (data.evento?.id) {
+    const { data: ev } = await supabase
+      .from('eventos').select('owner_id').eq('id', data.evento.id).maybeSingle();
+    if (ev?.owner_id) {
+      const saldo = await saldoDeTicket(data, { organizadorId: ev.owner_id, eventoId: data.evento.id });
+      data.puntos = saldo.saldo;
+      data.puntos_detalle = saldo;
+      const recs = await recompensasDisponibles(ev.owner_id, data.evento.id);
+      data.recompensas = recs.map(r => ({ ...r, alcanzable: !r.agotada && saldo.saldo >= r.costo_puntos }));
+      const { data: mis } = await supabase
+        .from('canjes').select('id, titulo, costo_puntos, codigo, estado, created_at')
+        .eq('ticket_id', data.id).order('created_at', { ascending: false });
+      data.canjes = mis || [];
+    }
+  }
+  if (data.puntos == null) data.puntos = (inter || []).reduce((s, r) => s + (r.puntos || 0), 0);
 
   res.json({ ticket: data });
 });
@@ -143,6 +172,70 @@ router.post('/ticket/:codigo/formulario', async (req, res) => {
   res.json({ ok: true });
 });
 
+/* ─────────── Ficha del expositor (boleta-Stand) ───────────
+   La empresa edita su propia ficha con el código de su boleta-Stand, igual
+   que el asistente completa su formulario. Editar la ficha propia no emite
+   valor (a diferencia de dar puntos), así que el código basta como credencial. */
+
+/* Resuelve la ficha por el código de una boleta cuyo tipo es_expositor. */
+async function resolverFichaExpositor(codigo) {
+  const cod = String(codigo || '').toUpperCase().trim();
+  if (cod.length < 4) return { error: 'Código inválido.' };
+  const { data: ticket } = await supabase
+    .from('tickets')
+    .select('id, evento_id, estado, guest_nombre, guest_email, ticket_type_id, tipo:ticket_types!ticket_type_id(nombre, es_expositor)')
+    .eq('codigo', cod).maybeSingle();
+  if (!ticket) return { error: 'Boleta no encontrada.' };
+  if (!ticket.tipo?.es_expositor) return { error: 'Esta boleta no es de expositor.' };
+  const { data: ficha } = await supabase
+    .from('networking_expositores').select('*').eq('ticket_id', ticket.id).maybeSingle();
+  return { ticket, ficha };
+}
+
+/* GET /eventos/publicos/expositor/:codigo — la empresa carga su ficha. */
+router.get('/expositor/:codigo', async (req, res) => {
+  const { error, ticket, ficha } = await resolverFichaExpositor(req.params.codigo);
+  if (error) return res.status(error === 'Código inválido.' ? 400 : 404).json({ error });
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, slug, titulo, cover_url, fecha_inicio, fecha_fin, timezone')
+    .eq('id', ticket.evento_id).maybeSingle();
+
+  res.json({
+    ficha: ficha || null,
+    pagada: ticket.estado === 'pagado' || ticket.estado === 'usado',
+    ticket: { codigo: req.params.codigo.toUpperCase().trim(), nombre: ticket.guest_nombre, email: ticket.guest_email },
+    evento,
+  });
+});
+
+/* PUT /eventos/publicos/expositor/:codigo — la empresa edita SU ficha.
+   Nunca puede tocar evento_id, ticket_id ni activo. */
+const CAMPOS_FICHA = ['nombre', 'descripcion', 'logo_url', 'stand', 'tipo_persona',
+  'contacto_nombre', 'contacto_email', 'contacto_telefono', 'sitio_web', 'redes', 'categoria_negocio'];
+
+router.put('/expositor/:codigo', async (req, res) => {
+  const { error, ticket, ficha } = await resolverFichaExpositor(req.params.codigo);
+  if (error) return res.status(error === 'Código inválido.' ? 400 : 404).json({ error });
+  if (!ficha) return res.status(409).json({ error: 'La ficha aún no está lista. Si acabas de pagar, espera unos segundos.' });
+
+  const updates = {};
+  for (const k of CAMPOS_FICHA) if (k in req.body) updates[k] = req.body[k];
+  if ('tipo_persona' in updates && !['natural', 'empresa'].includes(updates.tipo_persona)) {
+    return res.status(400).json({ error: 'Tipo inválido.' });
+  }
+  if ('nombre' in updates && !String(updates.nombre).trim()) {
+    return res.status(400).json({ error: 'El nombre es obligatorio.' });
+  }
+  if (req.body.marcar_completa) updates.estado_ficha = 'completa';
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });
+
+  const { data, error: eUpd } = await supabase
+    .from('networking_expositores').update(updates).eq('id', ficha.id).select('*').single();
+  if (eUpd) return res.status(500).json({ error: eUpd.message });
+  res.json({ ficha: data });
+});
+
 /* GET /eventos/publicos/slug/:slug */
 router.get('/slug/:slug', async (req, res) => {
   const { slug } = req.params;
@@ -175,7 +268,7 @@ router.get('/slug/:slug', async (req, res) => {
 
   const { data: camposForm } = await supabase
     .from('event_form_fields')
-    .select('id, tipo, etiqueta, opciones, requerido, orden')
+    .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
     .eq('evento_id', evento.id)
     .order('orden', { ascending: true });
   evento.campos_formulario = camposForm || [];
@@ -188,16 +281,67 @@ router.get('/slug/:slug', async (req, res) => {
     .eq('evento_id', evento.id);
   evento.tiene_networking = (expCount || 0) > 0;
 
-  const { data: torneoRow } = await supabase
-    .from('torneos').select('id').eq('evento_id', evento.id).maybeSingle();
-  evento.tiene_torneo = !!torneoRow;
+  /* Puede haber VARIOS torneos por evento — contar, no maybeSingle (que
+     lanzaría error con más de una fila). */
+  const { count: torneoCount } = await supabase
+    .from('torneos').select('id', { count: 'exact', head: true }).eq('evento_id', evento.id);
+  evento.tiene_torneo = (torneoCount || 0) > 0;
 
-  const CATEGORIAS_AGENDA = ['educacion', 'tecnologia', 'cultura', 'musica'];
+  /* "Espacio del evento": el calendario de sub-eventos aplica a CUALQUIER
+     evento (una convención de anime tiene stands, torneos y shows aunque no
+     sea de categoría "educación"). Antes se limitaba a 4 categorías; ahora
+     basta con que haya sub-eventos cargados. */
   const { count: sessionsCount } = await supabase
     .from('agenda_sessions')
     .select('id', { count: 'exact', head: true })
     .eq('evento_id', evento.id);
-  evento.tiene_agenda = (sessionsCount || 0) > 0 && CATEGORIAS_AGENDA.includes(evento.categoria?.slug);
+  evento.tiene_espacio = (sessionsCount || 0) > 0;
+  evento.tiene_agenda  = evento.tiene_espacio; // alias retrocompatible
+
+  /* Catálogo de recompensas para el bloque "Premios" de la landing (sin saldo:
+     eso es por boleta y va en /mi-ticket). */
+  try {
+    const { data: owner } = await supabase
+      .from('eventos').select('owner_id').eq('id', evento.id).maybeSingle();
+    if (owner?.owner_id) {
+      evento.recompensas = await recompensasDisponibles(owner.owner_id, evento.id);
+    }
+  } catch { evento.recompensas = []; }
+
+  /* Expositores para el bloque "Directorio de expositores": solo fichas
+     activas y ya publicadas (estado_ficha='completa'), con sus franjas. */
+  try {
+    const { data: fichas } = await supabase
+      .from('networking_expositores')
+      .select('id, nombre, descripcion, logo_url, stand, tipo_persona, sitio_web, redes, categoria_negocio, orden')
+      .eq('evento_id', evento.id).eq('activo', true).eq('estado_ficha', 'completa')
+      .order('orden', { ascending: true }).order('nombre', { ascending: true });
+    const lista = fichas || [];
+    if (lista.length) {
+      const { data: franjas } = await supabase
+        .from('agenda_sessions').select('id, titulo, inicio, fin, ubicacion, expositor_id')
+        .in('expositor_id', lista.map(f => f.id)).order('inicio', { ascending: true });
+      const porExpo = {};
+      for (const fr of (franjas || [])) (porExpo[fr.expositor_id] = porExpo[fr.expositor_id] || []).push(fr);
+      for (const f of lista) f.franjas = porExpo[f.id] || [];
+    }
+    evento.expositores = lista;
+    evento.tiene_expositores = lista.length > 0;
+  } catch { evento.expositores = []; evento.tiene_expositores = false; }
+
+  /* Sub-eventos ubicados en el mapa: se resuelven en vivo (título/hora frescos)
+     a partir de los marcadores tipo 'sesion' de page_json.mapa. */
+  try {
+    const marc = Array.isArray(evento.page_json?.mapa?.marcadores) ? evento.page_json.mapa.marcadores : [];
+    const sesionIds = [...new Set(marc.filter(m => m?.tipo === 'sesion' && m.sesion_id).map(m => m.sesion_id))];
+    if (sesionIds.length) {
+      const { data: ses } = await supabase
+        .from('agenda_sessions').select('id, titulo, tipo, inicio, fin, ubicacion').in('id', sesionIds);
+      evento.mapa_sesiones = ses || [];
+    } else {
+      evento.mapa_sesiones = [];
+    }
+  } catch { evento.mapa_sesiones = []; }
 
   if (evento.organizador) {
     const o = evento.organizador;
@@ -216,30 +360,63 @@ router.get('/slug/:slug', async (req, res) => {
   res.json({ evento });
 });
 
-/* GET /eventos/publicos/slug/:slug/torneo — vista de solo lectura del
-   torneo de un evento publicado, sin necesidad de login ni boleta. */
-router.get('/slug/:slug/torneo', async (req, res) => {
-  const { slug } = req.params;
-
-  const { data: evento } = await supabase
-    .from('eventos').select('id, estado').eq('slug', slug).is('deleted_at', null).maybeSingle();
-  if (!evento || evento.estado !== 'publicado') return res.status(404).json({ error: 'Evento no disponible.' });
-
-  const { data: torneo } = await supabase
-    .from('torneos').select('id, nombre, formato, estado').eq('evento_id', evento.id).maybeSingle();
-  if (!torneo) return res.json({ torneo: null });
-
+/* Carga pública (solo lectura) de un torneo: equipos + partidos sin datos
+   sensibles. Reutilizada por la vista singular y la de un torneo concreto. */
+async function cargarTorneoPublico(torneo) {
   const { data: equipos } = await supabase
     .from('torneo_equipos').select('id, nombre, foto_url').eq('torneo_id', torneo.id).order('created_at', { ascending: true });
-
   const { data: partidos } = await supabase
     .from('torneo_partidos')
-    .select('id, ronda, orden, equipo_a_id, equipo_b_id, marcador_a, marcador_b, estado, cancha, fecha_hora')
+    .select('id, ronda, orden, equipo_a_id, equipo_b_id, marcador_a, marcador_b, estado, cancha, fecha_hora, fase, grupo')
     .eq('torneo_id', torneo.id)
     .order('ronda', { ascending: true })
     .order('orden', { ascending: true });
+  return { torneo, equipos: equipos || [], partidos: partidos || [] };
+}
 
-  res.json({ torneo, equipos: equipos || [], partidos: partidos || [] });
+async function eventoPublicado(slug) {
+  const { data: evento } = await supabase
+    .from('eventos').select('id, estado').eq('slug', slug).is('deleted_at', null).maybeSingle();
+  if (!evento || evento.estado !== 'publicado') return null;
+  return evento;
+}
+
+/* GET /eventos/publicos/slug/:slug/torneos — lista de torneos del evento. */
+router.get('/slug/:slug/torneos', async (req, res) => {
+  const evento = await eventoPublicado(req.params.slug);
+  if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
+  const { data: torneos } = await supabase
+    .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, orden')
+    .eq('evento_id', evento.id)
+    .order('orden', { ascending: true }).order('created_at', { ascending: true });
+  res.json({ torneos: torneos || [] });
+});
+
+/* GET /eventos/publicos/slug/:slug/torneos/:torneoId — un torneo concreto. */
+router.get('/slug/:slug/torneos/:torneoId', async (req, res) => {
+  const evento = await eventoPublicado(req.params.slug);
+  if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
+  const { data: torneo } = await supabase
+    .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, num_grupos, avanzan_por_grupo')
+    .eq('id', req.params.torneoId).eq('evento_id', evento.id).maybeSingle();
+  if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
+  res.json(await cargarTorneoPublico(torneo));
+});
+
+/* GET /eventos/publicos/slug/:slug/torneo — RETROCOMPAT: primer torneo,
+   más la lista de todos para que la página pública ofrezca el selector. */
+router.get('/slug/:slug/torneo', async (req, res) => {
+  const evento = await eventoPublicado(req.params.slug);
+  if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
+
+  const { data: torneos } = await supabase
+    .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, num_grupos, avanzan_por_grupo')
+    .eq('evento_id', evento.id)
+    .order('orden', { ascending: true }).order('created_at', { ascending: true });
+
+  if (!torneos || !torneos.length) return res.json({ torneo: null, torneos: [] });
+  const full = await cargarTorneoPublico(torneos[0]);
+  res.json({ ...full, torneos });
 });
 
 /* GET /eventos/publicos/slug/:slug/agenda — agenda completa de solo
@@ -255,7 +432,9 @@ router.get('/slug/:slug/agenda', async (req, res) => {
 
   const { data: sessions } = await supabase
     .from('agenda_sessions')
-    .select(`id, titulo, descripcion, inicio, fin, track, ubicacion, speaker:speakers!speaker_id(id, nombre, foto_url, empresa)`)
+    .select(`id, titulo, descripcion, inicio, fin, track, ubicacion, tipo, torneo_id, expositor_id,
+             speaker:speakers!speaker_id(id, nombre, foto_url, empresa),
+             expositor:networking_expositores!expositor_id(id, nombre, logo_url)`)
     .eq('evento_id', evento.id)
     .order('inicio', { ascending: true });
 
@@ -349,10 +528,14 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     return res.status(400).json({ error: 'Este ticket requiere pago. Usá el flujo de checkout MP.' });
   }
 
+  /* Solo se validan los campos aplicables a ESTE tipo de boleta: los globales
+     (ticket_type_id NULL) y los específicos de `tipo`. Un campo obligatorio de
+     VIP no debe bloquear una compra de General. */
   const { data: camposReq } = await supabase
-    .from('event_form_fields').select('id, etiqueta, requerido').eq('evento_id', evento.id);
+    .from('event_form_fields').select('id, etiqueta, requerido, ticket_type_id').eq('evento_id', evento.id);
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
   for (const c of camposReq || []) {
+    if (c.ticket_type_id && c.ticket_type_id !== tipo.id) continue;
     if (c.requerido) {
       const v = respuestas[c.id];
       if (v === undefined || v === null || v === '') {

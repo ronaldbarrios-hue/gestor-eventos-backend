@@ -173,8 +173,26 @@ router.post('/:id/duplicar', async (req, res) => {
     } catch { /* una tabla que falle no debe tumbar la duplicacion */ }
   };
 
-  await clonar('ticket_types', r => ({ ...r, vendidos: 0 }));
-  await clonar('event_form_fields');
+  /* ticket_types se clona a mano para capturar el mapa old_id → new_id: los
+     campos de formulario específicos de un tipo deben re-apuntar al tipo NUEVO,
+     no al del evento original. */
+  const mapaTipos = {};
+  try {
+    const { data: tiposOrigen } = await supabase
+      .from('ticket_types').select('*').eq('evento_id', origen.id);
+    for (const t of (tiposOrigen || [])) {
+      const copia = { ...t, evento_id: nuevo.id, vendidos: 0 };
+      delete copia.id; delete copia.created_at; delete copia.updated_at;
+      const { data: insertado } = await supabase.from('ticket_types').insert(copia).select('id').single();
+      if (insertado) mapaTipos[t.id] = insertado.id;
+    }
+    copiado.ticket_types = Object.keys(mapaTipos).length;
+  } catch { /* best-effort */ }
+
+  await clonar('event_form_fields', r => ({
+    ...r,
+    ticket_type_id: r.ticket_type_id ? (mapaTipos[r.ticket_type_id] || null) : null,
+  }));
   await clonar('speakers');
   await clonar('sponsors');
   /* Los roles de sistema los crea sola la BD al insertar el evento. */
@@ -286,7 +304,7 @@ router.get('/:id/formulario', async (req, res) => {
 
   const { data, error } = await supabase
     .from('event_form_fields')
-    .select('id, tipo, etiqueta, opciones, requerido, orden')
+    .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
     .eq('evento_id', req.params.id)
     .order('orden', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
@@ -342,6 +360,7 @@ router.put('/:id/formulario', async (req, res) => {
           opciones: c.tipo === 'seleccion' ? c.opciones : null,
           requerido: Boolean(c.requerido),
           orden: i,
+          ticket_type_id: c.ticket_type_id || null,
         })
         .eq('id', c.id);
       if (eUpd) return res.status(500).json({ error: eUpd.message });
@@ -360,6 +379,7 @@ router.put('/:id/formulario', async (req, res) => {
       opciones: c.tipo === 'seleccion' ? c.opciones : null,
       requerido: Boolean(c.requerido),
       orden: c._orden,
+      ticket_type_id: c.ticket_type_id || null,
     }));
     const { error: eIns } = await supabase.from('event_form_fields').insert(filas);
     if (eIns) return res.status(500).json({ error: eIns.message });
@@ -367,7 +387,7 @@ router.put('/:id/formulario', async (req, res) => {
 
   const { data: final, error: eFinal } = await supabase
     .from('event_form_fields')
-    .select('id, tipo, etiqueta, opciones, requerido, orden')
+    .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
     .eq('evento_id', req.params.id)
     .order('orden', { ascending: true });
   if (eFinal) return res.status(500).json({ error: eFinal.message });

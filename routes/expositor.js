@@ -278,6 +278,7 @@ router.post('/:codigo/franjas', cargarExpositor, async (req, res) => {
     titulo: titulo.trim(), descripcion: descripcion || null,
     inicio, fin: fin || null, ubicacion: ubicacion || req.expositor.ficha.stand || null,
     track: req.expositor.ficha.nombre,
+    moderacion: 'pendiente',   // el organizador la aprueba antes de que sea pública
   }).select('*').single();
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json({ franja: data });

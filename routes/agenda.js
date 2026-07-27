@@ -153,7 +153,7 @@ router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
   const { eventoId, sessionId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
-    const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id', 'orden', 'tipo', 'torneo_id'];
+    const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id', 'orden', 'tipo', 'torneo_id', 'moderacion'];
     const updates = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });

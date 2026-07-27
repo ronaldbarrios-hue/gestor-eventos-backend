@@ -320,7 +320,9 @@ router.get('/slug/:slug', async (req, res) => {
     if (lista.length) {
       const { data: franjas } = await supabase
         .from('agenda_sessions').select('id, titulo, inicio, fin, ubicacion, expositor_id')
-        .in('expositor_id', lista.map(f => f.id)).order('inicio', { ascending: true });
+        .in('expositor_id', lista.map(f => f.id))
+        .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
+        .order('inicio', { ascending: true });
       const porExpo = {};
       for (const fr of (franjas || [])) (porExpo[fr.expositor_id] = porExpo[fr.expositor_id] || []).push(fr);
       for (const f of lista) f.franjas = porExpo[f.id] || [];
@@ -436,6 +438,7 @@ router.get('/slug/:slug/agenda', async (req, res) => {
              speaker:speakers!speaker_id(id, nombre, foto_url, empresa),
              expositor:networking_expositores!expositor_id(id, nombre, logo_url)`)
     .eq('evento_id', evento.id)
+    .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
     .order('inicio', { ascending: true });
 
   res.json({ evento_id: evento.id, sessions: sessions || [] });

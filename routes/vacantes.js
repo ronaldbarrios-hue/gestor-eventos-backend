@@ -222,6 +222,19 @@ router.get('/perfil-talento/:userId', async (req, res) => {
   res.json({ perfil: { ...perfil, nombre: prof?.nombre, avatar_url: prof?.avatar_url }, resenas: lista, promedio: prom, total_resenas: lista.length });
 });
 
+/* Reputación pública del organizador (reseñas que le dejaron los trabajadores). */
+router.get('/me/organizador/reputacion', async (req, res) => {
+  const { data: resenas } = await supabase.from('talento_resenas')
+    .select('estrellas, comentario, created_at, evento:eventos!evento_id(titulo), de:profiles!de_user_id(nombre, avatar_url)')
+    .eq('para_user_id', req.user.id).eq('rol_de', 'trabajador')
+    .order('created_at', { ascending: false }).limit(50);
+  const lista = resenas || [];
+  const promedio = lista.length ? lista.reduce((a, r) => a + r.estrellas, 0) / lista.length : null;
+  const { count: eventos } = await supabase.from('eventos')
+    .select('id', { count: 'exact', head: true }).eq('owner_id', req.user.id);
+  res.json({ resenas: lista, promedio, total_resenas: lista.length, eventos: eventos || 0 });
+});
+
 /* ═══════════════════════ ORGANIZADOR (dentro del evento) ═══════════════════════ */
 
 const CAMPOS_VACANTE = ['titulo', 'descripcion', 'rol_id', 'rol_texto', 'event_rol_id', 'requisitos',

@@ -43,7 +43,7 @@ router.get('/', async (req, res) => {
 
 /* PATCH /me — actualizar campos editables del perfil */
 router.patch('/', async (req, res) => {
-  const allowed = ['nombre', 'handle', 'avatar_url', 'telefono', 'ciudad', 'empresa', 'ocupacion'];
+  const allowed = ['nombre', 'handle', 'avatar_url', 'telefono', 'ciudad', 'empresa', 'ocupacion', 'bio'];
   const updates = {};
   for (const k of allowed) {
     if (k in req.body) updates[k] = req.body[k];

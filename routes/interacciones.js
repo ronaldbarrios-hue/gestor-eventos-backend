@@ -209,6 +209,37 @@ router.get('/:eventoId/interacciones', async (req, res) => {
   } catch (e) { err(res, e); }
 });
 
+/* GET /eventos/:eventoId/expositores/ranking — clasificación de expositores
+   por puntos otorgados e interacciones registradas (gamificación por stand). */
+router.get('/:eventoId/expositores/ranking', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertEscaneo(eventoId, req.user.id);
+    const { data, error } = await supabase.from('ticket_interacciones')
+      .select('expositor_id, puntos, tipo')
+      .eq('evento_id', eventoId).not('expositor_id', 'is', null);
+    if (error) return res.status(500).json({ error: error.message });
+    const agg = {};
+    for (const r of data || []) {
+      const k = r.expositor_id;
+      agg[k] = agg[k] || { expositor_id: k, puntos: 0, interacciones: 0 };
+      agg[k].puntos += Number(r.puntos || 0);
+      agg[k].interacciones += 1;
+    }
+    const ids = Object.keys(agg);
+    const nombres = {};
+    if (ids.length) {
+      const { data: exps } = await supabase.from('networking_expositores')
+        .select('id, nombre, logo_url, stand').in('id', ids);
+      for (const e of exps || []) nombres[e.id] = e;
+    }
+    const ranking = Object.values(agg)
+      .map(a => ({ ...a, nombre: nombres[a.expositor_id]?.nombre || 'Expositor', logo_url: nombres[a.expositor_id]?.logo_url || null, stand: nombres[a.expositor_id]?.stand || null }))
+      .sort((x, y) => y.puntos - x.puntos || y.interacciones - x.interacciones);
+    res.json({ ranking });
+  } catch (e) { err(res, e); }
+});
+
 /* DELETE /eventos/:eventoId/interacciones/:id — deshacer un registro
    (un escaneo equivocado no debe quedar pesando en el saldo). */
 router.delete('/:eventoId/interacciones/:id', async (req, res) => {

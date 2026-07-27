@@ -1,0 +1,447 @@
+/* ══════════════════════════════════════════════════════════════════
+   GESTEK — "Explorar vacantes disponibles" (bolsa de empleo de eventos)
+
+   Mercado de dos lados:
+   · CANDIDATO  → /me/talento (perfil CV), /vacantes (explorar), /me/postulaciones
+   · ORGANIZADOR→ /eventos/:id/vacantes (publicar), pipeline, contratar→equipo
+
+   GESTEK conecta; NO procesa el sueldo. La única plata que toca la
+   plataforma es su comisión (COMISION_PCT del contrato) y los destacados.
+
+   Montado en '/' con verifySupabaseJWT global. Backend usa service_role
+   (las tablas tienen RLS activo sin políticas).
+   ════════════════════════════════════════════════════════════════════ */
+const express = require('express');
+const supabase = require('../lib/supabase.js');
+const { verifySupabaseJWT } = require('../middleware/auth.js');
+const { assertPermiso } = require('../lib/acceso.js');
+const { notificar } = require('../lib/notificar.js');
+
+const router = express.Router();
+router.use(verifySupabaseJWT);
+
+const ETAPAS = ['postulado', 'revisado', 'entrevista', 'oferta', 'aceptado', 'rechazado'];
+const MODALIDADES = ['presencial', 'remoto', 'hibrido'];
+
+/* Notificar sin romper la petición si el helper falla. */
+function avisar(payload) {
+  try { const p = notificar(payload); if (p?.catch) p.catch(() => {}); }
+  catch { /* noop */ }
+}
+
+const slugify = (s) => {
+  const base = (s || '').toString().toLowerCase().trim().normalize('NFD');
+  let out = '';
+  for (const c of base) { const n = c.charCodeAt(0); if (n < 0x300 || n > 0x36f) out += c; }  // quita diacríticos
+  return out.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 48) || 'rol';
+};
+
+/* ═══════════════════════ PERFIL DE TALENTO (candidato) ═══════════════════════ */
+
+router.get('/me/talento', async (req, res) => {
+  const { data, error } = await supabase
+    .from('perfil_talento').select('*').eq('user_id', req.user.id).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ perfil: data || null });
+});
+
+const CAMPOS_PERFIL = ['titular', 'bio', 'habilidades', 'experiencia', 'disponibilidad',
+  'ciudad', 'pais', 'telefono', 'foto_url', 'portfolio_url', 'redes'];
+
+router.put('/me/talento', async (req, res) => {
+  const fila = { user_id: req.user.id, updated_at: new Date().toISOString() };
+  for (const k of CAMPOS_PERFIL) if (req.body?.[k] !== undefined) fila[k] = req.body[k];
+  const { data, error } = await supabase
+    .from('perfil_talento').upsert(fila, { onConflict: 'user_id' }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ perfil: data });
+});
+
+router.post('/me/talento/publicar', async (req, res) => {
+  const publicado = req.body?.publicado !== false;
+  const { data, error } = await supabase
+    .from('perfil_talento').update({ publicado, updated_at: new Date().toISOString() })
+    .eq('user_id', req.user.id).select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(400).json({ error: 'Primero crea tu perfil de talento.' });
+  res.json({ perfil: data });
+});
+
+/* Verificación de identidad (identidad + rostro). STUB v1: marca 'pendiente'.
+   La integración con el proveedor KYC (p.ej. Truora) llega en un paso posterior;
+   el webhook /webhooks/kyc confirmará 'verificado'. */
+router.post('/me/talento/verificacion', async (req, res) => {
+  const { data, error } = await supabase
+    .from('perfil_talento').update({ verificacion_estado: 'pendiente', updated_at: new Date().toISOString() })
+    .eq('user_id', req.user.id).select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(400).json({ error: 'Primero crea tu perfil de talento.' });
+  res.json({ perfil: data, pendiente: true, mensaje: 'Verificación en configuración — la integración KYC se activará pronto.' });
+});
+
+/* ═══════════════════════ CATÁLOGO DE ROLES ═══════════════════════ */
+
+router.get('/vacantes/roles', async (req, res) => {
+  const { data, error } = await supabase
+    .from('catalogo_roles').select('id, nombre, slug, global, owner_id')
+    .or(`global.eq.true,owner_id.eq.${req.user.id}`)
+    .order('orden', { ascending: true }).order('nombre', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ roles: data || [] });
+});
+
+router.post('/vacantes/roles', async (req, res) => {
+  const nombre = (req.body?.nombre || '').trim();
+  if (!nombre) return res.status(400).json({ error: 'El nombre del rol es requerido.' });
+  const { data, error } = await supabase
+    .from('catalogo_roles').insert({ nombre, slug: slugify(nombre), global: false, owner_id: req.user.id })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json({ rol: data });
+});
+
+/* ═══════════════════════ EXPLORAR (candidato) ═══════════════════════ */
+
+const SEL_VACANTE = `id, evento_id, titulo, descripcion, rol_id, rol_texto, requisitos, preguntas,
+  pago_monto, pago_moneda, pago_periodo, comision_pct, ciudad, modalidad, fecha_inicio, fecha_fin,
+  cupos, estado, destacada_hasta, created_at,
+  evento:eventos!evento_id(id, titulo, slug, cover_url, estado, location_nombre),
+  rol:catalogo_roles!rol_id(id, nombre, slug)`;
+
+router.get('/vacantes', async (req, res) => {
+  const { ciudad, rol_id, modalidad, pago_min, q } = req.query;
+  let query = supabase.from('vacantes').select(SEL_VACANTE).eq('estado', 'abierta');
+  if (ciudad)    query = query.ilike('ciudad', `%${ciudad}%`);
+  if (rol_id)    query = query.eq('rol_id', rol_id);
+  if (modalidad && MODALIDADES.includes(modalidad)) query = query.eq('modalidad', modalidad);
+  if (pago_min)  query = query.gte('pago_monto', Number(pago_min) || 0);
+  if (q)         query = query.or(`titulo.ilike.%${q}%,descripcion.ilike.%${q}%`);
+  query = query.order('destacada_hasta', { ascending: false, nullsFirst: false })
+               .order('created_at', { ascending: false }).limit(100);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  const ahora = Date.now();
+  const vacantes = (data || [])
+    .filter(v => v.evento?.estado === 'publicado')   // solo eventos publicados
+    .map(v => ({ ...v, destacada: v.destacada_hasta && new Date(v.destacada_hasta).getTime() > ahora }));
+  res.json({ vacantes });
+});
+
+router.get('/vacantes/:id', async (req, res) => {
+  const { data, error } = await supabase.from('vacantes').select(SEL_VACANTE).eq('id', req.params.id).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Vacante no encontrada.' });
+  const { data: yaPostule } = await supabase
+    .from('postulaciones').select('id, etapa').eq('vacante_id', req.params.id).eq('user_id', req.user.id).maybeSingle();
+  res.json({ vacante: data, mi_postulacion: yaPostule || null });
+});
+
+router.post('/vacantes/:id/postular', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { data: perfil } = await supabase.from('perfil_talento').select('*').eq('user_id', req.user.id).maybeSingle();
+    if (!perfil) return res.status(400).json({ error: 'Primero crea tu perfil de talento en Mi Espacio.' });
+
+    const { data: vac } = await supabase.from('vacantes')
+      .select('id, titulo, estado, owner_id, evento_id').eq('id', id).maybeSingle();
+    if (!vac) return res.status(404).json({ error: 'Vacante no encontrada.' });
+    if (vac.estado !== 'abierta') return res.status(400).json({ error: 'Esta vacante ya no recibe postulaciones.' });
+
+    const snapshot = {
+      titular: perfil.titular, bio: perfil.bio, habilidades: perfil.habilidades,
+      experiencia: perfil.experiencia, disponibilidad: perfil.disponibilidad,
+      ciudad: perfil.ciudad, foto_url: perfil.foto_url, portfolio_url: perfil.portfolio_url,
+      verificacion_estado: perfil.verificacion_estado,
+    };
+    const { data, error } = await supabase.from('postulaciones').insert({
+      vacante_id: id, user_id: req.user.id, perfil_snapshot: snapshot,
+      respuestas: req.body?.respuestas || {}, mensaje: req.body?.mensaje || null,
+    }).select().single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya te postulaste a esta vacante.' });
+      return res.status(500).json({ error: error.message });
+    }
+    if (vac.owner_id) avisar({ userId: vac.owner_id, tipo: 'vacante', titulo: 'Nueva postulación',
+      cuerpo: `Alguien se postuló a "${vac.titulo}".`, link: `/eventos/${vac.evento_id}?s=vacantes`, eventoId: vac.evento_id });
+    res.status(201).json({ postulacion: data });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.get('/me/postulaciones', async (req, res) => {
+  const { data, error } = await supabase.from('postulaciones')
+    .select(`id, etapa, mensaje, entrevista, monto_contrato, created_at,
+      vacante:vacantes!vacante_id(id, titulo, pago_monto, pago_moneda, estado,
+        evento:eventos!evento_id(id, titulo, slug, cover_url))`)
+    .eq('user_id', req.user.id).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ postulaciones: data || [] });
+});
+
+router.delete('/me/postulaciones/:id', async (req, res) => {
+  const { data: p } = await supabase.from('postulaciones').select('id, etapa, user_id').eq('id', req.params.id).maybeSingle();
+  if (!p || p.user_id !== req.user.id) return res.status(404).json({ error: 'Postulación no encontrada.' });
+  if (p.etapa === 'aceptado') return res.status(400).json({ error: 'No puedes retirar una postulación ya aceptada.' });
+  const { error } = await supabase.from('postulaciones').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+/* Reseña del candidato hacia el organizador (pública en la cuenta organizadora). */
+router.post('/me/postulaciones/:id/resena', async (req, res) => {
+  const estrellas = Number(req.body?.estrellas);
+  if (!(estrellas >= 1 && estrellas <= 5)) return res.status(400).json({ error: 'Estrellas entre 1 y 5.' });
+  const { data: p } = await supabase.from('postulaciones')
+    .select('id, user_id, etapa, vacante:vacantes!vacante_id(id, evento_id, owner_id)').eq('id', req.params.id).maybeSingle();
+  if (!p || p.user_id !== req.user.id) return res.status(404).json({ error: 'Postulación no encontrada.' });
+  if (p.etapa !== 'aceptado') return res.status(400).json({ error: 'Solo puedes reseñar tras ser contratado.' });
+  const { data, error } = await supabase.from('talento_resenas').insert({
+    evento_id: p.vacante?.evento_id, vacante_id: p.vacante?.id, postulacion_id: p.id,
+    de_user_id: req.user.id, para_user_id: p.vacante?.owner_id, rol_de: 'trabajador',
+    estrellas, comentario: req.body?.comentario || null,
+  }).select().single();
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Ya dejaste tu reseña.' });
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json({ resena: data });
+});
+
+/* Perfil público de talento + reputación (para organizadores buscando). */
+router.get('/perfil-talento/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const { data: perfil } = await supabase.from('perfil_talento')
+    .select('user_id, titular, bio, habilidades, experiencia, disponibilidad, ciudad, pais, foto_url, portfolio_url, publicado, verificacion_estado')
+    .eq('user_id', userId).maybeSingle();
+  if (!perfil) return res.status(404).json({ error: 'Perfil no encontrado.' });
+  const { data: prof } = await supabase.from('profiles').select('nombre, avatar_url').eq('id', userId).maybeSingle();
+  const { data: resenas } = await supabase.from('talento_resenas')
+    .select('estrellas, comentario, rol_de, created_at').eq('para_user_id', userId).eq('rol_de', 'organizador')
+    .order('created_at', { ascending: false }).limit(50);
+  const lista = resenas || [];
+  const prom = lista.length ? lista.reduce((a, r) => a + r.estrellas, 0) / lista.length : null;
+  res.json({ perfil: { ...perfil, nombre: prof?.nombre, avatar_url: prof?.avatar_url }, resenas: lista, promedio: prom, total_resenas: lista.length });
+});
+
+/* ═══════════════════════ ORGANIZADOR (dentro del evento) ═══════════════════════ */
+
+const CAMPOS_VACANTE = ['titulo', 'descripcion', 'rol_id', 'rol_texto', 'event_rol_id', 'requisitos',
+  'preguntas', 'pago_monto', 'pago_moneda', 'pago_periodo', 'ciudad', 'modalidad',
+  'fecha_inicio', 'fecha_fin', 'cupos', 'estado'];
+
+router.get('/eventos/:eventoId/vacantes', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const { data, error } = await supabase.from('vacantes').select(SEL_VACANTE)
+      .eq('evento_id', eventoId).order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    const ids = (data || []).map(v => v.id);
+    let conteos = {};
+    if (ids.length) {
+      const { data: posts } = await supabase.from('postulaciones').select('vacante_id, etapa').in('vacante_id', ids);
+      for (const p of posts || []) {
+        conteos[p.vacante_id] = conteos[p.vacante_id] || { total: 0 };
+        conteos[p.vacante_id].total++;
+        conteos[p.vacante_id][p.etapa] = (conteos[p.vacante_id][p.etapa] || 0) + 1;
+      }
+    }
+    res.json({ vacantes: (data || []).map(v => ({ ...v, postulaciones: conteos[v.id] || { total: 0 } })) });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+router.post('/eventos/:eventoId/vacantes', async (req, res) => {
+  const { eventoId } = req.params;
+  const titulo = (req.body?.titulo || '').trim();
+  if (!titulo) return res.status(400).json({ error: 'El título de la vacante es requerido.' });
+  if (req.body?.pago_monto == null || Number(req.body.pago_monto) < 0)
+    return res.status(400).json({ error: 'El pago del contrato es obligatorio y visible.' });
+  try {
+    const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    // TODO KYC: "solo cuentas verificadas publican" — gate cuando el proveedor esté integrado.
+    const fila = { evento_id: eventoId, owner_id: ev.owner_id, titulo };
+    for (const k of CAMPOS_VACANTE) {
+      if (k === 'titulo') continue;
+      if (req.body?.[k] !== undefined) fila[k] = req.body[k] === '' ? null : req.body[k];
+    }
+    if (fila.modalidad && !MODALIDADES.includes(fila.modalidad)) delete fila.modalidad;
+    const { data, error } = await supabase.from('vacantes').insert(fila).select(SEL_VACANTE).single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json({ vacante: data });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+router.patch('/eventos/:eventoId/vacantes/:id', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const patch = { updated_at: new Date().toISOString() };
+    for (const k of CAMPOS_VACANTE) if (req.body?.[k] !== undefined) patch[k] = req.body[k] === '' ? null : req.body[k];
+    if (patch.titulo !== undefined && !String(patch.titulo).trim()) return res.status(400).json({ error: 'El título no puede quedar vacío.' });
+    const { data, error } = await supabase.from('vacantes').update(patch)
+      .eq('id', id).eq('evento_id', eventoId).select(SEL_VACANTE).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Vacante no encontrada.' });
+    res.json({ vacante: data });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+router.delete('/eventos/:eventoId/vacantes/:id', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const { error } = await supabase.from('vacantes').delete().eq('id', id).eq('evento_id', eventoId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* Pipeline: postulaciones de una vacante, con snapshot y datos básicos del candidato. */
+router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', async (req, res) => {
+  const { eventoId, vid } = req.params;
+  try {
+    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const { data, error } = await supabase.from('postulaciones')
+      .select(`id, etapa, respuestas, mensaje, entrevista, monto_contrato, perfil_snapshot, created_at,
+        candidato:profiles!user_id(id, nombre, avatar_url, email)`)
+      .eq('vacante_id', vid).order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ postulaciones: data || [] });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* Mover de etapa. Al ACEPTAR: fija monto_contrato, mete al candidato al equipo
+   con su rol, y registra la comisión (pendiente de cobro). */
+router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', async (req, res) => {
+  const { eventoId, vid, pid } = req.params;
+  const etapa = req.body?.etapa;
+  if (!ETAPAS.includes(etapa)) return res.status(400).json({ error: 'Etapa inválida.' });
+  try {
+    const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const { data: vac } = await supabase.from('vacantes')
+      .select('id, titulo, pago_monto, pago_moneda, comision_pct, rol_id, rol_texto, event_rol_id, evento_id')
+      .eq('id', vid).eq('evento_id', eventoId).maybeSingle();
+    if (!vac) return res.status(404).json({ error: 'Vacante no encontrada.' });
+    const { data: post } = await supabase.from('postulaciones')
+      .select('id, user_id, etapa').eq('id', pid).eq('vacante_id', vid).maybeSingle();
+    if (!post) return res.status(404).json({ error: 'Postulación no encontrada.' });
+
+    const patch = { etapa, updated_at: new Date().toISOString() };
+    if (etapa === 'aceptado') {
+      const monto = req.body?.monto_contrato != null ? Number(req.body.monto_contrato) : Number(vac.pago_monto || 0);
+      patch.monto_contrato = monto;
+    }
+    const { data: actualizada, error } = await supabase.from('postulaciones').update(patch).eq('id', pid).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    if (etapa === 'aceptado') {
+      // Nombre del rol/categoría para mostrar en el equipo
+      let rolNombre = vac.rol_texto;
+      if (!rolNombre && vac.rol_id) {
+        const { data: r } = await supabase.from('catalogo_roles').select('nombre').eq('id', vac.rol_id).maybeSingle();
+        rolNombre = r?.nombre;
+      }
+      // Datos del candidato para event_members
+      const { data: prof } = await supabase.from('profiles').select('email').eq('id', post.user_id).maybeSingle();
+      // ¿Ya es miembro? Evitar duplicados.
+      const { data: yaMiembro } = await supabase.from('event_members')
+        .select('id, status').eq('evento_id', eventoId).eq('user_id', post.user_id).maybeSingle();
+      const miembro = {
+        evento_id: eventoId, user_id: post.user_id, email: prof?.email || `${post.user_id}@sin-email.local`,
+        rol: rolNombre || 'Staff', rol_id: vac.event_rol_id || null, status: 'active',
+        invited_by: req.user.id, accepted_at: new Date().toISOString(),
+      };
+      if (yaMiembro) {
+        if (yaMiembro.status === 'removed') await supabase.from('event_members').update(miembro).eq('id', yaMiembro.id);
+      } else {
+        await supabase.from('event_members').insert(miembro);
+      }
+      // Comisión de la plataforma (5% del contrato), pendiente de cobro al organizador.
+      const pct = Number(vac.comision_pct || 0.05);
+      await supabase.from('cobros_vacantes').insert({
+        tipo: 'comision', evento_id: eventoId, vacante_id: vid, postulacion_id: pid,
+        owner_id: ev.owner_id || null,
+        monto: Math.round((patch.monto_contrato || 0) * pct), moneda: vac.pago_moneda || 'COP', estado: 'pendiente',
+      });
+      avisar({ userId: post.user_id, tipo: 'vacante', titulo: '¡Te contrataron!',
+        cuerpo: `Fuiste aceptado para "${vac.titulo}". Ya eres parte del equipo.`, link: `/eventos/${eventoId}`, eventoId });
+    } else if (etapa === 'rechazado') {
+      avisar({ userId: post.user_id, tipo: 'vacante', titulo: 'Actualización de tu postulación',
+        cuerpo: `Tu postulación a "${vac.titulo}" no avanzó esta vez.`, link: `/mi-espacio`, eventoId });
+    }
+    res.json({ postulacion: actualizada });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* Agendar entrevista. STUB v1: guarda los datos (+ enlace manual) y pasa a 'entrevista'.
+   La sincronización con Google Calendar se conecta en un paso posterior. */
+router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', async (req, res) => {
+  const { eventoId, vid, pid } = req.params;
+  try {
+    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const entrevista = { inicio: req.body?.inicio || null, fin: req.body?.fin || null, enlace: req.body?.enlace || null, calendar_event_id: null };
+    const { data, error } = await supabase.from('postulaciones')
+      .update({ entrevista, etapa: 'entrevista', updated_at: new Date().toISOString() })
+      .eq('id', pid).eq('vacante_id', vid).select('id, user_id, etapa, entrevista').single();
+    if (error) return res.status(500).json({ error: error.message });
+    avisar({ userId: data.user_id, tipo: 'vacante', titulo: 'Te agendaron una entrevista',
+      cuerpo: `Revisa los detalles de tu entrevista.`, link: `/mi-espacio`, eventoId });
+    res.json({ postulacion: data });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* Reseña del organizador hacia el trabajador (pública en el perfil del trabajador). */
+router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', async (req, res) => {
+  const { eventoId, vid, pid } = req.params;
+  const estrellas = Number(req.body?.estrellas);
+  if (!(estrellas >= 1 && estrellas <= 5)) return res.status(400).json({ error: 'Estrellas entre 1 y 5.' });
+  try {
+    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const { data: post } = await supabase.from('postulaciones').select('id, user_id, etapa').eq('id', pid).eq('vacante_id', vid).maybeSingle();
+    if (!post) return res.status(404).json({ error: 'Postulación no encontrada.' });
+    if (post.etapa !== 'aceptado') return res.status(400).json({ error: 'Solo puedes reseñar a alguien contratado.' });
+    const { data, error } = await supabase.from('talento_resenas').insert({
+      evento_id: eventoId, vacante_id: vid, postulacion_id: pid,
+      de_user_id: req.user.id, para_user_id: post.user_id, rol_de: 'organizador',
+      estrellas, comentario: req.body?.comentario || null,
+    }).select().single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya dejaste tu reseña.' });
+      return res.status(500).json({ error: error.message });
+    }
+    res.status(201).json({ resena: data });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* Buscar talento publicado (para el gancho "consíguelo con nosotros"). */
+router.get('/eventos/:eventoId/talento', async (req, res) => {
+  const { eventoId } = req.params;
+  const { q, ciudad } = req.query;
+  try {
+    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    let query = supabase.from('perfil_talento')
+      .select('user_id, titular, habilidades, ciudad, foto_url, verificacion_estado, profile:profiles!user_id(nombre, avatar_url)')
+      .eq('publicado', true).limit(60);
+    if (ciudad) query = query.ilike('ciudad', `%${ciudad}%`);
+    if (q)      query = query.or(`titular.ilike.%${q}%,bio.ilike.%${q}%`);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ talento: data || [] });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* Destacar una vacante (micropago). STUB v1: registra el cobro 'pendiente';
+   el destacado se activa cuando el pago se confirme (webhook de pagos). */
+router.post('/eventos/:eventoId/vacantes/:id/destacar', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const { data, error } = await supabase.from('cobros_vacantes').insert({
+      tipo: 'destacado', evento_id: eventoId, vacante_id: id, owner_id: ev.owner_id,
+      monto: Number(req.body?.monto || 0), moneda: req.body?.moneda || 'COP', estado: 'pendiente',
+    }).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json({ cobro: data, pendiente: true, mensaje: 'Cobro registrado — el pago de destacados se conectará con la pasarela.' });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+module.exports = router;

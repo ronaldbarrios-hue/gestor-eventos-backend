@@ -186,11 +186,77 @@ router.get('/:eventoId/expositores', async (req, res) => {
     await assertOwner(eventoId, req.user.id);
     const { data, error } = await supabase
       .from('networking_expositores')
-      .select('id, nombre, logo_url, stand, activo, estado_ficha')
+      .select('id, nombre, descripcion, logo_url, stand, sitio_web, categoria_negocio, activo, estado_ficha, ticket_id, orden')
       .eq('evento_id', eventoId).eq('activo', true)
       .order('orden', { ascending: true }).order('nombre', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ expositores: data || [] });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* ── Gestión de STANDS (expositores) desde el panel del organizador ──
+   A diferencia de la Rueda de Negocios (gateada por categoría), los stands
+   funcionan para CUALQUIER evento: se crean solos al comprar una boleta-stand
+   y también se pueden agregar A MANO aquí (ticket_id = null). */
+const CAMPOS_STAND = ['nombre', 'descripcion', 'logo_url', 'stand', 'sitio_web',
+  'categoria_negocio', 'contacto_nombre', 'contacto_email', 'contacto_telefono',
+  'tipo_persona', 'activo', 'estado_ficha', 'orden'];
+
+/* POST /eventos/:eventoId/expositores — crear un stand a mano. */
+router.post('/:eventoId/expositores', async (req, res) => {
+  const { eventoId } = req.params;
+  const nombre = (req.body?.nombre || '').trim();
+  if (!nombre) return res.status(400).json({ error: 'El nombre del stand es requerido.' });
+  try {
+    await assertOwner(eventoId, req.user.id);
+    const fila = { evento_id: eventoId, nombre, ticket_id: null, activo: true, estado_ficha: 'completa', tipo_persona: 'empresa' };
+    for (const k of CAMPOS_STAND) {
+      if (k === 'nombre') continue;
+      if (req.body?.[k] !== undefined) fila[k] = req.body[k] === '' ? null : req.body[k];
+    }
+    const { data, error } = await supabase.from('networking_expositores').insert(fila).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json({ expositor: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* PATCH /eventos/:eventoId/expositores/:id — editar un stand. */
+router.patch('/:eventoId/expositores/:id', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+    const patch = {};
+    for (const k of CAMPOS_STAND) {
+      if (req.body?.[k] !== undefined) patch[k] = req.body[k] === '' ? null : req.body[k];
+    }
+    if (patch.nombre !== undefined) {
+      const n = (patch.nombre || '').trim();
+      if (!n) return res.status(400).json({ error: 'El nombre no puede quedar vacío.' });
+      patch.nombre = n;
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada que actualizar.' });
+    const { data, error } = await supabase.from('networking_expositores')
+      .update(patch).eq('id', id).eq('evento_id', eventoId).select().maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Stand no encontrado.' });
+    res.json({ expositor: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* DELETE /eventos/:eventoId/expositores/:id — borrar un stand (scoped al evento). */
+router.delete('/:eventoId/expositores/:id', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+    const { error } = await supabase.from('networking_expositores').delete().eq('id', id).eq('evento_id', eventoId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

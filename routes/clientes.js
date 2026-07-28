@@ -5,6 +5,7 @@ const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
 const { otorgarPuntos, otorgarBadge, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { resolverTicket } = require('../lib/ticketLookup.js');
 
 function generarCodigo() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -316,6 +317,47 @@ router.post('/:eventoId/checkin', async (req, res) => {
     }
 
     res.json({ ok: true, ticket: updated, advertencia, sound: 'ok' });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* POST /eventos/:eventoId/reingreso — registrar SALIDA o REINGRESO de una
+   boleta sin invalidarla. El check-in normal marca la primera entrada; esto
+   lleva el vaivén (entrada/salida) y deja saber quién está dentro.
+   body: { qr_token | codigo, tipo?: 'entrada'|'salida', acceso_id? }
+   Sin `tipo`, alterna según el último estado. */
+router.post('/:eventoId/reingreso', async (req, res) => {
+  const { eventoId } = req.params;
+  const { qr_token, codigo, tipo, acceso_id } = req.body || {};
+  try {
+    await assertCheckinAccess(eventoId, req.user.id);
+    const ticket = await resolverTicket(eventoId, { qr_token, codigo });
+    if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.' });
+
+    const { data: ult } = await supabase.from('ticket_movimientos')
+      .select('tipo').eq('ticket_id', ticket.id)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const dentroAhora = ult?.tipo ? ult.tipo === 'entrada' : ticket.estado === 'usado';
+    const nuevo = (tipo === 'entrada' || tipo === 'salida') ? tipo : (dentroAhora ? 'salida' : 'entrada');
+
+    let accesoNombre = null;
+    if (acceso_id) {
+      const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
+      const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
+      accesoNombre = accesos.find(a => a.id === acceso_id)?.nombre || null;
+    }
+
+    const { data: mov, error } = await supabase.from('ticket_movimientos').insert({
+      ticket_id: ticket.id, evento_id: eventoId, tipo: nuevo,
+      acceso: accesoNombre, operador_id: req.user.id,
+    }).select('id, tipo, acceso, created_at').single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.status(201).json({
+      ok: true, movimiento: mov, dentro: nuevo === 'entrada',
+      ticket: { codigo: ticket.codigo, nombre: ticket.guest_nombre || 'Asistente', tipo: ticket.tipo?.nombre || 'General' },
+    });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

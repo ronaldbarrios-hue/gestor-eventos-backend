@@ -82,7 +82,6 @@ app.use('/',                 require('./routes/solicitudes.js'));
 app.use('/',                 require('./routes/recompensas.js'));
 app.use('/',                 require('./routes/loyalty.js'));
 app.use('/',                 require('./routes/vacantes.js'));
-app.use('/',                 require('./routes/plantillas.js'));
 /* Estos routers se montan en /eventos y definen sus paths con :eventoId
    internamente (evita issues con path-to-regexp v6 al usar param en mount
    path). Van ANTES del router general de /eventos para que sus rutas más

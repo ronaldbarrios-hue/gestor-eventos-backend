@@ -116,7 +116,7 @@ router.get('/ticket/:codigo', async (req, res) => {
 
   if (data.evento?.id) {
     const { data: ev } = await supabase
-      .from('eventos').select('owner_id').eq('id', data.evento.id).maybeSingle();
+      .from('eventos').select('owner_id, page_json').eq('id', data.evento.id).maybeSingle();
     if (ev?.owner_id) {
       const saldo = await saldoDeTicket(data, { organizadorId: ev.owner_id, eventoId: data.evento.id });
       data.puntos = saldo.saldo;
@@ -127,6 +127,32 @@ router.get('/ticket/:codigo', async (req, res) => {
         .from('canjes').select('id, titulo, costo_puntos, codigo, estado, created_at')
         .eq('ticket_id', data.id).order('created_at', { ascending: false });
       data.canjes = mis || [];
+    }
+
+    /* Pasaporte gamificado: cada expositor distinto que le marcó la escarapela
+       es un sello. Al reunir la meta, se desbloquea el premio. */
+    const pasa = ev?.page_json?.pasaporte;
+    if (pasa?.activo) {
+      const { data: visitas } = await supabase.from('ticket_interacciones')
+        .select('expositor_id').eq('ticket_id', data.id).not('expositor_id', 'is', null);
+      const ids = [...new Set((visitas || []).map(v => v.expositor_id))];
+      let expos = [];
+      if (ids.length) {
+        const { data: e } = await supabase.from('networking_expositores')
+          .select('id, nombre, logo_url, stand').in('id', ids);
+        expos = e || [];
+      }
+      const meta = Number(pasa.meta) > 0 ? Number(pasa.meta) : ids.length;
+      data.pasaporte = {
+        activo: true,
+        titulo: pasa.titulo || 'Pasaporte del evento',
+        descripcion: pasa.descripcion || '',
+        premio_texto: pasa.premio_texto || '',
+        meta,
+        visitados: ids.length,
+        expositores_visitados: expos,
+        completo: meta > 0 && ids.length >= meta,
+      };
     }
   }
   if (data.puntos == null) data.puntos = (inter || []).reduce((s, r) => s + (r.puntos || 0), 0);

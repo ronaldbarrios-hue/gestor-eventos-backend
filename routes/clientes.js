@@ -325,39 +325,66 @@ router.post('/:eventoId/checkin', async (req, res) => {
 /* POST /eventos/:eventoId/reingreso — registrar SALIDA o REINGRESO de una
    boleta sin invalidarla. El check-in normal marca la primera entrada; esto
    lleva el vaivén (entrada/salida) y deja saber quién está dentro.
-   body: { qr_token | codigo, tipo?: 'entrada'|'salida', acceso_id? }
-   Sin `tipo`, alterna según el último estado. */
+   body: { qr_token | codigo, tipo?: 'entrada'|'salida', acceso_id?, zona_id? }
+   Con `zona_id`, el vaivén se lleva POR ZONA (para el aforo por zonas).
+   Sin `tipo`, alterna según el último estado (global o de esa zona). */
 router.post('/:eventoId/reingreso', async (req, res) => {
   const { eventoId } = req.params;
-  const { qr_token, codigo, tipo, acceso_id } = req.body || {};
+  const { qr_token, codigo, tipo, acceso_id, zona_id } = req.body || {};
   try {
     await assertCheckinAccess(eventoId, req.user.id);
     const ticket = await resolverTicket(eventoId, { qr_token, codigo });
     if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.' });
 
-    const { data: ult } = await supabase.from('ticket_movimientos')
-      .select('tipo').eq('ticket_id', ticket.id)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    const dentroAhora = ult?.tipo ? ult.tipo === 'entrada' : ticket.estado === 'usado';
-    const nuevo = (tipo === 'entrada' || tipo === 'salida') ? tipo : (dentroAhora ? 'salida' : 'entrada');
-
-    let accesoNombre = null;
-    if (acceso_id) {
+    let accesoNombre = null, zonaNombre = null;
+    if (acceso_id || zona_id) {
       const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
       const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
+      const zonas = Array.isArray(evCfg?.page_json?.zonas) ? evCfg.page_json.zonas : [];
       accesoNombre = accesos.find(a => a.id === acceso_id)?.nombre || null;
+      zonaNombre = zonas.find(z => z.id === zona_id)?.nombre || null;
     }
+
+    /* El estado se evalúa acotado a la zona si se indicó (una persona puede
+       estar DENTRO del recinto pero FUERA de una zona concreta). */
+    let q = supabase.from('ticket_movimientos').select('tipo').eq('ticket_id', ticket.id);
+    q = zonaNombre ? q.eq('zona', zonaNombre) : q.is('zona', null);
+    const { data: ult } = await q.order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const dentroAhora = ult?.tipo ? ult.tipo === 'entrada' : (zonaNombre ? false : ticket.estado === 'usado');
+    const nuevo = (tipo === 'entrada' || tipo === 'salida') ? tipo : (dentroAhora ? 'salida' : 'entrada');
 
     const { data: mov, error } = await supabase.from('ticket_movimientos').insert({
       ticket_id: ticket.id, evento_id: eventoId, tipo: nuevo,
-      acceso: accesoNombre, operador_id: req.user.id,
-    }).select('id, tipo, acceso, created_at').single();
+      acceso: accesoNombre, zona: zonaNombre, operador_id: req.user.id,
+    }).select('id, tipo, acceso, zona, created_at').single();
     if (error) return res.status(500).json({ error: error.message });
 
     res.status(201).json({
-      ok: true, movimiento: mov, dentro: nuevo === 'entrada',
+      ok: true, movimiento: mov, dentro: nuevo === 'entrada', zona: zonaNombre,
       ticket: { codigo: ticket.codigo, nombre: ticket.guest_nombre || 'Asistente', tipo: ticket.tipo?.nombre || 'General' },
     });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* GET /eventos/:eventoId/zonas/aforo — ocupación en vivo por zona
+   (entradas - salidas de cada zona configurada en page_json.zonas). */
+router.get('/:eventoId/zonas/aforo', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertCheckinAccess(eventoId, req.user.id);
+    const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
+    const zonas = Array.isArray(evCfg?.page_json?.zonas) ? evCfg.page_json.zonas : [];
+    const { data: movs } = await supabase.from('ticket_movimientos')
+      .select('zona, tipo').eq('evento_id', eventoId).not('zona', 'is', null);
+    const neto = {};
+    for (const m of movs || []) neto[m.zona] = (neto[m.zona] || 0) + (m.tipo === 'entrada' ? 1 : -1);
+    const resultado = zonas.map(z => ({
+      id: z.id, nombre: z.nombre, aforo_max: z.aforo_max || null,
+      dentro: Math.max(0, neto[z.nombre] || 0),
+    }));
+    res.json({ zonas: resultado });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

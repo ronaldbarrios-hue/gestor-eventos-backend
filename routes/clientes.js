@@ -7,6 +7,7 @@ const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
 const { notificar } = require('../lib/notificar.js');
+const { correrAutomatizaciones } = require('../lib/automatizaciones.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -329,6 +330,11 @@ router.post('/:eventoId/checkin', async (req, res) => {
       });
     }
 
+    /* Automatizaciones "cuando alguien hace check-in" (fire-and-forget). */
+    correrAutomatizaciones(eventoId, 'checkin', {
+      userId: updated.user_id, nombre: updated.guest_nombre || 'Asistente', acceso: puerta?.nombre || '',
+    });
+
     res.json({ ok: true, ticket: updated, advertencia, sound: 'ok' });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -388,6 +394,7 @@ router.post('/:eventoId/reingreso', async (req, res) => {
             mensaje: `La zona "${zonaNombre}" llegó a su aforo (${ocupacion}/${zonaMax}).`,
           });
           if (ev?.owner_id) avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Aforo lleno: ${zonaNombre}`, cuerpo: `${ocupacion}/${zonaMax} personas.`, link: `/eventos/${eventoId}?s=asistentes&t=accesos`, eventoId });
+          correrAutomatizaciones(eventoId, 'aforo_lleno', { zona: zonaNombre });
         }
       }
     }

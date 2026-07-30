@@ -6,6 +6,12 @@ const { otorgarPuntos, otorgarBadge, reglasPuntosDeEvento } = require('../lib/ga
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
+const { notificar } = require('../lib/notificar.js');
+
+/* Notificar sin romper la petición si el helper falla. */
+function avisar(payload) {
+  try { const p = notificar(payload); if (p?.catch) p.catch(() => {}); } catch { /* noop */ }
+}
 
 function generarCodigo() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -332,17 +338,19 @@ router.post('/:eventoId/reingreso', async (req, res) => {
   const { eventoId } = req.params;
   const { qr_token, codigo, tipo, acceso_id, zona_id } = req.body || {};
   try {
-    await assertCheckinAccess(eventoId, req.user.id);
+    const ev = await assertCheckinAccess(eventoId, req.user.id);
     const ticket = await resolverTicket(eventoId, { qr_token, codigo });
     if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.' });
 
-    let accesoNombre = null, zonaNombre = null;
+    let accesoNombre = null, zonaNombre = null, zonaMax = null;
     if (acceso_id || zona_id) {
       const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
       const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
       const zonas = Array.isArray(evCfg?.page_json?.zonas) ? evCfg.page_json.zonas : [];
       accesoNombre = accesos.find(a => a.id === acceso_id)?.nombre || null;
-      zonaNombre = zonas.find(z => z.id === zona_id)?.nombre || null;
+      const zonaObj = zonas.find(z => z.id === zona_id);
+      zonaNombre = zonaObj?.nombre || null;
+      zonaMax = Number(zonaObj?.aforo_max) || null;
     }
 
     /* El estado se evalúa acotado a la zona si se indicó (una persona puede
@@ -358,6 +366,24 @@ router.post('/:eventoId/reingreso', async (req, res) => {
       acceso: accesoNombre, zona: zonaNombre, operador_id: req.user.id,
     }).select('id, tipo, acceso, zona, created_at').single();
     if (error) return res.status(500).json({ error: error.message });
+
+    /* Alerta automática: si la zona llegó a su aforo, avisar (una sola vez). */
+    if (nuevo === 'entrada' && zonaNombre && zonaMax) {
+      const { data: movsZona } = await supabase.from('ticket_movimientos')
+        .select('tipo').eq('evento_id', eventoId).eq('zona', zonaNombre);
+      const ocupacion = (movsZona || []).reduce((s, m) => s + (m.tipo === 'entrada' ? 1 : -1), 0);
+      if (ocupacion >= zonaMax) {
+        const { data: yaAlerta } = await supabase.from('evento_alertas')
+          .select('id').eq('evento_id', eventoId).eq('tipo', 'aforo').eq('zona', zonaNombre).eq('resuelta', false).maybeSingle();
+        if (!yaAlerta) {
+          await supabase.from('evento_alertas').insert({
+            evento_id: eventoId, tipo: 'aforo', nivel: 'critico', zona: zonaNombre,
+            mensaje: `La zona "${zonaNombre}" llegó a su aforo (${ocupacion}/${zonaMax}).`,
+          });
+          if (ev?.owner_id) avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Aforo lleno: ${zonaNombre}`, cuerpo: `${ocupacion}/${zonaMax} personas.`, link: `/eventos/${eventoId}?s=asistentes&t=accesos`, eventoId });
+        }
+      }
+    }
 
     res.status(201).json({
       ok: true, movimiento: mov, dentro: nuevo === 'entrada', zona: zonaNombre,
@@ -388,6 +414,56 @@ router.get('/:eventoId/zonas/aforo', async (req, res) => {
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
+});
+
+/* ───────────── Alertas en vivo del evento ───────────── */
+
+/* GET /eventos/:eventoId/alertas?activas=1 */
+router.get('/:eventoId/alertas', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertCheckinAccess(eventoId, req.user.id);
+    let q = supabase.from('evento_alertas')
+      .select('id, tipo, nivel, mensaje, zona, resuelta, created_at, autor:profiles!created_by(nombre)')
+      .eq('evento_id', eventoId);
+    if (req.query.activas) q = q.eq('resuelta', false);
+    const { data, error } = await q.order('created_at', { ascending: false }).limit(80);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ alertas: data || [] });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* POST /eventos/:eventoId/alertas { tipo, nivel, mensaje, zona } — el staff reporta */
+router.post('/:eventoId/alertas', async (req, res) => {
+  const { eventoId } = req.params;
+  const mensaje = String(req.body?.mensaje || '').trim();
+  if (!mensaje) return res.status(400).json({ error: 'Escribe qué está pasando.' });
+  try {
+    const ev = await assertCheckinAccess(eventoId, req.user.id);
+    const nivel = ['info', 'warning', 'critico'].includes(req.body?.nivel) ? req.body.nivel : 'warning';
+    const tipo = ['aforo', 'cola', 'incidente', 'general'].includes(req.body?.tipo) ? req.body.tipo : 'general';
+    const { data, error } = await supabase.from('evento_alertas').insert({
+      evento_id: eventoId, tipo, nivel, mensaje, zona: req.body?.zona || null, created_by: req.user.id,
+    }).select('id, tipo, nivel, mensaje, zona, resuelta, created_at').single();
+    if (error) return res.status(500).json({ error: error.message });
+    if (ev?.owner_id && ev.owner_id !== req.user.id) {
+      avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Alerta: ${tipo}`, cuerpo: mensaje, link: `/eventos/${eventoId}?s=asistentes&t=accesos`, eventoId });
+    }
+    res.status(201).json({ alerta: data });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
+});
+
+/* PATCH /eventos/:eventoId/alertas/:id/resolver */
+router.patch('/:eventoId/alertas/:id/resolver', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertCheckinAccess(eventoId, req.user.id);
+    const { data, error } = await supabase.from('evento_alertas')
+      .update({ resuelta: true }).eq('id', id).eq('evento_id', eventoId).select('id').maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Alerta no encontrada.' });
+    res.json({ ok: true });
+  } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
 module.exports = router;

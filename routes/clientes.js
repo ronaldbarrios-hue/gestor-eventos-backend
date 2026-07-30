@@ -225,8 +225,15 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
    Owner siempre puede. Miembros del equipo necesitan permiso 'checkin'. */
 router.post('/:eventoId/checkin', async (req, res) => {
   const { eventoId } = req.params;
-  const { qr_token, codigo, acceso_id } = req.body;
+  const { qr_token, codigo, acceso_id, at } = req.body;
   if (!qr_token && !codigo) return res.status(400).json({ error: 'qr_token o codigo requerido.' });
+  /* `at` (opcional): hora real del escaneo cuando viene de la cola OFFLINE.
+     Se valida que sea una fecha razonable (no futura, no antiquísima). */
+  let checkinAt = new Date().toISOString();
+  if (typeof at === 'string') {
+    const t = new Date(at).getTime();
+    if (Number.isFinite(t) && t <= Date.now() + 60000 && t > Date.now() - 30 * 24 * 3600 * 1000) checkinAt = new Date(t).toISOString();
+  }
 
   try {
     const evCtx = await assertCheckinAccess(eventoId, req.user.id);
@@ -282,7 +289,7 @@ router.post('/:eventoId/checkin', async (req, res) => {
 
     const { data: updated, error: e2 } = await supabase
       .from('tickets')
-      .update({ estado: 'usado', checked_in_at: new Date().toISOString(), acceso: puerta?.nombre || null })
+      .update({ estado: 'usado', checked_in_at: checkinAt, acceso: puerta?.nombre || null })
       .eq('id', ticket.id)
       .select(`*, tipo:ticket_types!ticket_type_id(nombre)`)
       .single();

@@ -68,6 +68,7 @@ app.use('/me',               require('./routes/integraciones.js'));
    públicas (compra anónima, webhook MP, vapid-key) → van antes del bloque
    con auth global para que esas rutas públicas no sean interceptadas. */
 app.use('/', authLimiter,    require('./routes/pagos.js'));
+app.use('/',                 require('./routes/wompi.js'));
 app.use('/',                 require('./routes/push.js'));
 /* Promociones aplica auth POR RUTA y expone la validación pública de cupón
    (checkout anónimo) → debe ir aquí, antes del grupo con auth global.

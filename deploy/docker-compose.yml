@@ -1,0 +1,39 @@
+# GESTEK · despliegue de NUESTROS servicios en el VPS (API + reverse proxy).
+#
+# El stack de Supabase self-hosted corre en su PROPIO compose (repo oficial de
+# Supabase: github.com/supabase/supabase/tree/master/docker). Este compose solo
+# levanta la API de GESTEK y un reverse proxy con TLS. La API se conecta a
+# Supabase por las variables de ./.env (SUPABASE_URL apunta a tu instancia).
+#
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: gestek-api:latest
+    restart: unless-stopped
+    env_file: ./.env
+    expose:
+      - "3000"
+    # Si el Supabase self-hosted corre en el mismo host por su compose, ambos
+    # pueden compartir una red externa; aquí basta con que SUPABASE_URL sea
+    # alcanzable (dominio público o red docker compartida).
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:

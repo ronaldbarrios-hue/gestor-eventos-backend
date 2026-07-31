@@ -1,0 +1,4 @@
+# Reverse proxy con HTTPS automático (Let's Encrypt). Cambia el dominio.
+api.tudominio.com {
+	reverse_proxy api:3000
+}

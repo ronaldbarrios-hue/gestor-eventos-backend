@@ -407,7 +407,30 @@ router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', as
   const { eventoId, vid, pid } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
-    const entrevista = { inicio: req.body?.inicio || null, fin: req.body?.fin || null, enlace: req.body?.enlace || null, calendar_event_id: null };
+
+    /* Si el organizador conectó Google Calendar, crea el evento con invitación
+       al candidato (best-effort: si falla, se guarda la entrevista igual). */
+    let calendarId = null, enlaceCal = req.body?.enlace || null;
+    const gc = require('../lib/googleCalendar.js');
+    if (gc.configurado() && req.body?.inicio) {
+      try {
+        const { data: org } = await supabase.from('profiles').select('google_refresh_token').eq('id', req.user.id).maybeSingle();
+        if (org?.google_refresh_token) {
+          const { data: post } = await supabase.from('postulaciones').select('user_id, vacante:vacantes!vacante_id(titulo)').eq('id', pid).eq('vacante_id', vid).maybeSingle();
+          const { data: cand } = post?.user_id ? await supabase.from('profiles').select('email').eq('id', post.user_id).maybeSingle() : { data: null };
+          const evc = await gc.crearEvento({
+            refreshToken: org.google_refresh_token,
+            summary: `Entrevista · ${post?.vacante?.titulo || 'vacante'}`,
+            description: 'Entrevista agendada desde GESTEK.',
+            inicio: req.body.inicio, fin: req.body.fin,
+            invitados: [cand?.email].filter(Boolean),
+          });
+          calendarId = evc.id; if (!enlaceCal) enlaceCal = evc.htmlLink;
+        }
+      } catch (e) { console.error('[entrevista google]', e.message); }
+    }
+
+    const entrevista = { inicio: req.body?.inicio || null, fin: req.body?.fin || null, enlace: enlaceCal, calendar_event_id: calendarId };
     const { data, error } = await supabase.from('postulaciones')
       .update({ entrevista, etapa: 'entrevista', updated_at: new Date().toISOString() })
       .eq('id', pid).eq('vacante_id', vid).select('id, user_id, etapa, entrevista').single();

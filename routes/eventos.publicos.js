@@ -331,6 +331,11 @@ router.get('/slug/:slug', async (req, res) => {
       .from('eventos').select('owner_id').eq('id', evento.id).maybeSingle();
     if (owner?.owner_id) {
       evento.recompensas = await recompensasDisponibles(owner.owner_id, evento.id);
+      /* Qué pasarelas tiene conectadas el organizador (sin exponer llaves). */
+      const { data: pay } = await supabase.from('profiles')
+        .select('mp_access_token, wompi_public_key').eq('id', owner.owner_id).maybeSingle();
+      evento.pago_mp = Boolean(pay?.mp_access_token);
+      evento.pago_wompi = Boolean(pay?.wompi_public_key);
     }
   } catch { evento.recompensas = []; }
 

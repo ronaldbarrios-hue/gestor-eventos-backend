@@ -71,12 +71,28 @@ router.post('/me/talento/publicar', async (req, res) => {
    La integración con el proveedor KYC (p.ej. Truora) llega en un paso posterior;
    el webhook /webhooks/kyc confirmará 'verificado'. */
 router.post('/me/talento/verificacion', async (req, res) => {
-  const { data, error } = await supabase
-    .from('perfil_talento').update({ verificacion_estado: 'pendiente', updated_at: new Date().toISOString() })
-    .eq('user_id', req.user.id).select().maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(400).json({ error: 'Primero crea tu perfil de talento.' });
-  res.json({ perfil: data, pendiente: true, mensaje: 'Verificación en configuración — la integración KYC se activará pronto.' });
+  const { data: existe } = await supabase.from('perfil_talento').select('user_id').eq('user_id', req.user.id).maybeSingle();
+  if (!existe) return res.status(400).json({ error: 'Primero crea tu perfil de talento.' });
+
+  const apiKey = process.env.TRUORA_API_KEY;
+  if (!apiKey) {
+    /* Sin proveedor configurado todavía: queda en 'pendiente' (stub). */
+    const { data } = await supabase.from('perfil_talento')
+      .update({ verificacion_estado: 'pendiente', updated_at: new Date().toISOString() })
+      .eq('user_id', req.user.id).select().maybeSingle();
+    return res.json({ perfil: data, pendiente: true, mensaje: 'Verificación en configuración — el proveedor KYC se activará pronto.' });
+  }
+  try {
+    const { crearValidacion } = require('../lib/truora.js');
+    const front = (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0];
+    const v = await crearValidacion({ apiKey, type: 'face-recognition', accountId: req.user.id, redirectUrl: `${front}/vacantes` });
+    const { data } = await supabase.from('perfil_talento')
+      .update({ verificacion_estado: 'pendiente', verificacion_ref: v.validationId, updated_at: new Date().toISOString() })
+      .eq('user_id', req.user.id).select().maybeSingle();
+    return res.json({ perfil: data, pendiente: true, url: v.url, mensaje: 'Completa la verificación en la ventana que se abre.' });
+  } catch (e) {
+    return res.status(502).json({ error: `No se pudo iniciar la verificación: ${e.message}` });
+  }
 });
 
 /* ═══════════════════════ CATÁLOGO DE ROLES ═══════════════════════ */

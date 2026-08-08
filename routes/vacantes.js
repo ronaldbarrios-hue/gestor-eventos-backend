@@ -13,11 +13,93 @@
    ════════════════════════════════════════════════════════════════════ */
 const express = require('express');
 const supabase = require('../lib/supabase.js');
-const { verifySupabaseJWT } = require('../middleware/auth.js');
+const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { notificar } = require('../lib/notificar.js');
 
 const router = express.Router();
+
+/* ══════════════════════════════════════════════════════════════════
+   LECTURAS PÚBLICAS — van ANTES del verifySupabaseJWT global.
+
+   Una bolsa de empleo que exige registrarse para MIRAR no la encuentra
+   nadie, y el sentido de este módulo es que el organizador consiga
+   personal y la persona consiga trabajo. Así que el listado, el
+   catálogo de roles y el detalle de una vacante se leen sin sesión.
+
+   Qué se expone: solo vacantes en estado 'abierta' de eventos ya
+   'publicado'. Es lo mismo que muestra cualquier portal de empleo.
+   Qué NO cambia: postularse, ver el pipeline, contratar y todo lo del
+   organizador siguen exigiendo sesión, más abajo en este archivo.
+
+   Se usa verifySupabaseJWTOptional (no bloquea sin token) para que un
+   usuario con sesión siga viendo sus roles propios y si ya se postuló.
+   ══════════════════════════════════════════════════════════════════ */
+
+const SEL_VACANTE = `id, evento_id, titulo, descripcion, rol_id, rol_texto, requisitos, preguntas,
+  pago_monto, pago_moneda, pago_periodo, comision_pct, ciudad, modalidad, fecha_inicio, fecha_fin,
+  cupos, estado, destacada_hasta, created_at,
+  evento:eventos!evento_id(id, titulo, slug, cover_url, estado, location_nombre),
+  rol:catalogo_roles!rol_id(id, nombre, slug)`;
+
+const MODALIDADES_PUB = ['presencial', 'remoto', 'hibrido'];
+
+/* Catálogo de roles. Sin sesión devuelve solo los globales; con sesión
+   añade los que el organizador creó para sí mismo.
+   OJO: debe declararse ANTES que /vacantes/:id o ':id' se traga "roles". */
+router.get('/vacantes/roles', verifySupabaseJWTOptional, async (req, res) => {
+  let query = supabase
+    .from('catalogo_roles').select('id, nombre, slug, global, owner_id');
+  query = req.user
+    ? query.or(`global.eq.true,owner_id.eq.${req.user.id}`)
+    : query.eq('global', true);
+  const { data, error } = await query
+    .order('orden', { ascending: true }).order('nombre', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ roles: data || [] });
+});
+
+/* Listado abierto. */
+router.get('/vacantes', verifySupabaseJWTOptional, async (req, res) => {
+  const { ciudad, rol_id, modalidad, pago_min, q } = req.query;
+  let query = supabase.from('vacantes').select(SEL_VACANTE).eq('estado', 'abierta');
+  if (ciudad)    query = query.ilike('ciudad', `%${ciudad}%`);
+  if (rol_id)    query = query.eq('rol_id', rol_id);
+  if (modalidad && MODALIDADES_PUB.includes(modalidad)) query = query.eq('modalidad', modalidad);
+  if (pago_min)  query = query.gte('pago_monto', Number(pago_min) || 0);
+  if (q)         query = query.or(`titulo.ilike.%${q}%,descripcion.ilike.%${q}%`);
+  query = query.order('destacada_hasta', { ascending: false, nullsFirst: false })
+               .order('created_at', { ascending: false }).limit(100);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  const ahora = Date.now();
+  const vacantes = (data || [])
+    .filter(v => v.evento?.estado === 'publicado')   // solo eventos publicados
+    .map(v => ({ ...v, destacada: v.destacada_hasta && new Date(v.destacada_hasta).getTime() > ahora }));
+  res.json({ vacantes });
+});
+
+/* Detalle. `mi_postulacion` solo tiene sentido con sesión. */
+router.get('/vacantes/:id', verifySupabaseJWTOptional, async (req, res) => {
+  const { data, error } = await supabase.from('vacantes').select(SEL_VACANTE).eq('id', req.params.id).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Vacante no encontrada.' });
+  if (data.estado !== 'abierta' || data.evento?.estado !== 'publicado') {
+    /* Sin sesión no se muestran vacantes cerradas ni de eventos en borrador:
+       el organizador sí las ve desde su panel, que va autenticado. */
+    if (!req.user) return res.status(404).json({ error: 'Vacante no encontrada.' });
+  }
+  let miPostulacion = null;
+  if (req.user) {
+    const { data: yaPostule } = await supabase
+      .from('postulaciones').select('id, etapa')
+      .eq('vacante_id', req.params.id).eq('user_id', req.user.id).maybeSingle();
+    miPostulacion = yaPostule || null;
+  }
+  res.json({ vacante: data, mi_postulacion: miPostulacion });
+});
+
+/* ══ A partir de aquí TODO exige sesión ══ */
 router.use(verifySupabaseJWT);
 
 const ETAPAS = ['postulado', 'revisado', 'entrevista', 'oferta', 'aceptado', 'rechazado'];
@@ -97,15 +179,6 @@ router.post('/me/talento/verificacion', async (req, res) => {
 
 /* ═══════════════════════ CATÁLOGO DE ROLES ═══════════════════════ */
 
-router.get('/vacantes/roles', async (req, res) => {
-  const { data, error } = await supabase
-    .from('catalogo_roles').select('id, nombre, slug, global, owner_id')
-    .or(`global.eq.true,owner_id.eq.${req.user.id}`)
-    .order('orden', { ascending: true }).order('nombre', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ roles: data || [] });
-});
-
 router.post('/vacantes/roles', async (req, res) => {
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'El nombre del rol es requerido.' });
@@ -117,40 +190,6 @@ router.post('/vacantes/roles', async (req, res) => {
 });
 
 /* ═══════════════════════ EXPLORAR (candidato) ═══════════════════════ */
-
-const SEL_VACANTE = `id, evento_id, titulo, descripcion, rol_id, rol_texto, requisitos, preguntas,
-  pago_monto, pago_moneda, pago_periodo, comision_pct, ciudad, modalidad, fecha_inicio, fecha_fin,
-  cupos, estado, destacada_hasta, created_at,
-  evento:eventos!evento_id(id, titulo, slug, cover_url, estado, location_nombre),
-  rol:catalogo_roles!rol_id(id, nombre, slug)`;
-
-router.get('/vacantes', async (req, res) => {
-  const { ciudad, rol_id, modalidad, pago_min, q } = req.query;
-  let query = supabase.from('vacantes').select(SEL_VACANTE).eq('estado', 'abierta');
-  if (ciudad)    query = query.ilike('ciudad', `%${ciudad}%`);
-  if (rol_id)    query = query.eq('rol_id', rol_id);
-  if (modalidad && MODALIDADES.includes(modalidad)) query = query.eq('modalidad', modalidad);
-  if (pago_min)  query = query.gte('pago_monto', Number(pago_min) || 0);
-  if (q)         query = query.or(`titulo.ilike.%${q}%,descripcion.ilike.%${q}%`);
-  query = query.order('destacada_hasta', { ascending: false, nullsFirst: false })
-               .order('created_at', { ascending: false }).limit(100);
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  const ahora = Date.now();
-  const vacantes = (data || [])
-    .filter(v => v.evento?.estado === 'publicado')   // solo eventos publicados
-    .map(v => ({ ...v, destacada: v.destacada_hasta && new Date(v.destacada_hasta).getTime() > ahora }));
-  res.json({ vacantes });
-});
-
-router.get('/vacantes/:id', async (req, res) => {
-  const { data, error } = await supabase.from('vacantes').select(SEL_VACANTE).eq('id', req.params.id).maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Vacante no encontrada.' });
-  const { data: yaPostule } = await supabase
-    .from('postulaciones').select('id, etapa').eq('vacante_id', req.params.id).eq('user_id', req.user.id).maybeSingle();
-  res.json({ vacante: data, mi_postulacion: yaPostule || null });
-});
 
 router.post('/vacantes/:id/postular', async (req, res) => {
   const { id } = req.params;

@@ -128,7 +128,8 @@ router.get('/me/talento', async (req, res) => {
 });
 
 const CAMPOS_PERFIL = ['titular', 'bio', 'habilidades', 'experiencia', 'disponibilidad',
-  'ciudad', 'pais', 'telefono', 'foto_url', 'portfolio_url', 'redes'];
+  'ciudad', 'pais', 'telefono', 'foto_url', 'portfolio_url', 'redes',
+  'cv_url', 'cv_nombre'];
 
 router.put('/me/talento', async (req, res) => {
   const fila = { user_id: req.user.id, updated_at: new Date().toISOString() };
@@ -206,6 +207,7 @@ router.post('/vacantes/:id/postular', async (req, res) => {
       titular: perfil.titular, bio: perfil.bio, habilidades: perfil.habilidades,
       experiencia: perfil.experiencia, disponibilidad: perfil.disponibilidad,
       ciudad: perfil.ciudad, foto_url: perfil.foto_url, portfolio_url: perfil.portfolio_url,
+      cv_url: perfil.cv_url, cv_nombre: perfil.cv_nombre,
       verificacion_estado: perfil.verificacion_estado,
     };
     const { data, error } = await supabase.from('postulaciones').insert({
@@ -265,7 +267,7 @@ router.post('/me/postulaciones/:id/resena', async (req, res) => {
 router.get('/perfil-talento/:userId', async (req, res) => {
   const { userId } = req.params;
   const { data: perfil } = await supabase.from('perfil_talento')
-    .select('user_id, titular, bio, habilidades, experiencia, disponibilidad, ciudad, pais, foto_url, portfolio_url, publicado, verificacion_estado')
+    .select('user_id, titular, bio, habilidades, experiencia, disponibilidad, ciudad, pais, foto_url, portfolio_url, cv_url, cv_nombre, publicado, verificacion_estado')
     .eq('user_id', userId).maybeSingle();
   if (!perfil) return res.status(404).json({ error: 'Perfil no encontrado.' });
   const { data: prof } = await supabase.from('profiles').select('nombre, avatar_url').eq('id', userId).maybeSingle();

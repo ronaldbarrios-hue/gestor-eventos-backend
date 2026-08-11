@@ -3,12 +3,13 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar, notificarVarios } = require('../lib/notificar.js');
 const { otorgarPuntos, otorgarBadge } = require('../lib/gamificacion.js');
-const { sendMail, plantillaTarea } = require('../lib/email.js');
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 
 const FRONT = process.env.FRONTEND_URL?.split(',')[0] || 'http://localhost:5173';
 
 /* Manda email de tarea a una lista de user_ids (resuelve nombre+email de profiles). */
-async function emailTarea(userIds, tarea, eventoTitulo, eventoId) {
+/* El título del evento ya no se pasa: lo pone la plantilla con {{evento}}. */
+async function emailTarea(userIds, tarea, eventoId) {
   const ids = [...new Set((userIds || []).filter(Boolean))];
   if (ids.length === 0) return;
   try {
@@ -16,17 +17,26 @@ async function emailTarea(userIds, tarea, eventoTitulo, eventoId) {
       .from('profiles').select('nombre, email').in('id', ids);
     for (const p of perfiles || []) {
       if (!p.email) continue;
-      sendMail({
+      /* La fecha de la tarea es la de su vencimiento, no la del evento: es lo
+         que le importa a quien la recibe. */
+      let vence = '';
+      if (tarea.vence_at) {
+        const d = new Date(tarea.vence_at);
+        /* Ojo: una fecha inválida no lanza, devuelve "Invalid Date". */
+        if (!Number.isNaN(d.getTime())) {
+          vence = d.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+      }
+      enviarEmailEvento({
+        evento: eventoId,
+        tipo: 'tarea',
         to: p.email,
-        subject: `Nueva tarea: ${tarea.titulo}`,
-        html: plantillaTarea({
+        ctx: {
           nombre: p.nombre,
-          tareaTitulo: tarea.titulo,
-          eventoTitulo,
-          prioridad: tarea.prioridad,
-          venceAt: tarea.vence_at,
-          link: `${FRONT}/eventos/${eventoId}`,
-        }),
+          tarea: tarea.titulo,
+          fecha: vence,
+          enlace: `${FRONT}/eventos/${eventoId}`,
+        },
       });
     }
   } catch (e) {
@@ -49,7 +59,7 @@ async function notificarAsignacion(tarea, eventoId) {
     };
     if (tarea.asignado_user_id) {
       await notificar({ ...base, userId: tarea.asignado_user_id });
-      emailTarea([tarea.asignado_user_id], tarea, eventoTitulo, eventoId);
+      emailTarea([tarea.asignado_user_id], tarea, eventoId);
     } else if (tarea.asignado_rol_id) {
       const { data: miembros } = await supabase
         .from('event_members')
@@ -59,7 +69,7 @@ async function notificarAsignacion(tarea, eventoId) {
         .eq('status', 'active');
       const ids = (miembros || []).map(m => m.user_id);
       await notificarVarios(ids, base);
-      emailTarea(ids, tarea, eventoTitulo, eventoId);
+      emailTarea(ids, tarea, eventoId);
     }
   } catch (e) {
     console.warn('[notificarAsignacion] error:', e.message);

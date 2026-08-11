@@ -6,7 +6,7 @@ const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
-const { sendMail, plantillaTicket } = require('../lib/email.js');
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -607,21 +607,17 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   if (esGratis) {
     await supabase.from('eventos').update({ aforo_vendido: (evento.aforo_vendido || 0) + 1 }).eq('id', evento.id);
 
-    sendMail({
+    enviarEmailEvento({
+      evento,
+      tipo: 'ticket',
       to: ticket.guest_email,
-      subject: `Tu entrada para "${evento.titulo}" está confirmada`,
-      html: plantillaTicket({
-        eventoTitulo: evento.titulo,
-        eventoCoverUrl: evento.cover_url,
-        eventoFecha: evento.fecha_inicio,
-        eventoLugar: evento.location_nombre,
-        nombre: ticket.guest_nombre,
-        codigo: ticket.codigo,
-        qrToken: ticket.qr_token,
-        tipoNombre: tipo.nombre,
-        linkTicket: `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${ticket.codigo}`,
-        gratis: true,
-      }),
+      ctx: {
+        nombre     : ticket.guest_nombre,
+        tipo_boleta: tipo.nombre,
+        codigo     : ticket.codigo,
+        qr_token   : ticket.qr_token,
+        enlace     : `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${ticket.codigo}`,
+      },
     }).then(r => console.log('[reservar] email confirmación resultado:', r));
   }
 

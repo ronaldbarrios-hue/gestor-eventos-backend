@@ -4,7 +4,7 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar } = require('../lib/notificar.js');
 const { auditar } = require('../lib/auditar.js');
 const { assertPermiso } = require('../lib/acceso.js');
-const { sendMail, plantillaInvitacionEquipo } = require('../lib/email.js');
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -95,15 +95,19 @@ router.post('/:eventoId/equipo', async (req, res) => {
     const { data: ev } = await supabase
       .from('eventos').select('titulo, cover_url').eq('id', eventoId).maybeSingle();
 
-    const resultEmail = await sendMail({
+    /* La plantilla sale de la del evento (o del texto por defecto) y lleva su
+       marca. `enviarEmailEvento` completa lo que falte del evento por su
+       cuenta y nunca lanza: una invitación que no se puede enviar por correo no
+       debe deshacer al miembro ya creado. */
+    const resultEmail = await enviarEmailEvento({
+      evento: eventoId,
+      tipo: 'invitacion_equipo',
       to: email.toLowerCase(),
-      subject: `Te invitaron al equipo de "${ev?.titulo || 'un evento'}" en GESTEK`,
-      html: plantillaInvitacionEquipo({
-        eventoTitulo: ev?.titulo,
-        eventoCoverUrl: ev?.cover_url,
-        rolNombre: rol.nombre,
-        link: `${process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app'}/eventos/${eventoId}`,
-      }),
+      ctx: {
+        nombre: nombre_invitado || (email || '').split('@')[0],
+        rol: rol.nombre,
+        enlace: `${process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app'}/eventos/${eventoId}`,
+      },
     });
     console.log('[equipo] email invitación resultado:', resultEmail);
 

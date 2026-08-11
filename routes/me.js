@@ -4,7 +4,7 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { otorgarBadge } = require('../lib/gamificacion.js');
 const { esUrlImagenSegura } = require('../lib/urls.js');
 const { signTicketQR } = require('../lib/qr.js');
-const { sendMail, plantillaTicket } = require('../lib/email.js');
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -173,21 +173,17 @@ router.post('/boletas/:id/transferir', async (req, res) => {
 
     /* Aviso por correo a la nueva persona, con su QR ya listo */
     const frontendUrl = (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0];
-    const resultadoEmail = await sendMail({
+    const resultadoEmail = await enviarEmailEvento({
+      evento: ticket.evento_id,
+      tipo: 'ticket',
       to: nuevoEmail,
-      subject: `Te transfirieron una entrada para "${ticket.evento?.titulo || 'un evento'}"`,
-      html: plantillaTicket({
-        eventoTitulo: ticket.evento?.titulo,
-        eventoCoverUrl: ticket.evento?.cover_url,
-        eventoFecha: ticket.evento?.fecha_inicio,
-        eventoLugar: ticket.evento?.location_nombre,
-        nombre: nombre?.trim() || null,
-        codigo: nuevoCodigo,
-        qrToken: qr_token,
-        tipoNombre: ticket.tipo?.nombre,
-        linkTicket: `${frontendUrl}/mi-ticket/${nuevoCodigo}`,
-        gratis: !ticket.precio_pagado || Number(ticket.precio_pagado) === 0,
-      }),
+      ctx: {
+        nombre     : nombre?.trim() || null,
+        tipo_boleta: ticket.tipo?.nombre,
+        codigo     : nuevoCodigo,
+        qr_token,
+        enlace     : `${frontendUrl}/mi-ticket/${nuevoCodigo}`,
+      },
     });
 
     res.json({ ok: true, nuevo_codigo: nuevoCodigo, email_enviado: resultadoEmail.ok });

@@ -12,7 +12,7 @@ const { signTicketQR } = require('../lib/qr.js');
 const mp = require('../lib/mercadopago.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
-const { sendMail, plantillaTicket } = require('../lib/email.js');
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 function verifyMPSignature(req) {
   if (!MP_WEBHOOK_SECRET) return { ok: true, reason: 'no_secret_configured' };
@@ -489,21 +489,17 @@ async function procesarPago(pago) {
       });
     }
     if (tFull?.guest_email) {
-      sendMail({
+      enviarEmailEvento({
+        evento: ticket.evento_id,
+        tipo: 'ticket',
         to: tFull.guest_email,
-        subject: `Tu entrada para "${evWh?.titulo || 'el evento'}" está confirmada`,
-        html: plantillaTicket({
-          eventoTitulo: evWh?.titulo,
-          eventoCoverUrl: evWh?.cover_url,
-          eventoFecha: evWh?.fecha_inicio,
-          eventoLugar: evWh?.location_nombre,
-          nombre: tFull.guest_nombre,
-          codigo: tFull.codigo,
-          qrToken: tFull.qr_token,
-          tipoNombre,
-          linkTicket: `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${tFull.codigo}`,
-          gratis: false,
-        }),
+        ctx: {
+          nombre     : tFull.guest_nombre,
+          tipo_boleta: tipoNombre,
+          codigo     : tFull.codigo,
+          qr_token   : tFull.qr_token,
+          enlace     : `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${tFull.codigo}`,
+        },
       }).then(r => console.log('[pagos] email confirmación resultado:', r));
     }
     const { data: ev } = await supabase

@@ -80,15 +80,10 @@ router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, async (req, 
   if (!VAPID_PUBLIC) return res.status(503).json({ error: 'Web push no configurado.' });
   if (!titulo?.trim() || !mensaje?.trim()) return res.status(400).json({ error: 'Título y mensaje son requeridos.' });
 
-  /* Owner + plan Pro check */
+  /* Owner check */
   const { data: ev } = await supabase
     .from('eventos').select('id, owner_id, titulo').eq('id', eventoId).single();
   if (!ev || ev.owner_id !== req.user.id) return res.status(403).json({ error: 'No autorizado.' });
-
-  const { data: prof } = await supabase
-    .from('profiles').select('plan, plan_expires_at').eq('id', req.user.id).single();
-  const esPro = prof?.plan === 'pro' && (!prof.plan_expires_at || new Date(prof.plan_expires_at) > new Date());
-  if (!esPro) return res.status(402).json({ error: 'Broadcast de notificaciones requiere plan Pro.' });
 
   /* Audiencia: owner + miembros del equipo activos */
   const { data: miembros } = await supabase

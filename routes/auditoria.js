@@ -1,6 +1,10 @@
-/* GESTEK — Auditoría (lectura). Feature plan Pro.
-   GET /eventos/:eventoId/auditoria  — solo owner del evento + plan Pro vigente.
-   Se monta en /eventos. */
+/* GESTEK — Auditoría (lectura).
+   GET /eventos/:eventoId/auditoria  — solo el owner del evento.
+   Se monta en /eventos.
+
+   Antes esto estaba detrás del plan Pro, y no devolvía 402: devolvía una lista
+   vacía con requierePro:true, así que la auditoría se veía como un evento sin
+   actividad en vez de como una función bloqueada. */
 const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
@@ -17,15 +21,6 @@ router.get('/:eventoId/auditoria', async (req, res) => {
   if (e1) return res.status(500).json({ error: e1.message });
   if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
   if (ev.owner_id !== req.user.id) return res.status(403).json({ error: 'No autorizado.' });
-
-  /* Pro gate: el owner debe tener plan pro vigente */
-  const { data: prof } = await supabase
-    .from('profiles').select('plan, plan_expires_at').eq('id', ev.owner_id).single();
-  const esPro = prof?.plan === 'pro' && (!prof.plan_expires_at || new Date(prof.plan_expires_at) > new Date());
-
-  if (!esPro) {
-    return res.json({ auditoria: [], requierePro: true });
-  }
 
   const { data, error } = await supabase
     .from('audit_log')

@@ -7,8 +7,10 @@ const router = express.Router();
 router.use(verifySupabaseJWT);
 
 /* Owner o miembro con permiso 'editar_evento' (gestiona contenido del evento). */
+/* `gestionar_agenda` es el permiso fino; `editar_evento` sigue valiendo para no
+   romper a quien ya lo tenía concedido. */
 function assertOwner(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
+  return assertPermiso(eventoId, userId, ['gestionar_agenda', 'editar_evento'], 'id, owner_id');
 }
 
 /* El organizador siempre puede; cualquier otro usuario necesita tener al

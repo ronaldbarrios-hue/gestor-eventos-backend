@@ -220,6 +220,42 @@ router.post('/:eventoId/chat/channels/:channelId/messages', async (req, res) => 
   }
 });
 
+/* DELETE /eventos/:eventoId/chat/channels/:channelId/messages/:messageId
+
+   El permiso `borrar_mensajes` existía en el catálogo del frontend y se podía
+   conceder a un rol, pero no había ruta que borrara nada: era un interruptor
+   sin cable. Se borra el propio mensaje siempre, y los de otros solo con el
+   permiso. En un DM no manda nadie: solo el autor. */
+router.delete('/:eventoId/chat/channels/:channelId/messages/:messageId', async (req, res) => {
+  const { eventoId, channelId, messageId } = req.params;
+  try {
+    const ctx = await assertAcceso(eventoId, req.user.id);
+
+    const { data: ch } = await supabase
+      .from('chat_channels').select('id, tipo, dm_users').eq('id', channelId).eq('evento_id', eventoId).maybeSingle();
+    if (!ch) return res.status(404).json({ error: 'Canal no encontrado.' });
+    if (ch.tipo === 'dm' && !(ch.dm_users || []).includes(req.user.id)) {
+      return res.status(403).json({ error: 'No autorizado.' });
+    }
+
+    const { data: msg } = await supabase
+      .from('chat_messages').select('id, user_id').eq('id', messageId).eq('channel_id', channelId).maybeSingle();
+    if (!msg) return res.status(404).json({ error: 'Mensaje no encontrado.' });
+
+    const esMio = String(msg.user_id) === String(req.user.id);
+    const puedeModerar = ch.tipo !== 'dm' && tienePermiso(ctx, 'borrar_mensajes');
+    if (!esMio && !puedeModerar) {
+      return res.status(403).json({ error: 'Solo puedes borrar tus propios mensajes.' });
+    }
+
+    const { error } = await supabase.from('chat_messages').delete().eq('id', messageId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, id: messageId });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 /* POST /eventos/:eventoId/chat/dm { user_id } — abre (o crea) el chat 1:1
    entre el usuario y otro miembro del evento. Idempotente por par de usuarios. */
 router.post('/:eventoId/chat/dm', async (req, res) => {

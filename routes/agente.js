@@ -5,43 +5,26 @@ const agente = require('../lib/agente.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-/* Cuentas con acceso a Gestbot sin necesidad de plan Pro — uso personal
-   del desarrollador para pruebas, mientras el resto de usuarios sigue
-   necesitando Pro normalmente. Debe coincidir con EMAILS_DESBLOQUEADOS
-   en src/pages/agente/GestbotPage.jsx del frontend. */
-const EMAILS_DESBLOQUEADOS = ['ronaldbarrios890@gmail.com'];
+/* GET /me/agente/estado — disponibilidad del asistente.
 
-/* Gestbot es una función del plan Pro. */
-async function esPro(userId, userEmail) {
-  if (EMAILS_DESBLOQUEADOS.includes((userEmail || '').toLowerCase())) return true;
-  const { data } = await supabase
-    .from('profiles').select('plan, plan_expires_at').eq('id', userId).maybeSingle();
-  return data?.plan === 'pro' &&
-    (!data.plan_expires_at || new Date(data.plan_expires_at) > new Date());
-}
-
-/* GET /me/agente/estado — disponibilidad + si el usuario es Pro */
+   Gestbot estuvo detrás del plan Pro, con una lista de correos del
+   desarrollador colada para poder probarlo. Ya no: lo único que decide si
+   responde es que el servidor tenga proveedor de IA configurado. Se mantiene
+   `requierePro: false` en la respuesta porque el frontend lo lee, y quitarlo de
+   golpe dejaría la pantalla en un estado indefinido. */
 router.get('/me/agente/estado', async (req, res) => {
-  const pro = await esPro(req.user.id, req.user.email);
   res.json({
     disponible: agente.disponible,
     provider: agente.provider || null,
-    requierePro: !pro,
+    requierePro: false,
   });
 });
 
-/* POST /me/agente/chat — solo Pro */
+/* POST /me/agente/chat */
 router.post('/me/agente/chat', async (req, res) => {
   if (!agente.disponible) {
     return res.status(503).json({
       error: 'El asistente IA no está habilitado en este servidor.',
-      mood: 'error',
-    });
-  }
-  if (!(await esPro(req.user.id, req.user.email))) {
-    return res.status(402).json({
-      error: 'Gestbot es una función del plan Pro. Activa Pro para usar el asistente.',
-      requierePro: true,
       mood: 'error',
     });
   }
@@ -68,12 +51,6 @@ router.post('/me/agente/chat', async (req, res) => {
 router.post('/me/agente/generar-evento', async (req, res) => {
   if (!agente.disponible) {
     return res.status(503).json({ error: 'El asistente IA no esta habilitado en este servidor.' });
-  }
-  if (!(await esPro(req.user.id, req.user.email))) {
-    return res.status(402).json({
-      error: 'Crear eventos con IA es una funcion del plan Pro.',
-      requierePro: true,
-    });
   }
   const descripcion = String(req.body?.descripcion || '').trim();
   if (descripcion.length < 10) {

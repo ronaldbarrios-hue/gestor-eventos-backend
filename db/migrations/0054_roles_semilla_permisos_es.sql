@@ -1,0 +1,137 @@
+-- 0054 · Roles semilla: ids de permiso en español y los cuatro roles que faltaban.
+-- SIN APLICAR. Idempotente.
+--
+-- El problema no era que los roles estuvieran desactualizados, era que hablaban
+-- otro idioma. 0007 los sembró con ids en inglés —"edit_event", "invite_staff",
+-- "view", "internal_chat", "attendee_lookup"— mientras el catálogo del frontend
+-- (src/lib/permisos.js) y el verificador del backend (lib/acceso.js) usan ids en
+-- español: "editar_evento", "invitar_staff", "ver_clientes"...
+--
+-- Los dos vocabularios no comparten un solo id. Resultado: cada rol semilla
+-- concedía exactamente cero permisos. Un "Coordinador" con
+-- ["edit_event","invite_staff","view"] fallaba el assertPermiso de
+-- ["invitar_staff"] y recibía "No autorizado", igual que alguien sin rol. Lo
+-- único que funcionaba era ser dueño del evento.
+--
+-- Además faltaban los roles de expositor, speaker, finanzas y moderación, y
+-- "view" no correspondía a ningún permiso real: la lectura del evento la
+-- resuelve ser miembro activo, no un permiso.
+
+/* ── Traducir lo que ya está guardado ─────────────────────────────────
+   Se toca `permissions` de event_roles y `custom_permissions` de
+   event_members, que es el otro sitio donde se guardan ids sueltos.
+
+   "view" se descarta: no existe como permiso. */
+create or replace function public.fn_traducir_permisos(p jsonb)
+returns jsonb
+language sql
+immutable
+as $$
+  select coalesce(
+    jsonb_agg(distinct nuevo) filter (where nuevo is not null),
+    '[]'::jsonb
+  )
+  from (
+    select case valor
+      when 'edit_event'       then 'editar_evento'
+      when 'invite_staff'     then 'invitar_staff'
+      when 'manage_roles'     then 'gestionar_roles'
+      when 'remove_members'   then 'remover_miembros'
+      when 'manage_tickets'   then 'gestionar_tickets'
+      when 'attendee_lookup'  then 'ver_clientes'
+      when 'manage_attendees' then 'gestionar_clientes'
+      when 'internal_chat'    then 'crear_canales'
+      when 'view_analytics'   then 'ver_analytics'
+      when 'view_payments'    then 'ver_pagos'
+      /* 'view' y cualquier cosa desconocida se caen aquí. Los ids que ya
+         estaban en español pasan tal cual. */
+      when 'view'             then null
+      else valor
+    end as nuevo
+    from jsonb_array_elements_text(coalesce(p, '[]'::jsonb)) as t(valor)
+  ) x;
+$$;
+
+update public.event_roles
+   set permissions = public.fn_traducir_permisos(permissions)
+ where permissions is not null
+   and exists (
+     select 1 from jsonb_array_elements_text(permissions) as t(v)
+     where t.v in ('edit_event','invite_staff','manage_roles','remove_members',
+                   'manage_tickets','attendee_lookup','manage_attendees',
+                   'internal_chat','view_analytics','view_payments','view')
+   );
+
+update public.event_members
+   set custom_permissions = (
+     select coalesce(array_agg(x), '{}'::text[])
+     from jsonb_array_elements_text(
+       public.fn_traducir_permisos(to_jsonb(custom_permissions))
+     ) as t(x)
+   )
+ where custom_permissions is not null
+   and custom_permissions && array['edit_event','invite_staff','manage_roles',
+       'remove_members','manage_tickets','attendee_lookup','manage_attendees',
+       'internal_chat','view_analytics','view_payments','view'];
+
+/* ── Semilla nueva ────────────────────────────────────────────────────
+   Diez roles. Los seis de antes con sus ids traducidos, más expositor,
+   speaker, finanzas y moderación. */
+create or replace function public.fn_roles_semilla()
+returns table (nombre text, descripcion text, permissions jsonb, orden integer)
+language sql
+immutable
+as $$
+  values
+    ('Editor',            'Edita información, agenda y página pública',
+      '["editar_evento","editar_pagina_publica","gestionar_imagenes","gestionar_agenda"]'::jsonb, 1),
+    ('Coordinador',       'Coordina al staff y al evento completo',
+      '["editar_evento","invitar_staff","gestionar_agenda","ver_clientes","ver_analytics","crear_canales"]'::jsonb, 2),
+    ('Staff · Acceso',    'Controla entrada y hace check-in con QR',
+      '["checkin","ver_clientes"]'::jsonb, 3),
+    ('Staff · Logística', 'Montaje, técnica y escenario',
+      '["crear_canales","gestionar_agenda"]'::jsonb, 4),
+    ('Staff · Atención',  'Atiende asistentes durante el evento',
+      '["ver_clientes","checkin"]'::jsonb, 5),
+    ('VIP host',          'Anfitrión de zona VIP',
+      '["vip_zone","ver_clientes","checkin"]'::jsonb, 6),
+    ('Expositor',         'Gestiona su stand, su ficha y sus puntos',
+      '["gestionar_expositores"]'::jsonb, 7),
+    ('Speaker',           'Ponente: ve su franja y el cronograma',
+      '["gestionar_agenda"]'::jsonb, 8),
+    ('Finanzas',          'Ve ingresos, facturación y reembolsos',
+      '["ver_pagos","reembolsar","ver_clientes","ver_analytics"]'::jsonb, 9),
+    ('Moderación',        'Modera el chat y la agenda pública',
+      '["borrar_mensajes","crear_canales","gestionar_agenda"]'::jsonb, 10);
+$$;
+
+create or replace function public.seed_event_roles()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.event_roles (evento_id, nombre, descripcion, permissions, is_system, orden)
+  select new.id, r.nombre, r.descripcion, r.permissions, true, r.orden
+    from public.fn_roles_semilla() r
+  on conflict (evento_id, nombre) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_seed_event_roles on public.eventos;
+create trigger trg_seed_event_roles
+  after insert on public.eventos
+  for each row execute function public.seed_event_roles();
+
+/* ── Backfill ─────────────────────────────────────────────────────────
+   A los eventos que ya existen se les añaden solo los roles que les falten,
+   por nombre. No se pisa ninguno: si el organizador editó "Editor" a mano,
+   su versión se queda. */
+insert into public.event_roles (evento_id, nombre, descripcion, permissions, is_system, orden)
+select e.id, r.nombre, r.descripcion, r.permissions, true, r.orden
+  from public.eventos e
+  cross join public.fn_roles_semilla() r
+ where e.deleted_at is null
+on conflict (evento_id, nombre) do nothing;

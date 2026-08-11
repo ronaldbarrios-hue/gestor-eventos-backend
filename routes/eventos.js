@@ -6,6 +6,7 @@ const { otorgarBadge } = require('../lib/gamificacion.js');
 const { auditar } = require('../lib/auditar.js');
 const { esUrlImagenSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
+const { assertPermiso } = require('../lib/acceso.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -420,10 +421,15 @@ router.post('/:id/estado', async (req, res) => {
     return res.status(400).json({ error: `estado inválido. Usa: ${ESTADOS_VALIDOS.join(', ')}.` });
   }
 
-  const { data: actual } = await supabase
-    .from('eventos').select('owner_id').eq('id', req.params.id).maybeSingle();
-  if (!actual) return res.status(404).json({ error: 'Evento no encontrado.' });
-  if (actual.owner_id !== req.user.id) return res.status(403).json({ error: 'No autorizado.' });
+  /* `publicar_evento` estaba en el catálogo de permisos pero no lo verificaba
+     nadie: publicar era exclusivo del dueño, así que el permiso se podía
+     conceder y no servía para nada. */
+  try {
+    await assertPermiso(req.params.id, req.user.id, ['publicar_evento'], 'id, owner_id');
+  } catch (e) {
+    const code = e.message === 'Evento no encontrado.' ? 404 : 403;
+    return res.status(code).json({ error: e.message });
+  }
 
   const updates = { estado };
   if (estado === 'publicado') updates.published_at = new Date().toISOString();

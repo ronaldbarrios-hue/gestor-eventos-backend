@@ -1,6 +1,5 @@
-/* GESTEK — Gestión de API tokens y webhooks (feature plan Pro).
-   Auth: Supabase JWT. Crear token/webhook requiere plan Pro vigente.
-   Montado en /me. */
+/* GESTEK — Gestión de API tokens y webhooks.
+   Auth: Supabase JWT. Montado en /me. */
 
 const express = require('express');
 const crypto = require('crypto');
@@ -13,12 +12,6 @@ router.use(verifySupabaseJWT);
 
 const TIPOS_WEBHOOK = ['ticket.pagado', 'checkin.realizado', 'evento.publicado'];
 
-async function esPro(userId) {
-  const { data } = await supabase
-    .from('profiles').select('plan, plan_expires_at').eq('id', userId).single();
-  return data?.plan === 'pro' && (!data.plan_expires_at || new Date(data.plan_expires_at) > new Date());
-}
-
 /* ── API TOKENS ── */
 router.get('/integraciones/tokens', async (req, res) => {
   const { data, error } = await supabase
@@ -27,12 +20,10 @@ router.get('/integraciones/tokens', async (req, res) => {
     .eq('owner_id', req.user.id)
     .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ tokens: data || [], pro: await esPro(req.user.id), tipos_webhook: TIPOS_WEBHOOK });
+  res.json({ tokens: data || [], tipos_webhook: TIPOS_WEBHOOK });
 });
 
 router.post('/integraciones/tokens', async (req, res) => {
-  if (!(await esPro(req.user.id)))
-    return res.status(402).json({ error: 'La API es una función del plan Pro.', requierePro: true });
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'Poné un nombre al token.' });
 
@@ -66,8 +57,6 @@ router.get('/integraciones/webhooks', async (req, res) => {
 });
 
 router.post('/integraciones/webhooks', async (req, res) => {
-  if (!(await esPro(req.user.id)))
-    return res.status(402).json({ error: 'Webhooks es una función del plan Pro.', requierePro: true });
   const { url, eventos } = req.body || {};
   if (!/^https?:\/\//.test(url || '')) return res.status(400).json({ error: 'URL inválida (debe ser http/https).' });
   const evs = (Array.isArray(eventos) ? eventos : []).filter(e => TIPOS_WEBHOOK.includes(e));

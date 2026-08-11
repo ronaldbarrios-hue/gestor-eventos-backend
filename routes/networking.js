@@ -10,8 +10,10 @@ router.use(verifySupabaseJWT);
    coincidir con los que ya existen en la tabla `categorias`. */
 const CATEGORIAS_PERMITIDAS = ['negocios', 'marketing', 'tecnologia'];
 
+/* `gestionar_expositores` es el permiso fino (stands y rueda de negocios);
+   `editar_evento` sigue valiendo para no romper a quien ya lo tenía. */
 function assertOwner(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
+  return assertPermiso(eventoId, userId, ['gestionar_expositores', 'editar_evento'], 'id, owner_id');
 }
 
 /* Verifica que el evento tenga una categoría habilitada para este módulo. */

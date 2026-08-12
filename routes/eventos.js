@@ -7,6 +7,7 @@ const { auditar } = require('../lib/auditar.js');
 const { esUrlImagenSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { TIPOS_CAMPO, IDS_TIPOS_CAMPO, CON_OPCIONES, GRUPOS, FICHAS } = require('../lib/formularioCampos.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -293,10 +294,35 @@ async function puedeEditarEvento(req, eventoId) {
   return { ok: true };
 }
 
-/* Tipos de campo soportados por el formulario de compra personalizado.
-   'foto' guarda una URL de imagen (subida a Supabase Storage desde el
-   frontend) en vez de texto libre. */
-const TIPOS_CAMPO_VALIDOS = ['texto', 'numero', 'fecha', 'seleccion', 'checkbox', 'foto'];
+/* Los tipos de campo y las fichas prearmadas viven en lib/formularioCampos.js,
+   que es también quien valida las respuestas. Antes esta lista se mantenía aquí
+   y otra igual en el frontend: la misma trampa que tenían los correos, dos
+   catálogos que se separan sin que nadie lo note. */
+
+/* Un formulario de caracterización son ~22 preguntas, y las entidades piden
+   fichas de más de 30. El tope estaba en 20, así que la ficha completa no se
+   podía guardar: fallaba con "Máximo 20 campos personalizados". */
+const MAX_CAMPOS_FORMULARIO = 60;
+
+/* Los campos que se guardan de cada pregunta. `grupo` y `ayuda` los añade la
+   migración 0055. */
+const COLUMNAS_CAMPO = 'id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id, grupo, ayuda';
+
+/* Arma la fila a guardar. Las opciones solo tienen sentido en los tipos que las
+   usan; en los demás se limpian para que no queden restos de haber cambiado el
+   tipo de un campo ya creado. */
+function filaCampo(c, orden) {
+  return {
+    tipo: c.tipo,
+    etiqueta: c.etiqueta.trim(),
+    opciones: CON_OPCIONES.has(c.tipo) ? c.opciones : null,
+    requerido: Boolean(c.requerido),
+    orden,
+    ticket_type_id: c.ticket_type_id || null,
+    grupo: c.grupo ? String(c.grupo).slice(0, 80) : null,
+    ayuda: c.ayuda ? String(c.ayuda).slice(0, 300) : null,
+  };
+}
 
 /* GET /eventos/:id/formulario — campos personalizados del formulario de compra */
 router.get('/:id/formulario', async (req, res) => {
@@ -305,11 +331,32 @@ router.get('/:id/formulario', async (req, res) => {
 
   const { data, error } = await supabase
     .from('event_form_fields')
-    .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
+    .select(COLUMNAS_CAMPO)
     .eq('evento_id', req.params.id)
     .order('orden', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ campos: data });
+  if (error) {
+    /* Sin la 0055 no existen `grupo` ni `ayuda`: se reintenta sin ellas para
+       que el formulario siga editándose mientras la migración no esté. */
+    const { data: viejo, error: e2 } = await supabase
+      .from('event_form_fields')
+      .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
+      .eq('evento_id', req.params.id)
+      .order('orden', { ascending: true });
+    if (e2) return res.status(500).json({ error: e2.message });
+    return res.json({
+      campos: viejo || [], tipos: TIPOS_CAMPO, grupos: GRUPOS, fichas: FICHAS,
+      max_campos: MAX_CAMPOS_FORMULARIO, agrupacion_lista: false,
+    });
+  }
+  res.json({
+    campos: data || [],
+    /* El catálogo viaja con la respuesta: el panel no mantiene su propia copia. */
+    tipos: TIPOS_CAMPO,
+    grupos: GRUPOS,
+    fichas: FICHAS,
+    max_campos: MAX_CAMPOS_FORMULARIO,
+    agrupacion_lista: true,
+  });
 });
 
 /* PUT /eventos/:id/formulario — guarda la lista de campos personalizados.
@@ -323,12 +370,16 @@ router.put('/:id/formulario', async (req, res) => {
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
 
   const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
-  if (campos.length > 20) return res.status(400).json({ error: 'Máximo 20 campos personalizados.' });
+  if (campos.length > MAX_CAMPOS_FORMULARIO) {
+    return res.status(400).json({ error: `Máximo ${MAX_CAMPOS_FORMULARIO} campos en el formulario.` });
+  }
 
   for (const c of campos) {
     if (!c.etiqueta?.trim()) return res.status(400).json({ error: 'Cada campo necesita una etiqueta.' });
-    if (!TIPOS_CAMPO_VALIDOS.includes(c.tipo)) return res.status(400).json({ error: `Tipo de campo inválido: ${c.tipo}` });
-    if (c.tipo === 'seleccion' && (!Array.isArray(c.opciones) || c.opciones.length === 0)) {
+    if (!IDS_TIPOS_CAMPO.includes(c.tipo)) return res.status(400).json({ error: `Tipo de campo inválido: ${c.tipo}` });
+    /* `multiple` también necesita opciones, y antes no se comprobaba porque el
+       tipo no existía. */
+    if (CON_OPCIONES.has(c.tipo) && (!Array.isArray(c.opciones) || c.opciones.length === 0)) {
       return res.status(400).json({ error: `El campo "${c.etiqueta}" necesita al menos una opción.` });
     }
   }
@@ -355,14 +406,7 @@ router.put('/:id/formulario', async (req, res) => {
     if (c.id && idsExistentes.has(c.id)) {
       const { error: eUpd } = await supabase
         .from('event_form_fields')
-        .update({
-          tipo: c.tipo,
-          etiqueta: c.etiqueta.trim(),
-          opciones: c.tipo === 'seleccion' ? c.opciones : null,
-          requerido: Boolean(c.requerido),
-          orden: i,
-          ticket_type_id: c.ticket_type_id || null,
-        })
+        .update(filaCampo(c, i))
         .eq('id', c.id);
       if (eUpd) return res.status(500).json({ error: eUpd.message });
     }
@@ -373,22 +417,14 @@ router.put('/:id/formulario', async (req, res) => {
     .map((c, i) => ({ ...c, _orden: i }))
     .filter(c => !c.id || !idsExistentes.has(c.id));
   if (nuevos.length > 0) {
-    const filas = nuevos.map(c => ({
-      evento_id: req.params.id,
-      tipo: c.tipo,
-      etiqueta: c.etiqueta.trim(),
-      opciones: c.tipo === 'seleccion' ? c.opciones : null,
-      requerido: Boolean(c.requerido),
-      orden: c._orden,
-      ticket_type_id: c.ticket_type_id || null,
-    }));
+    const filas = nuevos.map(c => ({ evento_id: req.params.id, ...filaCampo(c, c._orden) }));
     const { error: eIns } = await supabase.from('event_form_fields').insert(filas);
     if (eIns) return res.status(500).json({ error: eIns.message });
   }
 
   const { data: final, error: eFinal } = await supabase
     .from('event_form_fields')
-    .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
+    .select(COLUMNAS_CAMPO)
     .eq('evento_id', req.params.id)
     .order('orden', { ascending: true });
   if (eFinal) return res.status(500).json({ error: eFinal.message });

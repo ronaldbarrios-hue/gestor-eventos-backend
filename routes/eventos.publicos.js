@@ -7,6 +7,7 @@ const { signTicketQR } = require('../lib/qr.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const { validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -168,7 +169,7 @@ router.post('/ticket/:codigo/formulario', async (req, res) => {
 
   const { data: ticket, error: e1 } = await supabase
     .from('tickets')
-    .select('id, evento_id, respuestas')
+    .select('id, evento_id, respuestas, ticket_type_id')
     .eq('codigo', codigo)
     .maybeSingle();
   if (e1) return res.status(500).json({ error: e1.message });
@@ -177,21 +178,21 @@ router.post('/ticket/:codigo/formulario', async (req, res) => {
 
   const { data: campos } = await supabase
     .from('event_form_fields')
-    .select('id, etiqueta, requerido')
+    .select('id, etiqueta, requerido, tipo, opciones, ticket_type_id')
     .eq('evento_id', ticket.evento_id);
 
-  for (const c of campos || []) {
-    if (c.requerido) {
-      const v = respuestas[c.id];
-      if (v === undefined || v === null || v === '' || v === false) {
-        return res.status(400).json({ error: `El campo "${c.etiqueta}" es obligatorio.` });
-      }
-    }
-  }
+  /* Antes aquí solo se comprobaba que un obligatorio no llegara vacío: un campo
+     de correo aceptaba "hola", uno de número aceptaba letras y una selección
+     aceptaba cualquier texto aunque no estuviera entre sus opciones. Con una
+     ficha de caracterización eso ensucia el dato justo donde luego hay que
+     reportar. */
+  const fallo = validarFormulario(campos, respuestas, ticket.ticket_type_id);
+  if (fallo) return res.status(400).json({ error: fallo });
 
+  const limpias = normalizarRespuestas(campos, respuestas);
   const { error: e2 } = await supabase
     .from('tickets')
-    .update({ respuestas: Object.keys(respuestas).length ? respuestas : {} })
+    .update({ respuestas: Object.keys(limpias).length ? limpias : {} })
     .eq('id', ticket.id);
   if (e2) return res.status(500).json({ error: e2.message });
 
@@ -566,17 +567,15 @@ router.post('/slug/:slug/reservar', async (req, res) => {
      (ticket_type_id NULL) y los específicos de `tipo`. Un campo obligatorio de
      VIP no debe bloquear una compra de General. */
   const { data: camposReq } = await supabase
-    .from('event_form_fields').select('id, etiqueta, requerido, ticket_type_id').eq('evento_id', evento.id);
+    .from('event_form_fields')
+    .select('id, etiqueta, requerido, tipo, opciones, ticket_type_id').eq('evento_id', evento.id);
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
-  for (const c of camposReq || []) {
-    if (c.ticket_type_id && c.ticket_type_id !== tipo.id) continue;
-    if (c.requerido) {
-      const v = respuestas[c.id];
-      if (v === undefined || v === null || v === '') {
-        return res.status(400).json({ error: `El campo "${c.etiqueta}" es obligatorio.` });
-      }
-    }
-  }
+
+  /* validarFormulario ya salta los campos de otro tipo de boleta: un
+     obligatorio de la ficha de stand no debe frenar una entrada general. */
+  const falloForm = validarFormulario(camposReq, respuestas, tipo.id);
+  if (falloForm) return res.status(400).json({ error: falloForm });
+  const respuestasLimpias = normalizarRespuestas(camposReq, respuestas);
 
   const codigo = generarCodigo();
   const estado = esGratis ? 'pagado' : 'emitido';
@@ -592,7 +591,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
       estado,
       precio_pagado : esGratis ? 0 : null,
       pagado_at     : esGratis ? new Date().toISOString() : null,
-      respuestas    : Object.keys(respuestas).length ? respuestas : null,
+      respuestas    : Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
     })
     .select()
     .single();

@@ -1,21 +1,32 @@
--- 0054 · Roles semilla: ids de permiso en español y los cuatro roles que faltaban.
--- SIN APLICAR. Idempotente.
+-- 0054 · Cuatro roles nuevos, y el archivo de la semilla puesto al día. YA APLICADA.
+-- Idempotente. Ojo: la 0056 mueve fn_roles_semilla al esquema `private`.
 --
--- El problema no era que los roles estuvieran desactualizados, era que hablaban
--- otro idioma. 0007 los sembró con ids en inglés —"edit_event", "invite_staff",
--- "view", "internal_chat", "attendee_lookup"— mientras el catálogo del frontend
--- (src/lib/permisos.js) y el verificador del backend (lib/acceso.js) usan ids en
--- español: "editar_evento", "invitar_staff", "ver_clientes"...
+-- OJO CON 0007_event_roles.sql: ese archivo siembra los roles con ids de permiso
+-- en INGLÉS ("edit_event", "invite_staff", "view", "internal_chat",
+-- "attendee_lookup"), que no existen para el verificador de lib/acceso.js ni
+-- para el catálogo de src/lib/permisos.js — los dos usan español. Si esa versión
+-- fuera la que está corriendo, cada rol semilla concedería exactamente cero
+-- permisos y solo funcionaría ser dueño del evento.
 --
--- Los dos vocabularios no comparten un solo id. Resultado: cada rol semilla
--- concedía exactamente cero permisos. Un "Coordinador" con
--- ["edit_event","invite_staff","view"] fallaba el assertPermiso de
--- ["invitar_staff"] y recibía "No autorizado", igual que alguien sin rol. Lo
--- único que funcionaba era ser dueño del evento.
+-- Comprobado contra la base: NO es la que está corriendo. La función
+-- seed_event_roles ya siembra en español, así que alguien la corrigió
+-- directamente sobre Supabase sin dejar migración. El archivo 0007 quedó
+-- mintiendo, y cualquiera que reconstruya la base desde las migraciones se
+-- llevaría el fallo entero.
 --
--- Además faltaban los roles de expositor, speaker, finanzas y moderación, y
--- "view" no correspondía a ningún permiso real: la lectura del evento la
--- resuelve ser miembro activo, no un permiso.
+-- Esta migración hace tres cosas:
+--   1. Deja la función escrita en el repo, en español, para que reconstruir la
+--      base desde cero dé el mismo resultado que la base de hoy.
+--   2. Añade los cuatro roles que no existen en ningún evento: Expositor,
+--      Speaker, Finanzas y Moderación.
+--   3. Traduce por si acaso los ids en inglés que hubieran quedado sueltos en
+--      algún rol o en los custom_permissions de algún miembro. Sobre esta base
+--      no encuentra nada y no cambia una fila; se deja porque es lo que hace
+--      seguro aplicarla en otro entorno (staging, una copia, un despliegue
+--      nuevo) donde sí esté la versión vieja.
+--
+-- "view" se descarta: no correspondía a ningún permiso real. La lectura del
+-- evento la da ser miembro activo, no un permiso.
 
 /* ── Traducir lo que ya está guardado ─────────────────────────────────
    Se toca `permissions` de event_roles y `custom_permissions` de

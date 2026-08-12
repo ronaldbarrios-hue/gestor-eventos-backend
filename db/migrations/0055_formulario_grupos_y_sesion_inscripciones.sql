@@ -1,4 +1,5 @@
--- 0055 · Grupos en el formulario + inscripción por sub-evento. SIN APLICAR. Idempotente.
+-- 0055 · Grupos en el formulario + inscripción por sub-evento. YA APLICADA. Idempotente.
+-- Ojo: la 0056 corrige la vista y mueve el trigger al esquema `private`.
 --
 -- ── Parte 1: grupos y ayuda en los campos del formulario ──
 -- Una ficha de caracterización son ~22 preguntas. Sin agrupar es un muro, y la

@@ -1,4 +1,4 @@
--- 0052 · Plantillas de correo del evento y registro de envíos. SIN APLICAR. Idempotente.
+-- 0052 · Plantillas de correo del evento y registro de envíos. YA APLICADA. Idempotente.
 --
 -- Las plantillas vivían dentro de eventos.page_json, en la clave `emails`. Ese
 -- campo lo escriben también la marca, las páginas del editor y el navbar, cada

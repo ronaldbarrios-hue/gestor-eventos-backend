@@ -1,4 +1,6 @@
--- 0053 · Chat: la RLS acepta al staff y deja de filtrar los DM. SIN APLICAR. Idempotente.
+-- 0053 · Chat: la RLS acepta al staff y deja de filtrar los DM. YA APLICADA. Idempotente.
+-- Ojo: la 0056 mueve sus funciones al esquema `private`. Aplicar esta sola deja
+-- un aviso de seguridad; hay que aplicar la 0056 detrás.
 --
 -- Dos problemas en las políticas que dejó 0001_init:
 --

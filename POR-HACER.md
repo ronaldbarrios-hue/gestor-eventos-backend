@@ -11,6 +11,10 @@ Todo lo que queda, en un solo sitio. Dos mitades muy distintas:
 
 Última revisión: 12 de agosto de 2026. Migraciones 0052 a 0059 aplicadas.
 
+> **Hay cinco migraciones nuevas SIN aplicar: 0060 a 0064.** Ver la tabla al
+> principio de `PENDIENTE.md`. La 0064 no es opcional: sin ella el editor de
+> la página pública guarda contra columnas que no existen y falla entero.
+
 > Para el estado de las migraciones y cómo comprobar cada cosa, ver
 > `DESPLIEGUE.md`. Para el detalle de lo pedido por el equipo, `PENDIENTE.md` en
 > el frontend.
@@ -127,12 +131,25 @@ pestaña **Participación** junto al control de ingreso, marcar asistencia con e
 código de la boleta, y exportar los inscritos a CSV con las respuestas de la
 ficha (las columnas se descubren de lo guardado).
 
-- [ ] Falta el **formulario de inscripción en la agenda pública**, para que alguien
-      se apunte desde fuera del panel. El endpoint público existe
-      (`POST /eventos/publicos/slug/:slug/sesiones/:id/inscribir`) y el listado ya
-      dice por cada sub-evento si `pide_datos` y qué preguntas tiene; falta la
-      pantalla que lo use.
-- [ ] Ver 3.6 para el editor de las preguntas propias de un sub-evento.
+- [x] ~~Falta el **formulario de inscripción en la agenda pública**.~~ **Hecho**
+      (`InscripcionSesionModal.jsx`). Dos caminos y el orden importa: con el
+      código de la boleta primero —la boleta ya dice quién eres, no se te
+      piden los datos otra vez— y sin boleta después, porque en el taller
+      siempre aparece alguien que no pasó por la entrada y si no se le puede
+      registrar el conteo miente.
+- [x] ~~Ver 3.6 para el editor de las preguntas propias de un sub-evento.~~ **Hecho.**
+
+> **Aviso: este apartado decía "HECHO, salvo un trozo" y no era verdad.** El
+> backend sí estaba; el PANEL no existía en el frontend. Ni el interruptor de
+> «pide inscripción», ni el cupo, ni el selector de modo, ni la pestaña de
+> Participación: `grep -r requiere_inscripcion src/` no daba una sola línea en
+> `main`. Y `formulario_modo` ni siquiera estaba en la lista de campos
+> editables del `PATCH /eventos/:id/sessions/:id`, así que el modo se podía
+> leer y no escribir — un selector habría fallado en silencio.
+>
+> Ahora sí está: interruptor, cupo, los tres modos y el editor de preguntas,
+> más el badge en la lista que dice cuáles piden inscripción y cuántos
+> inscritos llevan.
 
 ### 3.2 · `AuthPage` — HECHO
 
@@ -146,55 +163,96 @@ llevaba en el contexto de auth desde el principio sin que nadie la llamara.
 - [ ] Queda el **#36** del documento de equipo: «cambiar propósito» se pierde en el
       registro y la casilla del teléfono va apretada.
 
-### 3.3 · Lista de espera de verdad
+### 3.3 · Lista de espera de verdad — HECHO
 
-- [ ] Hoy `routes/waitlist.js` guarda gente y estados pero **no dispara nada**
-      cuando se libera un cupo. Falta el disparador.
-- [ ] Avisar por correo al primero de la fila con un **enlace de compra que
-      caduca**, y pasar al siguiente si no lo usa. Necesita migración: token y
-      caducidad en `event_waitlist`.
-- [ ] La plantilla de correo `cupo_liberado` **ya existe** desde que se unificó el
-      motor. Solo falta llamarla.
+Migración 0061 (`oferta_token`, `oferta_expira`, `oferta_enviada_at`,
+`ofertas_recibidas`, estado `expired`) y `lib/waitlistOferta.js`.
 
-### 3.4 · Bloque del documento de equipo (#32–#49)
+- [x] ~~El disparador.~~ Cuelga de los cuatro sitios donde se libera un cupo:
+      reembolso por pasarela, **anular una boleta desde el panel**, subir el
+      cupo de un tipo y subir el aforo del evento.
+- [x] ~~Correo con enlace que caduca y pasar al siguiente.~~ 24 h por defecto
+      (`WAITLIST_HORAS_OFERTA`). El barrido cuelga del cron de recordatorios,
+      que ya corría cada quince minutos.
+- [x] ~~Llamar a `cupo_liberado`.~~ Llamada.
 
-- [ ] **#32 · iFrame con tres modos de publicación**: enlazar la web propia del
-      organizador, incrustar, o llevar a la landing de GESTEK. Necesita migración
-      (`eventos.modo_publico`, `eventos.url_externa`) y ampliar el catálogo de
-      secciones incrustables con mapa, torneos, ranking y expositores.
-- [ ] **#33–#36 · Landing**: producto por secciones, legales dentro del botón de
-      configuración, y la vuelta atrás desde términos en el login.
-- [ ] **#37–#41 · Gestbot y la lámpara**: agrandar el widget de Inicio, quitar la
-      caja de "¿Necesitas ayuda?", avisos según el estado real del evento.
-- [ ] **#42–#47 · Panel interno**: navbar que se pierde en oscuro, sidebar
-      demasiado negro en claro, menú de tres puntos recortado en los widgets
-      bajos, Ajustes vacío para el administrador, vista Colaborador sin contenido
-      (#45) y Vacantes desaprovechando el ancho.
-- [ ] **#48 · Torneos por categorías anidadas**, con tantos niveles como haga falta.
-- [ ] **#49 · Buzón de sugerencias** para tipos de evento y de vacante.
+**El cupo se GUARDA de verdad mientras la oferta vive.** Las ofertas vigentes
+descuentan de la disponibilidad para todo el mundo menos para su dueño, en los
+tres caminos de compra (reserva, Mercado Pago y Wompi). Sin eso el correo sería
+una carrera y ser el primero de la fila no significaría nada.
 
-### 3.5 · Fusión de Dinámicas en Espacio del evento
+> **Y de paso, un agujero que nadie había visto:** anular una boleta desde el
+> panel (`PATCH /eventos/:id/clientes/:ticketId`) **no bajaba ningún
+> contador**. `vendidos` y `aforo_vendido` se quedaban igual, así que el evento
+> seguía "agotado" con sitios vacíos y la lista de espera no se enteraba nunca.
+> El reembolso por pasarela sí lo hacía; este camino no. Ahora los dos hacen lo
+> mismo, en los dos sentidos.
 
-- [ ] Que un torneo sea **un tipo de sub-evento más**. Es el refactor más grande
-      de la lista: `TorneoTab` son 56 KB y `AgendaTab` 49 KB, y hay que decidir
-      qué pasa con la navegación **antes** de mover código.
+- [ ] **Sin probar de punta a punta, y no se puede:** todo el ciclo depende de
+      que salga un correo, y hoy `sendMail` devuelve `no_provider`. Es lo
+      primero que habría que mirar en cuanto haya SMTP.
+
+### 3.4 · Bloque del documento de equipo (#32–#49) — HECHO
+
+Todo cerrado salvo #50 (emails, bloqueado por SMTP) y #51 (probar los QR, que
+es un recorrido y no código). El detalle de cada uno, con las causas
+encontradas, está en `PENDIENTE.md`. Migraciones nuevas: 0060, 0062 y 0063.
+
+### 3.5 · Fusión de Dinámicas en Espacio del evento — HECHO la decisión
+
+El documento pedía **decidir la navegación antes de mover código**. Decidida y
+aplicada; el código no se movió, y es a propósito.
+
+**La decisión:** desaparece la sección "Dinámicas" y nace **"Espacio del
+evento"** con cinco vistas de lo mismo — Calendario, Torneos, Rueda de
+negocios, Mapa y Ranking. La agenda sale de "Organización", donde estaba junto
+a Vacantes y Documentos, que son papeleo. El calendario es *cuándo*, las
+llaves son *cómo va*, el mapa es *dónde*. Las direcciones viejas
+(`dinamicas/torneo`, `organizacion/agenda`…) se redirigen, que si no un enlace
+guardado cae en el Resumen sin explicación.
+
+**Por qué un torneo YA era un sub-evento:** `agenda_sessions` tiene un `tipo`
+competitivo y un `torneo_id` que apunta a las llaves. Lo que faltaba no era el
+modelo sino **el camino de vuelta**: creabas el torneo, no aparecía en el
+calendario, y para que el público lo viera había que acordarse de crear a mano
+un sub-evento en otra pantalla. Quien no se acordaba tenía un torneo invisible.
+Ahora el torneo dice si tiene hueco en el calendario y lo crea desde ahí.
+
+- [ ] **Partir los dos archivos grandes sigue pendiente** (`TorneoTab` 56 KB,
+      `AgendaTab` 49 KB) y se deja a conciencia: mover 105 KB de sitio no
+      arregla nada que un usuario note, y hacerlo en la misma tanda que un
+      cambio de navegación habría mezclado dos cosas que conviene poder
+      revisar por separado. La decisión de navegación —que era el bloqueo— ya
+      está tomada, así que el día que se parta, se parte contra algo firme.
 
 ---
 
-## 3.6 · Editor de preguntas por sub-evento
-
-El único trozo de lo pedido que quedó a medias, y se dice en pantalla en vez de
-prometerlo.
+## 3.6 · Editor de preguntas por sub-evento — HECHO
 
 Un sub-evento puede pedir inscripción con tres modos: `ninguno` (el normal, un
 botón y listo), `propio` (preguntas cortas de esa actividad) y `evento` (el
-formulario completo). El backend soporta los tres: `event_form_fields.session_id`
+formulario completo). El backend soportaba los tres: `event_form_fields.session_id`
 existe, la validación funciona y el render público también.
 
-- [ ] Falta la pantalla para ESCRIBIR esas preguntas propias. Hoy el modo
-      `propio` se puede elegir y queda sin ninguna pregunta, así que se comporta
-      como `ninguno`. El texto del selector lo advierte.
-- [ ] Ojo al implementarlo: el `PUT /eventos/:id/formulario` hace un diff que
+- [x] ~~Falta la pantalla para ESCRIBIR esas preguntas propias.~~ **Hecha**
+      (`PreguntasSubEvento.jsx`), con `GET`/`PUT
+      /eventos/:id/sesiones/:sesionId/formulario`. Deliberadamente corta: sin
+      grupos, sin ayuda por campo, sin "sólo para el tipo VIP", y tope de doce.
+      Todo eso es del formulario de compra, que ya tiene su editor grande;
+      quien necesite treinta preguntas quiere el modo `evento`.
+      Si el editor se queda sin ninguna, el sub-evento vuelve solo a `ninguno`:
+      un formulario vacío en la agenda pública es peor que un botón.
+- [x] ~~Ojo al implementarlo:~~ **atendido, y era el riesgo real.** El nuevo
+      endpoint es el espejo del del evento **con el cuidado invertido**: aquel
+      filtra por `session_id is null` para no llevarse las de los sub-eventos;
+      éste filtra por `session_id = :id` para no llevarse ni el formulario del
+      evento ni las de OTRO sub-evento. Los dos diffs borran lo que no viene en
+      el payload, así que el filtro es lo único que separa "guardar lo mío" de
+      "borrar lo de los demás". El armado de cada fila y las validaciones se
+      unificaron en `lib/formularioCampos.js` para que no acaben siendo dos
+      copias que se separan — la misma trampa de los catálogos de tipos.
+
+      Contexto original: el `PUT /eventos/:id/formulario` hace un diff que
       BORRA lo que no venga en el payload. Ya está filtrado por
       `session_id is null` para que no se lleve las de sub-evento, pero el editor
       nuevo necesita su propio endpoint con el mismo cuidado en sentido inverso.
@@ -287,24 +345,50 @@ Nada de esto está roto ahora mismo, pero cada uno es una trampa esperando.
       No hay fuga —RLS sin políticas deniega todo, y el backend entra con la
       service key— pero ninguna se puede leer desde el navegador, y el día que
       alguna haga falta ahí va a fallar sin explicación aparente.
-- [ ] **`0007_event_roles.sql` miente.** Siembra los roles con ids de permiso en
-      inglés que el verificador no reconoce. En la base corre la versión
-      corregida (alguien la arregló sin dejar migración), pero quien reconstruya
-      desde las migraciones se lleva el fallo entero si no aplica la 0054 detrás.
-      Lo limpio sería arreglar el 0007.
+      *(Las dos tablas nuevas de esta ronda —`torneo_categorias` y
+      `sugerencias_catalogo`— nacen con sus políticas escritas, para no
+      alargar la lista.)*
+- [x] ~~**`0007_event_roles.sql` miente.**~~ **Arreglado en el origen.** Siembra
+      los seis roles con los ids en español, los mismos valores que dejan la
+      0054 y la 0056, así que aplicarlas encima no cambia ninguna fila.
+      Reconstruir desde las migraciones da por fin el mismo resultado que la
+      base de hoy, con o sin la 0054 detrás. El backfill pasó a `on conflict`
+      para añadir lo que falte sin pisar lo que el organizador haya editado, y
+      la cabecera de la 0054 dejó de advertir de algo ya corregido.
 - [ ] **Ocho copias de `generarCodigo()`** a mano: `routes/clientes.js`,
       `eventos.publicos.js`, `pagos.js`, `wompi.js`, `me.js`, `interacciones.js`,
       `lib/agente.js`, `lib/ticketLookup.js`. Lo nuevo usa `lib/codigoTicket.js`.
       Unificar las ocho toca los caminos de pago y merece su propio cambio.
-- [ ] **`page_json` es un campo compartido por demasiadas cosas.** Marca, páginas
-      y navbar escriben todos sobre el mismo JSON desde copias distintas del
-      evento en memoria. Así fue como la marca se borraba sola. Las plantillas de
-      correo salieron de ahí en la 0052; el resto sigue dentro y sigue frágil.
+- [x] ~~**`page_json` es un campo compartido por demasiadas cosas.**~~
+      **Arreglado (0064 + `lib/eventoSitio.js`).** Marca, páginas y navbar
+      salen a columnas propias: ya no comparten campo. Y el `PATCH` deja de
+      REEMPLAZAR `page_json` para **mezclar por claves de primer nivel**, que
+      es lo que protege a las trece pantallas que siguen guardando con
+      `{...evento.page_json, loMío}` — una pantalla que manda sólo lo suyo ya
+      no puede borrar lo de otra aunque su copia sea de hace media hora.
+
+      Dos decisiones que conviene no deshacer, explicadas largo en la
+      migración y en `PENDIENTE.md`: las tres claves **se quitan** del JSON al
+      migrar (dos copias obligan a elegir cuál gana, y la regla obvia resucita
+      la marca borrada), y un `page_json` entrante con `branding` dentro **se
+      descarta en vez de ascenderse** a la columna (ascender reconstruiría el
+      fallo original con trece culpables en vez de dos).
+
+      Sigue dentro de `page_json` todo lo demás —seo, checkout, mapa, zonas,
+      accesos, documentos, cartera, credenciales, automatizaciones—, pero cada
+      una tiene un solo editor y ahora la mezcla las protege. Sacarlas es
+      posible y ya no urge.
 - [ ] **`pg_net` instalado en el esquema `public`.** Aviso del linter de Supabase.
 - [ ] **Seis permisos del catálogo que no verifica nadie**: `gestionar_descuentos`,
-      `vip_zone`, `ver_pagos`, `reembolsar` y dos más. Están marcados con
-      `aplicado: false` en `src/lib/permisos.js` para que se sepa, pero
-      concederlos no cambia nada todavía.
+      `vip_zone`, `crear_canales`, `borrar_mensajes`, `ver_pagos` y
+      `reembolsar`. Concederlos no cambia nada todavía.
+      *Esto decía que estaban marcados con `aplicado: false` en
+      `src/lib/permisos.js` y **no era cierto**: el campo no existía. Ahora sí,
+      y el selector de permisos del equipo pinta un «sin efecto aún» al lado,
+      que era el punto — que se sepa al concederlo y no un mes después.*
+      *Y faltaban tres en el catálogo que el backend SÍ comprueba
+      (`gestionar_agenda`, `gestionar_torneo`, `gestionar_expositores`): la
+      semilla los repartía pero no se podían conceder a mano. Añadidos.*
 - [ ] **80 avisos de ESLint** (variables sin usar, dependencias de hooks). Cero
       errores. Son para ir mirando sin bloquear a nadie.
 
@@ -324,12 +408,13 @@ exactamente eso: puede funcionar, pero nadie lo ha ejecutado de principio a fin.
 | Escanear QR → check-in → métricas | sin probar |
 | Correos automáticos | reescritos, sin SMTP real |
 | Ficha de caracterización → 22 preguntas → exportar | sin probar |
-| Inscripción a sub-evento → correo → asistencia | backend listo, sin pantalla |
+| Inscripción a sub-evento → correo → asistencia | pantalla construida, sin probar |
+| **Cupo liberado → correo → el siguiente compra** | construido; **no se puede probar sin SMTP** |
 | Stand → cuota → dar puntos hasta el tope | el tope sí, probado en base |
 | Chat con dos cuentas, una de ellas staff | RLS verificada, sin probar en vivo |
 | Vacante pública → candidato aplica | el backend nunca se desplegó |
-| iFrame incrustado en web externa | sin construir (#32) |
-| Colaborador invitado → acepta → ve tareas | la vista está vacía (#45) |
+| iFrame incrustado en web externa | construido (#32), sin pegarlo en una web real |
+| Colaborador invitado → acepta → ve tareas | la vista ya no está vacía (#45); hace falta una segunda cuenta |
 
 ### El recorrido, en orden
 

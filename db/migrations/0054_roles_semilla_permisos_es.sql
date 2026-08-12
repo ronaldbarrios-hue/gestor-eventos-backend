@@ -1,18 +1,22 @@
 -- 0054 · Cuatro roles nuevos, y el archivo de la semilla puesto al día. YA APLICADA.
 -- Idempotente. Ojo: la 0056 mueve fn_roles_semilla al esquema `private`.
 --
--- OJO CON 0007_event_roles.sql: ese archivo siembra los roles con ids de permiso
+-- SOBRE 0007_event_roles.sql: ese archivo sembraba los roles con ids de permiso
 -- en INGLÉS ("edit_event", "invite_staff", "view", "internal_chat",
 -- "attendee_lookup"), que no existen para el verificador de lib/acceso.js ni
--- para el catálogo de src/lib/permisos.js — los dos usan español. Si esa versión
--- fuera la que está corriendo, cada rol semilla concedería exactamente cero
--- permisos y solo funcionaría ser dueño del evento.
+-- para el catálogo de src/lib/permisos.js — los dos usan español. Con esa
+-- versión, cada rol semilla concedía exactamente cero permisos y solo
+-- funcionaba ser dueño del evento.
 --
--- Comprobado contra la base: NO es la que está corriendo. La función
--- seed_event_roles ya siembra en español, así que alguien la corrigió
--- directamente sobre Supabase sin dejar migración. El archivo 0007 quedó
--- mintiendo, y cualquiera que reconstruya la base desde las migraciones se
--- llevaría el fallo entero.
+-- Comprobado contra la base: NO era la que estaba corriendo. Alguien había
+-- corregido seed_event_roles directamente sobre Supabase sin dejar migración,
+-- así que el archivo 0007 quedó mintiendo y quien reconstruyera desde las
+-- migraciones se llevaba el fallo entero.
+--
+-- **Ya está arreglado en el origen:** 0007 siembra en español los mismos
+-- valores que deja esta migración para esos seis roles. Reconstruir desde cero
+-- da el mismo resultado con o sin la 0054 detrás, y esta sigue siendo
+-- necesaria solo por los cuatro roles nuevos.
 --
 -- Esta migración hace tres cosas:
 --   1. Deja la función escrita en el repo, en español, para que reconstruir la

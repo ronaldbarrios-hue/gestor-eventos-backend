@@ -4,6 +4,11 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 
 const router = express.Router();
+
+/* Los tres modos de `agenda_sessions.formulario_modo` (migración 0059):
+   'ninguno' un botón y listo · 'propio' preguntas cortas de esta actividad ·
+   'evento' el formulario completo del evento. */
+const MODOS_FORMULARIO = ['ninguno', 'propio', 'evento'];
 router.use(verifySupabaseJWT);
 
 /* Owner o miembro con permiso 'editar_evento' (gestiona contenido del evento). */
@@ -127,9 +132,12 @@ router.get('/:eventoId/sessions', async (req, res) => {
 router.post('/:eventoId/sessions', async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, descripcion, inicio, fin, track, ubicacion, speaker_id, tipo, torneo_id,
-          requiere_inscripcion, cupo } = req.body;
+          requiere_inscripcion, cupo, formulario_modo } = req.body;
   if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido.' });
   if (!inicio) return res.status(400).json({ error: 'Hora de inicio requerida.' });
+  if (formulario_modo && !MODOS_FORMULARIO.includes(formulario_modo)) {
+    return res.status(400).json({ error: 'formulario_modo debe ser ninguno, propio o evento.' });
+  }
   try {
     await assertOwner(eventoId, req.user.id);
     const { data, error } = await supabase
@@ -151,6 +159,10 @@ router.post('/:eventoId/sessions', async (req, res) => {
            "lleno desde el principio". */
         cupo       : (cupo === null || cupo === undefined || cupo === '')
           ? null : Math.max(0, Math.trunc(Number(cupo))),
+        /* Qué se le pregunta al apuntarse (0059). Nace en 'ninguno': el caso
+           normal es que la boleta ya identificó a la persona y no hay nada
+           que volver a preguntarle. */
+        formulario_modo: formulario_modo || 'ninguno',
       }).select(`*, speaker:speakers!speaker_id(id, nombre, foto_url, empresa)`).single();
     if (error) return res.status(500).json({ error: error.message });
     res.status(201).json({ session: data });
@@ -164,10 +176,22 @@ router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
   try {
     await assertOwner(eventoId, req.user.id);
     const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id',
-      'orden', 'tipo', 'torneo_id', 'moderacion', 'requiere_inscripcion', 'cupo'];
+      'orden', 'tipo', 'torneo_id', 'moderacion', 'requiere_inscripcion', 'cupo', 'formulario_modo'];
     const updates = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });
+
+    /* Qué se le pregunta a quien se apunta (migración 0059). Estaba en la
+       tabla y en el render público desde entonces, pero no en esta lista: se
+       podía leer y no escribir, así que el modo no se podía cambiar desde el
+       panel por mucho que hubiera un selector. */
+    if ('formulario_modo' in updates && !MODOS_FORMULARIO.includes(updates.formulario_modo)) {
+      return res.status(400).json({ error: 'formulario_modo debe ser ninguno, propio o evento.' });
+    }
+    if ('cupo' in updates) {
+      updates.cupo = (updates.cupo === null || updates.cupo === undefined || updates.cupo === '')
+        ? null : Math.max(0, Math.trunc(Number(updates.cupo)));
+    }
     const { data, error } = await supabase
       .from('agenda_sessions').update(updates)
       .eq('id', sessionId).eq('evento_id', eventoId)

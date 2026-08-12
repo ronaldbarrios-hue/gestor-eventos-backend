@@ -68,6 +68,7 @@ app.use('/eventos/publicos', require('./routes/legal.js').publico);
 app.use('/eventos/publicos', require('./routes/eventos.publicos.js'));
 app.use('/me',               require('./routes/me.js'));
 app.use('/me',               require('./routes/integraciones.js'));
+app.use('/me',               require('./routes/sugerencias.js'));
 /* Pagos y Push usan auth POR RUTA (no router.use global) y tienen rutas
    públicas (compra anónima, webhook MP, vapid-key) → van antes del bloque
    con auth global para que esas rutas públicas no sean interceptadas. */

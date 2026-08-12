@@ -14,6 +14,7 @@ const { dispatch } = require('../lib/webhooks.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
+const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 function verifyMPSignature(req) {
   if (!MP_WEBHOOK_SECRET) return { ok: true, reason: 'no_secret_configured' };
@@ -151,10 +152,26 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   if (!tipo.activo) return res.status(400).json({ error: 'Este tipo de boleta no está disponible.' });
   if (tipo.venta_hasta && new Date(tipo.venta_hasta) < new Date())
     return res.status(400).json({ error: 'La venta de este tipo de boleta ya cerró.' });
-  if (tipo.cupo != null && tipo.vendidos >= tipo.cupo)
-    return res.status(400).json({ error: 'Este tipo de boleta está agotado.', waitlistAvailable: true });
-  if (evento.aforo_total && evento.aforo_vendido >= evento.aforo_total)
-    return res.status(400).json({ error: 'El evento está al aforo máximo.', waitlistAvailable: true });
+
+  /* Mismo candado que la reserva gratuita: las ofertas vivas de la lista de
+     espera ocupan sitio para todos menos para su dueño. Si esto no estuviera
+     aquí, el cupo guardado se lo llevaría el primero que pasara por el
+     checkout de pago y el correo sería una carrera. */
+  const ofertaPago = await validarOferta(req.body.waitlist_token);
+  const ofertaMiaPago = ofertaPago
+    && String(ofertaPago.evento_id) === String(evento.id)
+    && String(ofertaPago.ticket_type_id) === String(tipo.id)
+    ? ofertaPago : null;
+  if (req.body.waitlist_token && !ofertaMiaPago) {
+    return res.status(400).json({ error: 'Ese enlace de cupo ya no vale: o se usó, o se pasó el plazo y le tocó al siguiente.' });
+  }
+  if (!(await hayCupoLibre({ evento, tipo, exceptoId: ofertaMiaPago?.id }))) {
+    const agotadoPorTipo = tipo.cupo != null && (tipo.vendidos || 0) >= tipo.cupo;
+    return res.status(400).json({
+      error: agotadoPorTipo ? 'Este tipo de boleta está agotado.' : 'El evento está al aforo máximo.',
+      waitlistAvailable: true,
+    });
+  }
   const hasEarly = tipo.early_bird_precio != null && tipo.early_bird_hasta && new Date(tipo.early_bird_hasta) > new Date();
   const precioEfectivo = hasEarly ? Number(tipo.early_bird_precio) : Number(tipo.precio);
   if (precioEfectivo <= 0)
@@ -189,6 +206,12 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   if (e3) return res.status(500).json({ error: e3.message });
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
+
+  /* La boleta ya está emitida (falta pagarla): se cierra la fila y se quema el
+     token. Si el pago se cae, la persona conserva la boleta en 'emitido' y
+     puede reintentar desde /mi-ticket; devolverla a la cola sería peor. */
+  if (ofertaMiaPago) await consumirOferta(ofertaMiaPago.id);
+
   const externalRef = `tx_${ticket.id}`;
   const currency = evento.currency || tipo.currency || 'COP';
   let preference;
@@ -417,50 +440,18 @@ async function procesarPago(pago) {
           .update({ vendidos: tipoCt.vendidos - 1 })
           .eq('id', ticketRefund.ticket_type_id);
       }
-      await notificarTopWaitlist(ticketRefund.ticket_type_id, ticketRefund.evento_id, ev?.slug, ev?.titulo);
+      await notificarTopWaitlist(ticketRefund.ticket_type_id, ticketRefund.evento_id);
     }
   }
 }
-async function notificarTopWaitlist(ticketTypeId, eventoId, eventoSlug, eventoTitulo) {
-  const { data: top } = await supabase
-    .from('event_waitlist')
-    .select('*')
-    .eq('ticket_type_id', ticketTypeId)
-    .eq('evento_id', eventoId)
-    .eq('estado', 'active')
-    .order('posicion', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (!top) return;
-  await supabase.from('event_waitlist').update({
-    estado               : 'contacted',
-    notified_at          : new Date().toISOString(),
-    last_contact_at      : new Date().toISOString(),
-    notification_attempts: (top.notification_attempts || 0) + 1,
-  }).eq('id', top.id);
-  if (!top.user_id) return;
-  const pub = process.env.VAPID_PUBLIC_KEY;
-  const pri = process.env.VAPID_PRIVATE_KEY;
-  if (!pub || !pri) return;
-  const webpush = require('web-push');
-  webpush.setVapidDetails(process.env.VAPID_CONTACT || 'mailto:hello@gestek.io', pub, pri);
-  const { data: subs } = await supabase
-    .from('push_subscriptions').select('*').eq('user_id', top.user_id);
-  if (!subs || subs.length === 0) return;
-  const payload = JSON.stringify({
-    title: '¡Hay un cupo disponible!',
-    body : `Se liberó un lugar en "${eventoTitulo || 'tu evento'}". Entrá rápido antes de que se llene.`,
-    url  : eventoSlug ? `/explorar/${eventoSlug}` : '/',
-  });
-  for (const sub of subs) {
-    try {
-      await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload);
-    } catch (err) {
-      if (err.statusCode === 410 || err.statusCode === 404) {
-        await supabase.from('push_subscriptions').delete().eq('id', sub.id);
-      }
-    }
-  }
+/* El reembolso libera un cupo: se le ofrece al primero de la lista de espera.
+
+   Esto era una copia local que marcaba 'contacted' y mandaba un push, sin
+   correo, sin enlace y sin manera de pasar al siguiente. Ahora llama al ciclo
+   real de `lib/waitlistOferta.js`, que manda el correo `cupo_liberado` con un
+   enlace que caduca y guarda el cupo mientras la oferta esté viva. */
+async function notificarTopWaitlist(ticketTypeId, eventoId) {
+  await ofrecerCupoAlSiguiente({ eventoId, ticketTypeId });
 }
 async function procesarPagoPlan(pago, userId) {
   if (!userId) return;

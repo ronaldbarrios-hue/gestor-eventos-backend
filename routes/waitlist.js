@@ -10,14 +10,16 @@
 'use strict';
 
 const express  = require('express');
-const webpush  = require('web-push');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
+const { ofrecerCupoAlSiguiente, enviarPushWaitlist, HORAS_OFERTA } = require('../lib/waitlistOferta.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-const ESTADOS_VALIDOS = ['active', 'contacted', 'purchased', 'cancelled'];
+/* 'expired' se suma en la 0061: se le ofreció el cupo y se le pasó el plazo.
+   No es lo mismo que 'cancelled', que es haberse dado de baja. */
+const ESTADOS_VALIDOS = ['active', 'contacted', 'purchased', 'cancelled', 'expired'];
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -26,38 +28,6 @@ async function verificarOwner(eventoId, userId) {
     .from('eventos').select('owner_id').eq('id', eventoId).maybeSingle();
   if (!data) return false;
   return data.owner_id === userId;
-}
-
-/* Envía push a un user_id con el mensaje de cupo disponible (best-effort). */
-async function enviarPushWaitlist(userId, eventoSlug, eventoTitulo) {
-  const pub = process.env.VAPID_PUBLIC_KEY;
-  const pri = process.env.VAPID_PRIVATE_KEY;
-  if (!pub || !pri || !userId) return 0;
-
-  webpush.setVapidDetails(process.env.VAPID_CONTACT || 'mailto:hello@gestek.io', pub, pri);
-
-  const { data: subs } = await supabase
-    .from('push_subscriptions').select('*').eq('user_id', userId);
-  if (!subs || subs.length === 0) return 0;
-
-  const payload = JSON.stringify({
-    title: '¡Hay un cupo disponible!',
-    body : `Se liberó un lugar en "${eventoTitulo}". Entrá rápido antes de que se llene.`,
-    url  : eventoSlug ? `/explorar/${eventoSlug}` : '/',
-  });
-
-  let ok = 0;
-  for (const sub of subs) {
-    try {
-      await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload);
-      ok++;
-    } catch (err) {
-      if (err.statusCode === 410 || err.statusCode === 404) {
-        await supabase.from('push_subscriptions').delete().eq('id', sub.id);
-      }
-    }
-  }
-  return ok;
 }
 
 /* ── GET /:eventoId/waitlist ─────────────────────────────── */
@@ -84,15 +54,30 @@ router.get('/:eventoId/waitlist', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   const lista = data || [];
+  const ahora = Date.now();
+  /* Una oferta "viva" es la única fila que de verdad tiene el cupo guardado.
+     Sin distinguirla, 'contacted' mezclaba a quien tiene el enlace en la mano
+     con quien lo tuvo hace tres semanas. */
+  for (const e of lista) {
+    e.oferta_viva = e.estado === 'contacted'
+      && Boolean(e.oferta_token)
+      && Boolean(e.oferta_expira)
+      && new Date(e.oferta_expira).getTime() > ahora;
+    /* El token nunca sale del servidor: quien lo tenga puede tomar el cupo. */
+    delete e.oferta_token;
+  }
+
   const stats = {
     total    : lista.length,
     active   : lista.filter(e => e.estado === 'active').length,
     contacted: lista.filter(e => e.estado === 'contacted').length,
     purchased: lista.filter(e => e.estado === 'purchased').length,
     cancelled: lista.filter(e => e.estado === 'cancelled').length,
+    expired  : lista.filter(e => e.estado === 'expired').length,
+    ofertas_vivas: lista.filter(e => e.oferta_viva).length,
   };
 
-  res.json({ waitlist: lista, stats });
+  res.json({ waitlist: lista, stats, horas_oferta: HORAS_OFERTA });
 });
 
 /* ── PATCH /:eventoId/waitlist/:waitlistId ───────────────── */
@@ -124,12 +109,14 @@ router.patch('/:eventoId/waitlist/:waitlistId', async (req, res) => {
 
 /* ── POST /:eventoId/waitlist/:waitlistId/notify ─────────── */
 
+/* Avisar a mano a alguien de la fila. Antes marcaba 'contacted' y mandaba un
+   push sin enlace, así que la persona sabía que había sitio pero no tenía
+   forma de tomarlo antes que nadie. Ahora hace lo mismo que el disparador
+   automático: correo `cupo_liberado` con enlace que caduca y el cupo guardado
+   mientras tanto. */
 router.post('/:eventoId/waitlist/:waitlistId/notify', async (req, res) => {
   const esOwner = await verificarOwner(req.params.eventoId, req.user.id);
   if (!esOwner) return res.status(403).json({ error: 'No autorizado.' });
-
-  const { data: evento } = await supabase
-    .from('eventos').select('titulo, slug').eq('id', req.params.eventoId).single();
 
   const { data: entry, error: eEntry } = await supabase
     .from('event_waitlist')
@@ -140,22 +127,39 @@ router.post('/:eventoId/waitlist/:waitlistId/notify', async (req, res) => {
 
   if (eEntry) return res.status(500).json({ error: eEntry.message });
   if (!entry) return res.status(404).json({ error: 'Entrada no encontrada.' });
-  if (!['active', 'contacted'].includes(entry.estado)) {
-    return res.status(400).json({ error: 'Solo se puede notificar entradas activas o ya contactadas.' });
+  if (!['active', 'contacted', 'expired'].includes(entry.estado)) {
+    return res.status(400).json({ error: 'Esta persona ya compró o se dio de baja.' });
   }
 
-  await supabase.from('event_waitlist').update({
-    estado               : 'contacted',
-    notified_at          : new Date().toISOString(),
-    last_contact_at      : new Date().toISOString(),
-    notification_attempts: (entry.notification_attempts || 0) + 1,
-  }).eq('id', entry.id);
+  /* Se ofrece "al siguiente de la fila", no a esta persona en concreto: el
+     orden de la lista es la promesa que se le hizo a todos los demás. Si la
+     que el organizador tocó no es la primera, se le dice. */
+  const r = await ofrecerCupoAlSiguiente({
+    eventoId: req.params.eventoId,
+    ticketTypeId: entry.ticket_type_id,
+  });
 
-  const pushSent = entry.user_id
-    ? await enviarPushWaitlist(entry.user_id, evento?.slug, evento?.titulo)
-    : 0;
+  if (!r.ok) {
+    const explicacion = {
+      sin_cupo   : 'No hay cupo libre en este tipo de boleta ahora mismo.',
+      sin_aforo  : 'El evento está al aforo máximo.',
+      fila_vacia : 'No queda nadie esperando en este tipo de boleta.',
+      venta_cerrada: 'La venta de este tipo de boleta ya cerró.',
+      tipo_no_disponible: 'Este tipo de boleta no está activo.',
+      evento_no_publicado: 'El evento no está publicado.',
+    }[r.motivo];
+    return res.status(400).json({ error: explicacion || 'No se pudo enviar la oferta.' });
+  }
 
-  res.json({ ok: true, pushSent });
+  res.json({
+    ok: true,
+    ofrecido_a: r.email,
+    era_quien_pediste: String(r.waitlistId) === String(entry.id),
+    expira: r.expira,
+    horas: HORAS_OFERTA,
+    email_ok: r.envio?.ok === true,
+    email_motivo: r.envio?.ok ? null : r.envio?.motivo || null,
+  });
 });
 
 /* ── DELETE /:eventoId/waitlist/:waitlistId ──────────────── */

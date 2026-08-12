@@ -8,6 +8,7 @@ const { assertPermiso } = require('../lib/acceso.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
 const { notificar } = require('../lib/notificar.js');
 const { correrAutomatizaciones } = require('../lib/automatizaciones.js');
+const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -110,7 +111,16 @@ router.get('/:eventoId/clientes', async (req, res) => {
   }
 });
 
-/* PATCH /eventos/:eventoId/clientes/:ticketId — cambiar estado (anular, marcar pagado, etc) */
+/* Estados en los que la boleta ocupa un sitio. Anular o reembolsar saca a la
+   persona del aforo; volver a emitirla la mete otra vez. */
+const ESTADOS_QUE_OCUPAN = new Set(['emitido', 'pagado', 'usado']);
+
+/* PATCH /eventos/:eventoId/clientes/:ticketId — cambiar estado (anular, marcar pagado, etc)
+
+   Anular desde el panel no bajaba ningún contador: `vendidos` y
+   `aforo_vendido` seguían igual, así que el evento se quedaba "agotado" con
+   sitios vacíos y la lista de espera no se enteraba de nada. El reembolso por
+   la pasarela sí lo hacía; este camino no. Ahora los dos hacen lo mismo. */
 router.patch('/:eventoId/clientes/:ticketId', async (req, res) => {
   const { eventoId, ticketId } = req.params;
   const ESTADOS = ['emitido', 'pagado', 'usado', 'reembolsado', 'invalido'];
@@ -119,16 +129,59 @@ router.patch('/:eventoId/clientes/:ticketId', async (req, res) => {
 
   try {
     await assertOwner(eventoId, req.user.id);
+
+    const { data: antes } = await supabase
+      .from('tickets').select('estado, ticket_type_id')
+      .eq('id', ticketId).eq('evento_id', eventoId).maybeSingle();
+    if (!antes) return res.status(404).json({ error: 'Boleta no encontrada.' });
+
     const { data, error } = await supabase
       .from('tickets').update({ estado })
       .eq('id', ticketId).eq('evento_id', eventoId)
       .select().single();
     if (error) return res.status(500).json({ error: error.message });
+
+    const ocupabaAntes  = ESTADOS_QUE_OCUPAN.has(antes.estado);
+    const ocupaDespues  = ESTADOS_QUE_OCUPAN.has(estado);
+    const delta = ocupabaAntes === ocupaDespues ? 0 : (ocupaDespues ? +1 : -1);
+
+    if (delta !== 0) {
+      await ajustarAforo(eventoId, antes.ticket_type_id, delta);
+      /* Sólo al liberar: si acabamos de meter a alguien, no hay nada que
+         ofrecer. Se hace en segundo plano —la respuesta del panel no tiene
+         por qué esperar a que salga un correo. */
+      if (delta < 0) {
+        ofrecerCupoAlSiguiente({ eventoId, ticketTypeId: antes.ticket_type_id })
+          .catch(() => {});
+      }
+    }
+
     res.json({ ticket: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
 });
+
+/* Mueve los dos contadores a la vez, sin bajar de cero. Son columnas
+   denormalizadas: si se desincronizan, el evento miente sobre su aforo. */
+async function ajustarAforo(eventoId, ticketTypeId, delta) {
+  if (ticketTypeId) {
+    const { data: tt } = await supabase
+      .from('ticket_types').select('vendidos').eq('id', ticketTypeId).maybeSingle();
+    if (tt) {
+      await supabase.from('ticket_types')
+        .update({ vendidos: Math.max(0, (tt.vendidos || 0) + delta) })
+        .eq('id', ticketTypeId);
+    }
+  }
+  const { data: ev } = await supabase
+    .from('eventos').select('aforo_vendido').eq('id', eventoId).maybeSingle();
+  if (ev) {
+    await supabase.from('eventos')
+      .update({ aforo_vendido: Math.max(0, (ev.aforo_vendido || 0) + delta) })
+      .eq('id', eventoId);
+  }
+}
 
 /* POST /eventos/:eventoId/clientes/importar — import masivo desde CSV.
    Body: { ticket_type_id, marcar_pagado, rows: [{ nombre, email, telefono? }] }

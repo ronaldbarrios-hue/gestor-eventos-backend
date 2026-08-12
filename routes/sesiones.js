@@ -29,7 +29,10 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
-const { validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
+const {
+  validarFormulario, normalizarRespuestas,
+  TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+} = require('../lib/formularioCampos.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 
 const publico = express.Router();
@@ -297,6 +300,136 @@ panel.get('/:eventoId/sesiones/participacion', async (req, res) => {
       },
       almacenamiento_listo: true,
     });
+  } catch (e) { fallo(res, e); }
+});
+
+/* ── Las preguntas propias de un sub-evento ────────────────────────────
+   El modo 'propio' existía desde la 0059 y se podía elegir, pero no había
+   pantalla para ESCRIBIR las preguntas: quedaba sin ninguna y se comportaba
+   como 'ninguno'. Esto es esa pantalla, por el lado del servidor.
+
+   Es el espejo del PUT /eventos/:id/formulario, con el cuidado invertido:
+   aquel filtra por `session_id is null` para no llevarse por delante las de
+   los sub-eventos; éste filtra por `session_id = :sesionId` para no llevarse
+   por delante ni el formulario del evento ni las de OTRO sub-evento. Los dos
+   diffs borran lo que no viene en el payload, así que el filtro es lo único
+   que separa "guardar mis preguntas" de "borrar las de los demás". */
+
+const PERMS_EDITAR_FORM = ['gestionar_agenda', 'editar_evento'];
+
+/* Tope propio y más bajo que el del evento (60). Estas preguntas son "cortas y
+   sobre la actividad": si alguien necesita treinta, lo que quiere es el
+   formulario del evento, y para eso está el modo 'evento'. */
+const MAX_CAMPOS_SUBEVENTO = 12;
+
+async function sesionDelEvento(eventoId, sesionId) {
+  const { data } = await supabase
+    .from('agenda_sessions')
+    .select('id, titulo, formulario_modo')
+    .eq('id', sesionId).eq('evento_id', eventoId).maybeSingle();
+  return data;
+}
+
+panel.get('/:eventoId/sesiones/:sesionId/formulario', async (req, res) => {
+  const { eventoId, sesionId } = req.params;
+  try {
+    await assertPermiso(eventoId, req.user.id, PERMS_EDITAR_FORM, 'id, owner_id');
+
+    const sesion = await sesionDelEvento(eventoId, sesionId);
+    if (!sesion) return res.status(404).json({ error: 'Sub-evento no encontrado.' });
+
+    const { data, error } = await supabase
+      .from('event_form_fields')
+      .select(COLUMNAS_CAMPO)
+      .eq('evento_id', eventoId)
+      .eq('session_id', sesionId)
+      .order('orden', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({
+      sesion,
+      campos: data || [],
+      /* El catálogo viaja con la respuesta, igual que en el formulario del
+         evento: el panel no mantiene su propia copia. */
+      tipos: TIPOS_CAMPO,
+      max_campos: MAX_CAMPOS_SUBEVENTO,
+    });
+  } catch (e) { fallo(res, e); }
+});
+
+panel.put('/:eventoId/sesiones/:sesionId/formulario', async (req, res) => {
+  const { eventoId, sesionId } = req.params;
+  try {
+    await assertPermiso(eventoId, req.user.id, PERMS_EDITAR_FORM, 'id, owner_id');
+
+    const sesion = await sesionDelEvento(eventoId, sesionId);
+    if (!sesion) return res.status(404).json({ error: 'Sub-evento no encontrado.' });
+
+    const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
+    const falloDef = validarDefinicion(campos, { max: MAX_CAMPOS_SUBEVENTO });
+    if (falloDef) return res.status(400).json({ error: falloDef });
+
+    /* Sólo las de ESTE sub-evento. Sin el `.eq('session_id', …)` el diff se
+       llevaría el formulario del evento entero. */
+    const { data: existentes, error: eGet } = await supabase
+      .from('event_form_fields')
+      .select('id')
+      .eq('evento_id', eventoId)
+      .eq('session_id', sesionId);
+    if (eGet) return res.status(500).json({ error: eGet.message });
+
+    const idsExistentes = new Set((existentes || []).map(c => c.id));
+    const idsEnviados = new Set(campos.filter(c => c.id && idsExistentes.has(c.id)).map(c => c.id));
+
+    const idsABorrar = [...idsExistentes].filter(id => !idsEnviados.has(id));
+    if (idsABorrar.length) {
+      const { error } = await supabase.from('event_form_fields').delete().in('id', idsABorrar);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    for (let i = 0; i < campos.length; i++) {
+      const c = campos[i];
+      if (!c.id || !idsExistentes.has(c.id)) continue;
+      /* Conserva el id: las respuestas ya guardadas apuntan a él y renombrar
+         una pregunta no puede huerfanizar lo que ya contestó la gente. */
+      const { error } = await supabase
+        .from('event_form_fields').update(filaCampo(c, i)).eq('id', c.id);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    const nuevos = campos
+      .map((c, i) => ({ ...c, _orden: i }))
+      .filter(c => !c.id || !idsExistentes.has(c.id));
+    if (nuevos.length) {
+      const filas = nuevos.map(c => ({
+        evento_id: eventoId,
+        session_id: sesionId,
+        /* Una pregunta de sub-evento nunca es "sólo para el tipo VIP": ese
+           filtro es del formulario de compra y aquí no significa nada. */
+        ...filaCampo({ ...c, ticket_type_id: null }, c._orden),
+      }));
+      const { error } = await supabase.from('event_form_fields').insert(filas);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    /* Guardar preguntas y dejar el sub-evento en un modo que no las usa sería
+       escribir en el vacío. Se pone en 'propio' solo; y si se quedó sin
+       ninguna, se vuelve a 'ninguno' para que la agenda pública no enseñe un
+       formulario vacío. */
+    const modoQueToca = campos.length ? 'propio' : (sesion.formulario_modo === 'propio' ? 'ninguno' : sesion.formulario_modo);
+    if (modoQueToca !== sesion.formulario_modo) {
+      await supabase.from('agenda_sessions')
+        .update({ formulario_modo: modoQueToca }).eq('id', sesionId);
+    }
+
+    const { data: final } = await supabase
+      .from('event_form_fields')
+      .select(COLUMNAS_CAMPO)
+      .eq('evento_id', eventoId)
+      .eq('session_id', sesionId)
+      .order('orden', { ascending: true });
+
+    res.json({ campos: final || [], formulario_modo: modoQueToca });
   } catch (e) { fallo(res, e); }
 });
 

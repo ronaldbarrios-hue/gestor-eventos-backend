@@ -60,6 +60,155 @@ router.get('/:eventoId/torneos/:torneoId', async (req, res) => {
   res.json(await cargarTorneo(torneo));
 });
 
+/* ────────────── #48 · Categorías anidadas ──────────────
+   Un árbol por evento: Torneos → deportes / juegos de mesa / gaming →
+   contacto, pesca, caminata… → los torneos concretos. Profundidad libre.
+   Ver la migración 0062 para por qué es por evento y no global. */
+
+/* Cuánto puede bajar el árbol. No es una limitación técnica —`padre_id` no
+   tiene tope— sino de sentido: pasados seis niveles nadie navega, se pierde.
+   Y además corta en seco cualquier ciclo que se colara por otra vía. */
+const PROFUNDIDAD_MAX = 6;
+
+/* Un padre no puede ser descendiente de su propio hijo. Sin esto, mover
+   "deportes" dentro de "deportes › contacto" crearía un anillo: las dos ramas
+   desaparecerían del árbol (no cuelgan de ninguna raíz) y cualquier recorrido
+   recursivo se quedaría dando vueltas. */
+async function validarPadre(eventoId, categoriaId, padreId) {
+  if (!padreId) return { ok: true, profundidad: 0 };
+  if (categoriaId && String(padreId) === String(categoriaId)) {
+    return { ok: false, error: 'Una categoría no puede colgar de sí misma.' };
+  }
+
+  const { data: todas } = await supabase
+    .from('torneo_categorias').select('id, padre_id').eq('evento_id', eventoId);
+  const porId = new Map((todas || []).map(c => [String(c.id), c]));
+
+  /* Se sube desde el padre propuesto hasta la raíz. Si por el camino aparece
+     la propia categoría, el movimiento cerraría el anillo. */
+  let actual = porId.get(String(padreId));
+  if (!actual) return { ok: false, error: 'La categoría padre no existe en este evento.' };
+  let profundidad = 1;
+  while (actual?.padre_id) {
+    if (categoriaId && String(actual.padre_id) === String(categoriaId)) {
+      return { ok: false, error: 'No puedes meter una categoría dentro de una de sus propias ramas.' };
+    }
+    actual = porId.get(String(actual.padre_id));
+    profundidad++;
+    if (profundidad > PROFUNDIDAD_MAX + 2) break;   // red de seguridad
+  }
+  if (profundidad >= PROFUNDIDAD_MAX) {
+    return { ok: false, error: `El árbol no baja de ${PROFUNDIDAD_MAX} niveles.` };
+  }
+  return { ok: true, profundidad };
+}
+
+/* GET /eventos/:eventoId/torneo-categorias — el árbol plano.
+   Se devuelve plano y no anidado a propósito: el panel y la página pública lo
+   arman de formas distintas, y una lista con `padre_id` sirve para las dos. */
+router.get('/:eventoId/torneo-categorias', async (req, res) => {
+  const { eventoId } = req.params;
+  const { data, error } = await supabase
+    .from('torneo_categorias')
+    .select('id, padre_id, nombre, orden')
+    .eq('evento_id', eventoId)
+    .order('orden', { ascending: true })
+    .order('nombre', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ categorias: data || [] });
+});
+
+/* POST /eventos/:eventoId/torneo-categorias — crear una rama.
+   Body: { nombre, padre_id? } */
+router.post('/:eventoId/torneo-categorias', async (req, res) => {
+  const { eventoId } = req.params;
+  const nombre = String(req.body?.nombre || '').trim();
+  const padre_id = req.body?.padre_id || null;
+  if (!nombre) return res.status(400).json({ error: 'La categoría necesita un nombre.' });
+  if (nombre.length > 80) return res.status(400).json({ error: 'El nombre es demasiado largo.' });
+
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const v = await validarPadre(eventoId, null, padre_id);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+
+    /* Se coloca al final de SUS hermanas, no del árbol entero: el orden es
+       relativo a cada nivel. */
+    let q = supabase.from('torneo_categorias')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', eventoId);
+    q = padre_id ? q.eq('padre_id', padre_id) : q.is('padre_id', null);
+    const { count } = await q;
+
+    const { data, error } = await supabase.from('torneo_categorias')
+      .insert({ evento_id: eventoId, padre_id, nombre, orden: count || 0 })
+      .select('id, padre_id, nombre, orden').single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya hay una categoría con ese nombre en el mismo sitio.' });
+      return res.status(500).json({ error: error.message });
+    }
+    res.status(201).json({ categoria: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* PATCH /eventos/:eventoId/torneo-categorias/:id — renombrar o mover. */
+router.patch('/:eventoId/torneo-categorias/:id', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const updates = {};
+    if ('nombre' in req.body) {
+      const n = String(req.body.nombre || '').trim();
+      if (!n) return res.status(400).json({ error: 'La categoría necesita un nombre.' });
+      updates.nombre = n.slice(0, 80);
+    }
+    if ('padre_id' in req.body) {
+      const v = await validarPadre(eventoId, id, req.body.padre_id || null);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+      updates.padre_id = req.body.padre_id || null;
+    }
+    if ('orden' in req.body) updates.orden = Math.max(0, Math.trunc(Number(req.body.orden) || 0));
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });
+
+    const { data, error } = await supabase.from('torneo_categorias')
+      .update(updates).eq('id', id).eq('evento_id', eventoId)
+      .select('id, padre_id, nombre, orden').single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya hay una categoría con ese nombre en el mismo sitio.' });
+      return res.status(500).json({ error: error.message });
+    }
+    res.json({ categoria: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* DELETE /eventos/:eventoId/torneo-categorias/:id
+   Se lleva las ramas hijas (cascade en la migración), pero NINGÚN torneo: los
+   que colgaban de aquí quedan sin clasificar y se siguen viendo sueltos. Se
+   dice cuántos son para que el aviso del panel pueda ser concreto. */
+router.delete('/:eventoId/torneo-categorias/:id', async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const { count: sueltos } = await supabase.from('torneos')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', eventoId).eq('categoria_id', id);
+
+    const { error } = await supabase.from('torneo_categorias')
+      .delete().eq('id', id).eq('evento_id', eventoId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, torneos_sin_clasificar: sueltos || 0 });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 /* GET /eventos/:eventoId/torneo — RETROCOMPAT: primer torneo del evento. */
 router.get('/:eventoId/torneo', async (req, res) => {
   const { eventoId } = req.params;
@@ -75,11 +224,16 @@ router.get('/:eventoId/torneo', async (req, res) => {
    Body: { nombre, formato, disciplina?, num_grupos?, avanzan_por_grupo? } */
 router.post('/:eventoId/torneo', async (req, res) => {
   const { eventoId } = req.params;
-  const { nombre, formato, disciplina, num_grupos, avanzan_por_grupo } = req.body;
+  const { nombre, formato, disciplina, num_grupos, avanzan_por_grupo, categoria_id } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del torneo es requerido.' });
   if (!FORMATOS_VALIDOS.includes(formato)) return res.status(400).json({ error: 'Formato inválido.' });
 
-  const insert = { nombre: nombre.trim(), formato, evento_id: eventoId, disciplina: disciplina?.trim() || null };
+  const insert = {
+    nombre: nombre.trim(), formato, evento_id: eventoId,
+    disciplina: disciplina?.trim() || null,
+    /* Sin categoría el torneo existe igual y sale suelto (#48). */
+    categoria_id: categoria_id || null,
+  };
   if (formato === 'grupos_eliminacion') {
     const ng = Number(num_grupos);
     const apg = Number(avanzan_por_grupo);
@@ -101,6 +255,50 @@ router.post('/:eventoId/torneo', async (req, res) => {
     const { data, error } = await supabase.from('torneos').insert(insert).select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.status(201).json({ torneo: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* PATCH /eventos/:eventoId/torneo/:torneoId — retocar los metadatos.
+
+   No existía: un torneo se creaba y se borraba, nada más. Con el árbol de
+   categorías (#48) hace falta poder mover uno de rama sin perder equipos ni
+   partidos, y ya de paso renombrarlo. El formato y los grupos NO se tocan
+   aquí: cambiarlos con el fixture generado dejaría partidos que no
+   corresponden a ningún formato. Para eso se borra y se rehace. */
+router.patch('/:eventoId/torneo/:torneoId', async (req, res) => {
+  const { eventoId, torneoId } = req.params;
+  try {
+    await assertGestionaTorneo(eventoId, req.user.id);
+
+    const updates = {};
+    if ('nombre' in req.body) {
+      const n = String(req.body.nombre || '').trim();
+      if (!n) return res.status(400).json({ error: 'El nombre del torneo es requerido.' });
+      updates.nombre = n;
+    }
+    if ('disciplina' in req.body) updates.disciplina = String(req.body.disciplina || '').trim() || null;
+    if ('orden' in req.body) updates.orden = Math.max(0, Math.trunc(Number(req.body.orden) || 0));
+    if ('categoria_id' in req.body) {
+      const cat = req.body.categoria_id || null;
+      if (cat) {
+        /* La categoría tiene que ser de ESTE evento: sin comprobarlo se
+           podría colgar un torneo del árbol de otro organizador pasando un
+           id a mano. */
+        const { data: c } = await supabase.from('torneo_categorias')
+          .select('id').eq('id', cat).eq('evento_id', eventoId).maybeSingle();
+        if (!c) return res.status(400).json({ error: 'Esa categoría no es de este evento.' });
+      }
+      updates.categoria_id = cat;
+    }
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });
+
+    const { data, error } = await supabase.from('torneos')
+      .update(updates).eq('id', torneoId).eq('evento_id', eventoId)
+      .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ torneo: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

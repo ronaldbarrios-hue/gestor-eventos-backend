@@ -9,6 +9,8 @@ const { verifyTurnstile } = require('../lib/turnstile.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
+const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { conSitio } = require('../lib/eventoSitio.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -45,7 +47,7 @@ router.get('/', async (req, res) => {
     .select(
       `id, slug, titulo, descripcion, cover_url, gallery, modalidad,
        fecha_inicio, fecha_fin, location_nombre, location_direccion,
-       currency,
+       currency, modo_publico, url_externa,
        categoria:categorias(slug, nombre),
        organizador:profiles!owner_id(nombre, handle, avatar_url, empresa, branding, empresa_logo_url)`,
       { count: 'exact' }
@@ -276,6 +278,8 @@ router.get('/slug/:slug', async (req, res) => {
       fecha_inicio, fecha_fin, timezone, location_nombre, location_direccion,
       lat, lng, url_virtual, links, currency, edad_minima,
       aforo_total, aforo_vendido, page_json, estado,
+      branding, paginas, navbar,
+      modo_publico, url_externa,
       pago_llave, pago_qr_url, pago_instrucciones,
       categoria:categorias(slug, nombre),
       organizador:profiles!owner_id(nombre, handle, avatar_url, empresa, branding, empresa_logo_url),
@@ -386,7 +390,11 @@ router.get('/slug/:slug', async (req, res) => {
     referrer     : req.headers['referer'] || null,
   }).then(() => {}, () => {});
 
-  res.json({ evento });
+  /* `conSitio` devuelve el evento con la marca, las páginas y el navbar
+     también dentro de `page_json` (0064). La página pública lleva años
+     leyendo `page_json.branding` y no tiene por qué enterarse de que ahora
+     viven en columnas propias. */
+  res.json({ evento: conSitio(evento) });
 });
 
 /* Carga pública (solo lectura) de un torneo: equipos + partidos sin datos
@@ -455,6 +463,156 @@ router.get('/slug/:slug/torneo', async (req, res) => {
   res.json({ ...full, torneos, evento });
 });
 
+/* Campeón de un torneo ya terminado.
+
+   Se calcula, no se guarda: no hay columna `ganador` y añadirla obligaría a
+   mantenerla al día en cada edición de marcador. Dos formas según el formato:
+     - eliminación (y grupos+eliminación): gana el que ganó el último partido
+       jugado de la ronda más alta;
+     - liga: el primero de la tabla por puntos y luego diferencia de goles,
+       con el mismo criterio que ya usa la página pública del torneo.
+   Devuelve null mientras quede algo por jugar: un campeón provisional es
+   peor que ninguno. */
+function campeonDe(torneo, equipos, partidos) {
+  const jugados = partidos.filter(p => p.estado === 'jugado');
+  if (!jugados.length || jugados.length !== partidos.length) return null;
+  const porId = new Map(equipos.map(e => [e.id, e]));
+
+  if (torneo.formato === 'liga') {
+    const tabla = new Map(equipos.map(e => [e.id, { id: e.id, puntos: 0, gf: 0, gc: 0 }]));
+    for (const p of jugados) {
+      const a = tabla.get(p.equipo_a_id), b = tabla.get(p.equipo_b_id);
+      if (!a || !b) continue;
+      a.gf += p.marcador_a; a.gc += p.marcador_b;
+      b.gf += p.marcador_b; b.gc += p.marcador_a;
+      if (p.marcador_a > p.marcador_b) a.puntos += 3;
+      else if (p.marcador_a < p.marcador_b) b.puntos += 3;
+      else { a.puntos += 1; b.puntos += 1; }
+    }
+    const [primero] = [...tabla.values()]
+      .sort((x, y) => y.puntos - x.puntos || (y.gf - y.gc) - (x.gf - x.gc));
+    return primero ? porId.get(primero.id) || null : null;
+  }
+
+  const ultimaRonda = Math.max(...jugados.map(p => Number(p.ronda) || 0));
+  const finales = jugados.filter(p => Number(p.ronda) === ultimaRonda);
+  if (finales.length !== 1) return null;          // aún no hay una sola final
+  const f = finales[0];
+  if (f.marcador_a === f.marcador_b) return null; // empate sin desempatar
+  return porId.get(f.marcador_a > f.marcador_b ? f.equipo_a_id : f.equipo_b_id) || null;
+}
+
+/* GET /eventos/publicos/slug/:slug/torneos-resumen
+   Todos los torneos del evento con su campeón y sus participantes, sin el
+   fixture entero. Es lo que se incrusta en la web del organizador: quien la
+   visita quiere saber quién ganó y quién jugó, no navegar el bracket. */
+router.get('/slug/:slug/torneos-resumen', async (req, res) => {
+  const evento = await eventoPublicado(req.params.slug);
+  if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
+
+  const { data: torneos } = await supabase
+    .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, orden, categoria_id')
+    .eq('evento_id', evento.id)
+    .order('orden', { ascending: true }).order('created_at', { ascending: true });
+
+  const lista = [];
+  for (const t of torneos || []) {
+    const { equipos, partidos } = await cargarTorneoPublico(t);
+    lista.push({
+      ...t,
+      equipos,
+      campeon: campeonDe(t, equipos, partidos),
+      partidos_jugados: partidos.filter(p => p.estado === 'jugado').length,
+      partidos_total: partidos.length,
+    });
+  }
+
+  /* El árbol de categorías (#48) viaja plano con la respuesta: la página lo
+     arma sola y así navegar de "deportes" a "contacto" no cuesta una petición
+     por nivel. Si la 0062 no está aplicada, se devuelve vacío y la vista cae
+     a la lista de siempre. */
+  let categorias = [];
+  try {
+    const { data } = await supabase
+      .from('torneo_categorias').select('id, padre_id, nombre, orden')
+      .eq('evento_id', evento.id)
+      .order('orden', { ascending: true }).order('nombre', { ascending: true });
+    categorias = data || [];
+  } catch { categorias = []; }
+
+  res.json({ evento, torneos: lista, categorias });
+});
+
+/* GET /eventos/publicos/slug/:slug/ranking
+   Clasificación de expositores por puntos otorgados en sus stands.
+
+   Sólo expositores, nunca asistentes: el ranking de personas se calcula sobre
+   `ticket_interacciones` y publicarlo expondría quién fue al evento y cuánto
+   se movió, que es dato de asistente y no información del evento. La versión
+   interna de esa tabla vive en el panel y ahí se queda. */
+router.get('/slug/:slug/ranking', async (req, res) => {
+  const evento = await eventoPublicado(req.params.slug);
+  if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
+
+  const { data, error } = await supabase.from('ticket_interacciones')
+    .select('expositor_id, puntos')
+    .eq('evento_id', evento.id).not('expositor_id', 'is', null);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const agg = {};
+  for (const r of data || []) {
+    const k = r.expositor_id;
+    agg[k] = agg[k] || { expositor_id: k, puntos: 0, interacciones: 0 };
+    agg[k].puntos += Number(r.puntos || 0);
+    agg[k].interacciones += 1;
+  }
+
+  const ids = Object.keys(agg);
+  let fichas = [];
+  if (ids.length) {
+    /* Sólo fichas publicadas: un expositor que aún no completó la suya no
+       tiene por qué aparecer con su nombre interno en la web de nadie. */
+    const { data: exps } = await supabase.from('networking_expositores')
+      .select('id, nombre, logo_url, stand')
+      .in('id', ids).eq('activo', true).eq('estado_ficha', 'completa');
+    fichas = exps || [];
+  }
+  const porId = new Map(fichas.map(f => [f.id, f]));
+
+  const ranking = ids
+    .filter(id => porId.has(id))
+    .map(id => ({ ...agg[id], ...porId.get(id) }))
+    .sort((x, y) => y.puntos - x.puntos || y.interacciones - x.interacciones);
+
+  res.json({ evento, ranking });
+});
+
+/* GET /eventos/publicos/cupo/:token
+   ¿Sigue en pie la oferta de cupo que le llegó por correo?
+
+   La página pública lo consulta antes de pintar nada, para poder decir "este
+   cupo es tuyo hasta las 19:40" en vez de dejar que la persona rellene el
+   formulario entero y se entere al final de que llegó tarde. No devuelve el
+   correo ni el nombre de nadie: sólo si vale, para qué boleta y hasta cuándo. */
+router.get('/cupo/:token', async (req, res) => {
+  const oferta = await validarOferta(req.params.token);
+  if (!oferta) return res.json({ valida: false });
+
+  const { data: tipo } = await supabase
+    .from('ticket_types').select('id, nombre').eq('id', oferta.ticket_type_id).maybeSingle();
+  const { data: ev } = await supabase
+    .from('eventos').select('slug, titulo').eq('id', oferta.evento_id).maybeSingle();
+
+  res.json({
+    valida: true,
+    expira: oferta.oferta_expira,
+    ticket_type_id: oferta.ticket_type_id,
+    ticket_type_nombre: tipo?.nombre || null,
+    evento_slug: ev?.slug || null,
+    evento_titulo: ev?.titulo || null,
+  });
+});
+
 /* GET /eventos/publicos/slug/:slug/agenda — agenda completa de solo
    lectura (todas las salas/tracks), sin necesidad de login ni boleta.
    Los favoritos personales se consultan aparte (requieren boleta), vía
@@ -466,16 +624,59 @@ router.get('/slug/:slug/agenda', async (req, res) => {
     .from('eventos').select('id, estado').eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!evento || evento.estado !== 'publicado') return res.status(404).json({ error: 'Evento no disponible.' });
 
-  const { data: sessions } = await supabase
+  /* Los campos de inscripción viajan con la agenda desde la 0055/0059: la
+     página pública necesita saber cuáles piden apuntarse, cuánto queda libre y
+     qué se pregunta. Antes había que pedirlos aparte a /sesiones, y la agenda
+     pública —que es donde la gente los ve— no los tenía. */
+  const { data: sessions, error: eSes } = await supabase
     .from('agenda_sessions')
     .select(`id, titulo, descripcion, inicio, fin, track, ubicacion, tipo, torneo_id, expositor_id,
+             requiere_inscripcion, cupo, inscritos, formulario_modo,
              speaker:speakers!speaker_id(id, nombre, foto_url, empresa),
              expositor:networking_expositores!expositor_id(id, nombre, logo_url)`)
     .eq('evento_id', evento.id)
     .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
     .order('inicio', { ascending: true });
 
-  res.json({ evento_id: evento.id, evento, sessions: sessions || [] });
+  /* Sin la 0055 esas columnas no existen y el select falla entero. Se
+     reintenta sin ellas: la agenda se sigue viendo, sólo que sin inscripción. */
+  if (eSes) {
+    const { data: basico } = await supabase
+      .from('agenda_sessions')
+      .select(`id, titulo, descripcion, inicio, fin, track, ubicacion, tipo, torneo_id, expositor_id,
+               speaker:speakers!speaker_id(id, nombre, foto_url, empresa),
+               expositor:networking_expositores!expositor_id(id, nombre, logo_url)`)
+      .eq('evento_id', evento.id)
+      .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
+      .order('inicio', { ascending: true });
+    return res.json({ evento_id: evento.id, evento, sessions: basico || [], preguntas: {}, inscripcion_lista: false });
+  }
+
+  const lista = (sessions || []).map(s => ({
+    ...s,
+    libres: s.cupo == null ? null : Math.max(0, s.cupo - (s.inscritos || 0)),
+    lleno : s.cupo != null && (s.inscritos || 0) >= s.cupo,
+    pide_datos: (s.formulario_modo || 'ninguno') !== 'ninguno',
+  }));
+
+  /* Las preguntas de los sub-eventos con formulario propio, todas de una vez:
+     una petición por sub-evento al abrir el formulario sería una cascada. Las
+     del modo 'evento' no se mandan aquí — son el formulario de compra entero y
+     ya viaja en la carga del evento. */
+  const conPropio = lista.filter(s => s.formulario_modo === 'propio').map(s => s.id);
+  const preguntas = {};
+  if (conPropio.length) {
+    const { data: campos } = await supabase
+      .from('event_form_fields')
+      .select('id, session_id, etiqueta, requerido, tipo, opciones, ayuda, orden')
+      .in('session_id', conPropio)
+      .order('orden', { ascending: true });
+    for (const c of (campos || [])) {
+      (preguntas[c.session_id] = preguntas[c.session_id] || []).push(c);
+    }
+  }
+
+  res.json({ evento_id: evento.id, evento, sessions: lista, preguntas, inscripcion_lista: true });
 });
 
 /* GET /eventos/publicos/invitacion-pendiente?email=... */
@@ -549,11 +750,28 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   if (tipo.venta_hasta && new Date(tipo.venta_hasta) < new Date()) {
     return res.status(400).json({ error: 'La venta de este tipo de boleta ya cerró.' });
   }
-  if (tipo.cupo != null && tipo.vendidos >= tipo.cupo) {
-    return res.status(400).json({ error: 'Este tipo de boleta está agotado.', waitlistAvailable: true });
+
+  /* Lista de espera: quien llega con el token del correo `cupo_liberado` viene
+     a por un sitio que se le guardó a él. Los demás ven ese sitio como
+     ocupado —`hayCupoLibre` descuenta las ofertas vivas—, que es lo que hace
+     que estar el primero de la fila signifique algo. */
+  const oferta = await validarOferta(req.body.waitlist_token);
+  const ofertaMia = oferta
+    && String(oferta.evento_id) === String(evento.id)
+    && String(oferta.ticket_type_id) === String(tipo.id)
+    ? oferta : null;
+  if (req.body.waitlist_token && !ofertaMia) {
+    return res.status(400).json({
+      error: 'Ese enlace de cupo ya no vale: o se usó, o se pasó el plazo y le tocó al siguiente.',
+    });
   }
-  if (evento.aforo_total && evento.aforo_vendido >= evento.aforo_total) {
-    return res.status(400).json({ error: 'El evento está al aforo máximo.', waitlistAvailable: true });
+
+  if (!(await hayCupoLibre({ evento, tipo, exceptoId: ofertaMia?.id }))) {
+    const agotadoPorTipo = tipo.cupo != null && (tipo.vendidos || 0) >= tipo.cupo;
+    return res.status(400).json({
+      error: agotadoPorTipo ? 'Este tipo de boleta está agotado.' : 'El evento está al aforo máximo.',
+      waitlistAvailable: true,
+    });
   }
 
   const hasEarly = tipo.early_bird_precio != null && tipo.early_bird_hasta && new Date(tipo.early_bird_hasta) > new Date();
@@ -605,6 +823,11 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   ticket.qr_token = qr_token;
 
   await supabase.from('ticket_types').update({ vendidos: (tipo.vendidos || 0) + 1 }).eq('id', tipo.id);
+
+  /* La boleta ya existe: se cierra la entrada en la lista y se quema el token
+     para que el enlace del correo no sirva dos veces. */
+  if (ofertaMia) await consumirOferta(ofertaMia.id);
+
   if (esGratis) {
     await supabase.from('eventos').update({ aforo_vendido: (evento.aforo_vendido || 0) + 1 }).eq('id', evento.id);
 

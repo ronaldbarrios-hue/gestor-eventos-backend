@@ -3,6 +3,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { auditar } = require('../lib/auditar.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -94,6 +95,15 @@ router.patch('/:eventoId/tickets/:ticketId', async (req, res) => {
       .select().single();
     if (error) return res.status(500).json({ error: error.message });
     auditar(req, eventoId, 'ticket.editar', { entidad: 'ticket', entidadId: ticketId, detalle: { campos: Object.keys(updates) } });
+
+    /* Subir el cupo o reactivar un tipo agotado también libera sitio, y hasta
+       ahora era la única forma de que alguien de la lista de espera se quedara
+       esperando delante de una boleta que ya se podía comprar. En segundo
+       plano: el panel no tiene por qué esperar a que salga un correo. */
+    if ('cupo' in updates || updates.activo === true || 'venta_hasta' in updates) {
+      ofrecerCupoAlSiguiente({ eventoId, ticketTypeId: ticketId }).catch(() => {});
+    }
+
     res.json({ ticket: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });

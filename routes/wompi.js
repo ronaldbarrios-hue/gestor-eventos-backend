@@ -12,6 +12,7 @@ const { signTicketQR } = require('../lib/qr.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { checkoutUrl, verificarEvento } = require('../lib/wompi.js');
 const { confirmarTicketPagado } = require('../lib/confirmarTicket.js');
+const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 
 const router = express.Router();
 
@@ -82,8 +83,25 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   if (!tipo) return res.status(404).json({ error: 'Tipo de boleta no encontrado.' });
   if (!tipo.activo) return res.status(400).json({ error: 'Este tipo de boleta no está disponible.' });
   if (tipo.venta_hasta && new Date(tipo.venta_hasta) < new Date()) return res.status(400).json({ error: 'La venta de este tipo de boleta ya cerró.' });
-  if (tipo.cupo != null && tipo.vendidos >= tipo.cupo) return res.status(400).json({ error: 'Este tipo de boleta está agotado.', waitlistAvailable: true });
-  if (evento.aforo_total && evento.aforo_vendido >= evento.aforo_total) return res.status(400).json({ error: 'El evento está al aforo máximo.', waitlistAvailable: true });
+
+  /* El mismo candado de la lista de espera que en la reserva y en Mercado
+     Pago: un cupo ofrecido por correo está guardado y no se lo puede llevar
+     otro por pasar antes por aquí. */
+  const ofertaW = await validarOferta(req.body.waitlist_token);
+  const ofertaMiaW = ofertaW
+    && String(ofertaW.evento_id) === String(evento.id)
+    && String(ofertaW.ticket_type_id) === String(tipo.id)
+    ? ofertaW : null;
+  if (req.body.waitlist_token && !ofertaMiaW) {
+    return res.status(400).json({ error: 'Ese enlace de cupo ya no vale: o se usó, o se pasó el plazo y le tocó al siguiente.' });
+  }
+  if (!(await hayCupoLibre({ evento, tipo, exceptoId: ofertaMiaW?.id }))) {
+    const agotadoPorTipo = tipo.cupo != null && (tipo.vendidos || 0) >= tipo.cupo;
+    return res.status(400).json({
+      error: agotadoPorTipo ? 'Este tipo de boleta está agotado.' : 'El evento está al aforo máximo.',
+      waitlistAvailable: true,
+    });
+  }
 
   const hasEarly = tipo.early_bird_precio != null && tipo.early_bird_hasta && new Date(tipo.early_bird_hasta) > new Date();
   const precio = hasEarly ? Number(tipo.early_bird_precio) : Number(tipo.precio);
@@ -109,6 +127,7 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   if (eT) return res.status(500).json({ error: eT.message });
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
+  if (ofertaMiaW) await consumirOferta(ofertaMiaW.id);
 
   const referencia = `tx_${ticket.id}`;
   const amountInCents = Math.round(precio * 100);

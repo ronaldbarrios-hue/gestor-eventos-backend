@@ -4,10 +4,15 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { slugify, uniqueEventoSlug } = require('../lib/slug.js');
 const { otorgarBadge } = require('../lib/gamificacion.js');
 const { auditar } = require('../lib/auditar.js');
-const { esUrlImagenSegura } = require('../lib/urls.js');
+const { esUrlImagenSegura, esUrlWebSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
-const { TIPOS_CAMPO, IDS_TIPOS_CAMPO, CON_OPCIONES, GRUPOS, FICHAS } = require('../lib/formularioCampos.js');
+const {
+  TIPOS_CAMPO, GRUPOS, FICHAS,
+  MAX_CAMPOS_FORMULARIO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+} = require('../lib/formularioCampos.js');
+const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
+const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -18,10 +23,43 @@ const CAMPOS_EDITABLES = [
   'links', 'gallery',
   'currency', 'edad_minima', 'aforo_total',
   'categoria_id', 'page_json', 'email_reminders',
+  /* Migración 0064: salieron de `page_json` a columnas propias porque tres
+     editores distintos las escribían a la vez desde copias distintas del
+     evento y se borraban entre sí. */
+  'branding', 'paginas', 'navbar',
+  'modo_publico', 'url_externa',
   'pago_llave', 'pago_qr_url', 'pago_instrucciones',
 ];
 
 const ESTADOS_VALIDOS = ['borrador', 'publicado', 'cancelado', 'finalizado'];
+
+/* Lo que configura el SITIO público y no el evento en sí. Se agrupan porque
+   comparten permiso (`editar_pagina_publica`) y porque tres de ellas salieron
+   de `page_json` en la 0064: sin la lista, el bucle de permisos tendría que
+   nombrarlas una a una y la próxima que salga se quedaría fuera sin que nadie
+   lo note. */
+const CAMPOS_DEL_SITIO = new Set(['page_json', 'branding', 'paginas', 'navbar']);
+
+/* Los tres modos de publicación (migración 0060). Ver el comentario de la
+   migración para qué significa cada uno. */
+const MODOS_PUBLICOS = ['gestek', 'externa', 'iframe'];
+
+/* Valida el par modo/URL sobre el estado RESULTANTE, no sobre lo que llega:
+   un PATCH puede traer sólo `url_externa` estando ya en modo 'externa', o sólo
+   el modo confiando en la URL que ya estaba guardada. Comprobar únicamente el
+   payload dejaría pasar la mitad de los casos malos. */
+function validarPublicacion(modo, url) {
+  if (modo && !MODOS_PUBLICOS.includes(modo)) {
+    return 'modo_publico debe ser gestek, externa o iframe.';
+  }
+  if (modo && modo !== 'gestek' && !esUrlWebSegura(url)) {
+    return 'Falta la dirección de tu web (http:// o https://) para publicar fuera de GESTEK.';
+  }
+  if (url != null && String(url).trim() !== '' && !esUrlWebSegura(url)) {
+    return 'La dirección de tu web no es válida. Debe empezar por http:// o https://.';
+  }
+  return null;
+}
 
 /* GET /eventos — lista de mis eventos + eventos donde soy miembro activo */
 router.get('/', async (req, res) => {
@@ -53,7 +91,10 @@ router.get('/', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   const memberSet = new Set(memberEventIds);
-  const eventos = (data || []).map(e => ({
+  /* `conSitio` mete la marca, las páginas y el navbar dentro de `page_json`
+     aunque ya vivan en columnas propias (0064): así ningún lector existente
+     tiene que enterarse del cambio. */
+  const eventos = listaConSitio(data).map(e => ({
     ...e,
     soyOwner: String(e.owner_id) === String(req.user.id),
     esMiembro: memberSet.has(e.id),
@@ -74,7 +115,7 @@ router.get('/:id', async (req, res) => {
   if (!data) return res.status(404).json({ error: 'Evento no encontrado.' });
 
   if (String(data.owner_id) === String(req.user.id)) {
-    return res.json({ evento: data, soyOwner: true, permisos: ['*'] });
+    return res.json({ evento: conSitio(data), soyOwner: true, permisos: ['*'] });
   }
 
   const { data: m } = await supabase
@@ -90,7 +131,7 @@ router.get('/:id', async (req, res) => {
     ...(m.rol_detail?.permissions || []),
     ...(m.custom_permissions || []),
   ])];
-  res.json({ evento: data, soyOwner: false, mi_rol: m.rol, permisos });
+  res.json({ evento: conSitio(data), soyOwner: false, mi_rol: m.rol, permisos });
 });
 
 /* POST /eventos — crear */
@@ -103,11 +144,18 @@ router.post('/', async (req, res) => {
   for (const k of CAMPOS_EDITABLES) {
     if (k in req.body) insert[k] = req.body[k];
   }
+  const falloPub = validarPublicacion(insert.modo_publico, insert.url_externa);
+  if (falloPub) return res.status(400).json({ error: falloPub });
   insert.slug = await uniqueEventoSlug(supabase, req.body.slug || titulo);
+
+  /* Un cliente sin actualizar crea el evento mandando la marca dentro de
+     `page_json`. Se reparte igual que en el PATCH para que nazca ya con las
+     columnas puestas y no haya que migrarlo después. */
+  const insertFinal = partirSitio(insert, {});
 
   const { data, error } = await supabase
     .from('eventos')
-    .insert(insert)
+    .insert(insertFinal)
     .select('*, categoria:categorias(slug, nombre)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -120,7 +168,7 @@ router.post('/', async (req, res) => {
     });
 
   auditar(req, data.id, 'evento.crear', { entidad: 'evento', entidadId: data.id, detalle: { titulo: data.titulo } });
-  res.status(201).json({ evento: data });
+  res.status(201).json({ evento: conSitio(data) });
 });
 
 /* POST /eventos/:id/duplicar — clona un evento con toda su estructura.
@@ -150,6 +198,10 @@ router.post('/:id/duplicar', async (req, res) => {
     if (k === 'titulo' || k === 'page_json') continue;
     if (origen[k] !== undefined) insert[k] = origen[k];
   }
+  /* La marca, las páginas y el navbar viajan por el bucle de arriba, que ya
+     los recorre como columnas (0064). Se copian a propósito: duplicar un
+     evento sin su marca obligaría a rehacerla, que es justo lo que "duplicar"
+     viene a evitar. */
   insert.slug = await uniqueEventoSlug(supabase, titulo);
 
   const { data: nuevo, error: e2 } = await supabase
@@ -204,14 +256,16 @@ router.post('/:id/duplicar', async (req, res) => {
     entidad: 'evento', entidadId: nuevo.id,
     detalle: { titulo: nuevo.titulo, duplicado_de: origen.id },
   });
-  res.status(201).json({ evento: nuevo, copiado });
+  res.status(201).json({ evento: conSitio(nuevo), copiado });
 });
 
 /* PATCH /eventos/:id — editar */
 router.patch('/:id', async (req, res) => {
   const { data: actual, error: e1 } = await supabase
     .from('eventos')
-    .select('id, owner_id, slug, titulo')
+    /* `page_json` entra en la lectura porque el guardado lo MEZCLA en vez de
+        reemplazarlo (0064): hace falta saber qué había para no borrarlo. */
+    .select('id, owner_id, slug, titulo, modo_publico, url_externa, page_json')
     .eq('id', req.params.id)
     .is('deleted_at', null)
     .maybeSingle();
@@ -232,11 +286,19 @@ router.patch('/:id', async (req, res) => {
       ...(m.custom_permissions || []),
     ]);
     camposPermitidos = new Set();
-    if (perms.has('editar_pagina_publica')) camposPermitidos.add('page_json');
+    /* Las tres columnas de la 0064 son la misma cosa que antes iba dentro de
+       `page_json`, así que van con el mismo permiso: quien podía editar la
+       página pública sigue pudiendo, ni más ni menos. */
+    if (perms.has('editar_pagina_publica')) {
+      camposPermitidos.add('page_json');
+      camposPermitidos.add('branding');
+      camposPermitidos.add('paginas');
+      camposPermitidos.add('navbar');
+    }
     if (perms.has('gestionar_imagenes')) { camposPermitidos.add('cover_url'); camposPermitidos.add('gallery'); }
     if (perms.has('editar_evento')) {
       for (const c of CAMPOS_EDITABLES) {
-        if (!c.startsWith('pago_') && c !== 'page_json') camposPermitidos.add(c);
+        if (!c.startsWith('pago_') && !CAMPOS_DEL_SITIO.has(c)) camposPermitidos.add(c);
       }
     }
     if (camposPermitidos.size === 0) {
@@ -263,16 +325,47 @@ router.patch('/:id', async (req, res) => {
     }
   }
 
+  if ('modo_publico' in updates || 'url_externa' in updates) {
+    const fallo = validarPublicacion(
+      'modo_publico' in updates ? updates.modo_publico : actual.modo_publico,
+      'url_externa'  in updates ? updates.url_externa  : actual.url_externa,
+    );
+    if (fallo) return res.status(400).json({ error: fallo });
+  }
+
+  /* AQUÍ está el arreglo del campo compartido (0064):
+
+     `partirSitio` saca de `page_json` la marca, las páginas y el navbar hacia
+     sus columnas —para que un cliente sin actualizar siga guardando bien— y
+     MEZCLA el resto sobre lo que ya había en vez de reemplazarlo.
+
+     Antes, una pantalla que mandaba `{...suCopiaVieja, seo}` escribía su copia
+     entera encima: si otra pantalla había guardado la marca entretanto, la
+     borraba sin avisar. Ahora sólo puede tocar las claves que manda. */
+  const updatesFinales = partirSitio(updates, actual.page_json);
+
   const { data, error } = await supabase
     .from('eventos')
-    .update(updates)
+    .update(updatesFinales)
     .eq('id', req.params.id)
     .select('*, categoria:categorias(slug, nombre)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
 
-  auditar(req, data.id, 'evento.editar', { entidad: 'evento', entidadId: data.id, detalle: { campos: Object.keys(updates) } });
-  res.json({ evento: data });
+  auditar(req, data.id, 'evento.editar', { entidad: 'evento', entidadId: data.id, detalle: { campos: Object.keys(updatesFinales) } });
+
+  /* Subir el aforo libera sitio en TODOS los tipos de boleta a la vez, así que
+     hay que recorrerlos: la lista de espera es por tipo. En segundo plano —el
+     panel no espera a que salgan los correos. */
+  if ('aforo_total' in updates) {
+    supabase.from('ticket_types').select('id').eq('evento_id', data.id).eq('activo', true)
+      .then(({ data: tipos }) => Promise.all(
+        (tipos || []).map(t => ofrecerCupoAlSiguiente({ eventoId: data.id, ticketTypeId: t.id }))
+      ))
+      .catch(() => {});
+  }
+
+  res.json({ evento: conSitio(data) });
 });
 
 /* Helper: ¿puede este usuario editar el evento (owner o miembro con permiso)? */
@@ -299,30 +392,9 @@ async function puedeEditarEvento(req, eventoId) {
    y otra igual en el frontend: la misma trampa que tenían los correos, dos
    catálogos que se separan sin que nadie lo note. */
 
-/* Un formulario de caracterización son ~22 preguntas, y las entidades piden
-   fichas de más de 30. El tope estaba en 20, así que la ficha completa no se
-   podía guardar: fallaba con "Máximo 20 campos personalizados". */
-const MAX_CAMPOS_FORMULARIO = 60;
-
-/* Los campos que se guardan de cada pregunta. `grupo` y `ayuda` los añade la
-   migración 0055. */
-const COLUMNAS_CAMPO = 'id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id, grupo, ayuda';
-
-/* Arma la fila a guardar. Las opciones solo tienen sentido en los tipos que las
-   usan; en los demás se limpian para que no queden restos de haber cambiado el
-   tipo de un campo ya creado. */
-function filaCampo(c, orden) {
-  return {
-    tipo: c.tipo,
-    etiqueta: c.etiqueta.trim(),
-    opciones: CON_OPCIONES.has(c.tipo) ? c.opciones : null,
-    requerido: Boolean(c.requerido),
-    orden,
-    ticket_type_id: c.ticket_type_id || null,
-    grupo: c.grupo ? String(c.grupo).slice(0, 80) : null,
-    ayuda: c.ayuda ? String(c.ayuda).slice(0, 300) : null,
-  };
-}
+/* El tope, las columnas y el armado de cada fila viven en
+   lib/formularioCampos.js: los comparte con el editor de preguntas de
+   sub-evento, y dos copias de esto acabarían separándose. */
 
 /* GET /eventos/:id/formulario — campos personalizados del formulario de compra */
 router.get('/:id/formulario', async (req, res) => {
@@ -374,19 +446,8 @@ router.put('/:id/formulario', async (req, res) => {
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
 
   const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
-  if (campos.length > MAX_CAMPOS_FORMULARIO) {
-    return res.status(400).json({ error: `Máximo ${MAX_CAMPOS_FORMULARIO} campos en el formulario.` });
-  }
-
-  for (const c of campos) {
-    if (!c.etiqueta?.trim()) return res.status(400).json({ error: 'Cada campo necesita una etiqueta.' });
-    if (!IDS_TIPOS_CAMPO.includes(c.tipo)) return res.status(400).json({ error: `Tipo de campo inválido: ${c.tipo}` });
-    /* `multiple` también necesita opciones, y antes no se comprobaba porque el
-       tipo no existía. */
-    if (CON_OPCIONES.has(c.tipo) && (!Array.isArray(c.opciones) || c.opciones.length === 0)) {
-      return res.status(400).json({ error: `El campo "${c.etiqueta}" necesita al menos una opción.` });
-    }
-  }
+  const falloDef = validarDefinicion(campos);
+  if (falloDef) return res.status(400).json({ error: falloDef });
 
   /* OJO: este diff BORRA lo que no venga en el payload. Las preguntas de un
      sub-evento comparten evento_id, así que sin `session_id is null` guardar el

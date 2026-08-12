@@ -59,9 +59,30 @@ router.get('/:eventoId/chat/channels', async (req, res) => {
       }
     }
 
+    /* Anclado y archivado son de CADA PERSONA, no del canal: anclar una
+       conversación no se la ancla a todo el equipo. Vienen de
+       chat_channel_prefs (migración 0058); si no está aplicada, todo sale sin
+       anclar y sin archivar, que es el comportamiento de antes. */
+    const prefs = {};
+    const { data: filasPref } = await supabase
+      .from('chat_channel_prefs')
+      .select('channel_id, anclado, archivado, leido_at')
+      .eq('user_id', req.user.id);
+    for (const f of (filasPref || [])) prefs[f.channel_id] = f;
+
+    for (const c of [...visiblesReg, ...dms]) {
+      const pr = prefs[c.id] || {};
+      c.anclado = pr.anclado === true;
+      c.archivado = pr.archivado === true;
+      c.leido_at = pr.leido_at || null;
+    }
+
     res.json({
       channels: [...visiblesReg, ...dms],
       puedeCrear: tienePermiso(ctx, 'crear_canales'),
+      /* Moderar es borrar mensajes de otros. El propio se borra siempre, sin
+         permiso, y en un DM no manda nadie salvo el autor. */
+      puedeModerar: tienePermiso(ctx, 'borrar_mensajes'),
     });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -174,7 +195,8 @@ router.get('/:eventoId/chat/channels/:channelId/messages', async (req, res) => {
 
     let q = supabase
       .from('chat_messages')
-      .select(`id, contenido, file_url, created_at, user_id, autor:profiles!user_id(id, nombre, avatar_url, email)`)
+      .select(`id, contenido, file_url, created_at, user_id, borrado_at,
+               autor:profiles!user_id(id, nombre, avatar_url, email)`)
       .eq('channel_id', channelId)
       .order('created_at', { ascending: false })
       .limit(Number(limit));
@@ -183,8 +205,15 @@ router.get('/:eventoId/chat/channels/:channelId/messages', async (req, res) => {
 
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
+
+    /* Un mensaje borrado se pinta como "mensaje eliminado" y su contenido NO
+       viaja: borrarlo y seguir mandando el texto sería un borrado de mentira. */
+    const mensajes = (data || []).map(m => m.borrado_at
+      ? { ...m, contenido: null, file_url: null, borrado: true }
+      : m);
+
     /* Lo devolvemos en orden ascendente para que el frontend solo haga push() */
-    res.json({ messages: (data || []).reverse() });
+    res.json({ messages: mensajes.reverse() });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
@@ -248,9 +277,15 @@ router.delete('/:eventoId/chat/channels/:channelId/messages/:messageId', async (
       return res.status(403).json({ error: 'Solo puedes borrar tus propios mensajes.' });
     }
 
-    const { error } = await supabase.from('chat_messages').delete().eq('id', messageId);
+    /* Borrado suave, no DELETE. Borrar la fila deja un hueco en la conversación
+       —el resto ve desaparecer un mensaje del medio sin explicación— y si era
+       una moderación no queda constancia de que alguien moderó. */
+    const { error } = await supabase
+      .from('chat_messages')
+      .update({ borrado_at: new Date().toISOString(), borrado_por: req.user.id })
+      .eq('id', messageId);
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true, id: messageId });
+    res.json({ ok: true, id: messageId, borrado: true });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
@@ -285,6 +320,47 @@ router.post('/:eventoId/chat/dm', async (req, res) => {
     }
     const { data: prof } = await supabase.from('profiles').select('nombre, avatar_url').eq('id', otro).maybeSingle();
     res.status(201).json({ channel: { ...channel, dm_nombre: prof?.nombre || 'Mensaje directo', dm_avatar: prof?.avatar_url || null } });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* PATCH /eventos/:eventoId/chat/channels/:channelId/prefs
+   { anclado?, archivado?, leido? } — preferencias de QUIEN LLAMA sobre ese canal.
+
+   Son por persona a propósito: si fueran del canal, anclar una conversación se
+   la anclaría a todo el equipo y archivarla la esconderría a los demás sin que
+   nadie lo hubiera pedido. */
+router.patch('/:eventoId/chat/channels/:channelId/prefs', async (req, res) => {
+  const { eventoId, channelId } = req.params;
+  try {
+    await assertAcceso(eventoId, req.user.id);
+
+    /* Que el canal sea de este evento, y que si es DM el que pide esté dentro. */
+    const { data: ch } = await supabase
+      .from('chat_channels').select('id, tipo, dm_users').eq('id', channelId).eq('evento_id', eventoId).maybeSingle();
+    if (!ch) return res.status(404).json({ error: 'Canal no encontrado.' });
+    if (ch.tipo === 'dm' && !(ch.dm_users || []).includes(req.user.id)) {
+      return res.status(403).json({ error: 'No autorizado.' });
+    }
+
+    const fila = { channel_id: channelId, user_id: req.user.id, updated_at: new Date().toISOString() };
+    if ('anclado' in (req.body || {}))   fila.anclado = req.body.anclado !== false;
+    if ('archivado' in (req.body || {})) fila.archivado = req.body.archivado !== false;
+    if (req.body?.leido) fila.leido_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('chat_channel_prefs')
+      .upsert(fila, { onConflict: 'channel_id,user_id' })
+      .select('channel_id, anclado, archivado, leido_at')
+      .single();
+    if (error) {
+      return res.status(503).json({
+        error: 'Falta aplicar la migración 0058 para anclar y archivar.',
+        detalle: error.message,
+      });
+    }
+    res.json({ prefs: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

@@ -2,6 +2,7 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -161,6 +162,58 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', async (req, re
     if (e2.code === '23505') return res.status(409).json({ error: 'Ese horario ya fue reservado por alguien más.' });
     return res.status(500).json({ error: e2.message });
   }
+
+  /* Correo de cita confirmada. La plantilla `cita` existe desde que se unificó
+     el motor de correo y nadie la llamaba: se reservaba una cita y no llegaba
+     nada, así que la persona no tenía dónde consultar a qué hora era.
+
+     Va best-effort y después de responder: la cita ya está guardada, y un fallo
+     de SMTP no debe convertirse en un error de reserva. */
+  (async () => {
+    try {
+      const { data: h } = await supabase
+        .from('networking_horarios')
+        .select('inicio, fin, expositor:networking_expositores!expositor_id(nombre, stand)')
+        .eq('id', horarioId).maybeSingle();
+
+      const { data: perfil } = await supabase
+        .from('profiles').select('nombre, email').eq('id', req.user.id).maybeSingle();
+
+      const destino = perfil?.email || req.user.email;
+      if (!destino) return;
+
+      const { data: ev } = await supabase
+        .from('eventos').select('timezone').eq('id', eventoId).maybeSingle();
+      const tz = ev?.timezone || 'America/Bogota';
+
+      let cuando = '';
+      if (h?.inicio) {
+        const d = new Date(h.inicio);
+        if (!Number.isNaN(d.getTime())) {
+          cuando = d.toLocaleString('es-CO', {
+            weekday: 'long', day: 'numeric', month: 'long',
+            hour: 'numeric', minute: '2-digit', timeZone: tz,
+          });
+        }
+      }
+
+      await enviarEmailEvento({
+        evento: eventoId,
+        tipo: 'cita',
+        to: destino,
+        ctx: {
+          nombre: perfil?.nombre || '',
+          hora: cuando,
+          /* El "lugar" útil aquí es el stand del expositor, no la sede: es a
+             donde tiene que ir esa persona. */
+          lugar: h?.expositor?.stand ? `Stand ${h.expositor.stand}` : '',
+          tipo_boleta: h?.expositor?.nombre || '',
+        },
+      });
+    } catch (e) {
+      console.warn('[networking] no se pudo avisar de la cita:', e.message);
+    }
+  })();
 
   res.status(201).json({ ok: true, cita_id: cita.id });
 });

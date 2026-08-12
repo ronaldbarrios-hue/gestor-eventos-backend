@@ -409,8 +409,15 @@ async function cargarTorneoPublico(torneo) {
 }
 
 async function eventoPublicado(slug) {
+  /* Se traen también el título y el organizador: las páginas públicas que
+     cuelgan del evento (torneo, agenda) necesitan pintar su cabecera y el
+     enlace de vuelta, y antes solo recibían el id — por eso flotaban sin
+     contexto. */
   const { data: evento } = await supabase
-    .from('eventos').select('id, estado').eq('slug', slug).is('deleted_at', null).maybeSingle();
+    .from('eventos')
+    .select(`id, estado, titulo, slug,
+             organizador:profiles!owner_id(nombre, empresa, branding, empresa_logo_url)`)
+    .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!evento || evento.estado !== 'publicado') return null;
   return evento;
 }
@@ -434,7 +441,7 @@ router.get('/slug/:slug/torneos/:torneoId', async (req, res) => {
     .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, num_grupos, avanzan_por_grupo')
     .eq('id', req.params.torneoId).eq('evento_id', evento.id).maybeSingle();
   if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
-  res.json(await cargarTorneoPublico(torneo));
+  res.json({ ...(await cargarTorneoPublico(torneo)), evento });
 });
 
 /* GET /eventos/publicos/slug/:slug/torneo — RETROCOMPAT: primer torneo,
@@ -450,7 +457,7 @@ router.get('/slug/:slug/torneo', async (req, res) => {
 
   if (!torneos || !torneos.length) return res.json({ torneo: null, torneos: [] });
   const full = await cargarTorneoPublico(torneos[0]);
-  res.json({ ...full, torneos });
+  res.json({ ...full, torneos, evento });
 });
 
 /* GET /eventos/publicos/slug/:slug/agenda — agenda completa de solo
@@ -473,7 +480,7 @@ router.get('/slug/:slug/agenda', async (req, res) => {
     .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
     .order('inicio', { ascending: true });
 
-  res.json({ evento_id: evento.id, sessions: sessions || [] });
+  res.json({ evento_id: evento.id, evento, sessions: sessions || [] });
 });
 
 /* GET /eventos/publicos/invitacion-pendiente?email=... */

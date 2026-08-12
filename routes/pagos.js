@@ -13,6 +13,7 @@ const mp = require('../lib/mercadopago.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 function verifyMPSignature(req) {
   if (!MP_WEBHOOK_SECRET) return { ok: true, reason: 'no_secret_configured' };
@@ -374,6 +375,7 @@ async function procesarPago(pago) {
           enlace     : `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${tFull.codigo}`,
         },
       }).then(r => console.log('[pagos] email confirmación resultado:', r));
+      avisarExpositorSiAplica(ticketId).catch(() => {});
     }
     const { data: ev } = await supabase
       .from('eventos').select('aforo_vendido').eq('id', ticket.evento_id).single();

@@ -8,6 +8,7 @@ const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
+const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -239,7 +240,8 @@ router.get('/expositor/:codigo', async (req, res) => {
 /* PUT /eventos/publicos/expositor/:codigo — la empresa edita SU ficha.
    Nunca puede tocar evento_id, ticket_id ni activo. */
 const CAMPOS_FICHA = ['nombre', 'descripcion', 'logo_url', 'stand', 'tipo_persona',
-  'contacto_nombre', 'contacto_email', 'contacto_telefono', 'sitio_web', 'redes', 'categoria_negocio'];
+  'contacto_nombre', 'contacto_email', 'contacto_telefono', 'sitio_web', 'redes',
+  'categoria_negocio', 'galeria'];
 
 router.put('/expositor/:codigo', async (req, res) => {
   const { error, ticket, ficha } = await resolverFichaExpositor(req.params.codigo);
@@ -618,6 +620,10 @@ router.post('/slug/:slug/reservar', async (req, res) => {
         enlace     : `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${ticket.codigo}`,
       },
     }).then(r => console.log('[reservar] email confirmación resultado:', r));
+
+    /* Un stand puede ser una boleta gratuita (patrocinador, aliado): este camino
+       también tiene que avisarle de su portal. */
+    avisarExpositorSiAplica(ticket.id).catch(() => {});
   }
 
   notificar({

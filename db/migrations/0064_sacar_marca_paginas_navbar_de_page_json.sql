@@ -35,6 +35,20 @@
 -- Con una sola copia no hay nada que decidir. La compatibilidad hacia atrás la
 -- da la API, que al LEER vuelve a meter las tres dentro de `page_json`: quien
 -- siga leyendo `page_json.branding` no se entera del cambio.
+--
+-- ⚠️ ESTA MIGRACIÓN DA POR HECHO QUE EL CÓDIGO NUEVO YA ESTÁ DESPLEGADO.
+-- Al aplicarla en producción no lo estaba —el backend de Render corría el
+-- código viejo, que devuelve `page_json` en crudo— y las páginas públicas de
+-- los 31 eventos salieron vacías: sin `conSitio` no hay compatibilidad.
+--
+-- La 0065 lo arregló devolviendo las copias y añadiendo un trigger que
+-- mantiene las columnas al día mientras siga vivo el código viejo. **La
+-- limpieza de abajo está por tanto DESHECHA en producción**, y se vuelve a
+-- aplicar —con el `drop` del trigger— cuando backend y frontend nuevos estén
+-- arriba. Ver el final de la 0065.
+--
+-- Quien reconstruya desde cero no tiene este problema: no hay código viejo
+-- contra el que ser compatible, así que la limpieza vale tal cual.
 
 alter table public.eventos
   add column if not exists branding jsonb not null default '{}'::jsonb,

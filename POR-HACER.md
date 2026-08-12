@@ -11,9 +11,10 @@ Todo lo que queda, en un solo sitio. Dos mitades muy distintas:
 
 Última revisión: 12 de agosto de 2026. Migraciones 0052 a 0059 aplicadas.
 
-> **Hay cinco migraciones nuevas SIN aplicar: 0060 a 0064.** Ver la tabla al
-> principio de `PENDIENTE.md`. La 0064 no es opcional: sin ella el editor de
-> la página pública guarda contra columnas que no existen y falla entero.
+> **Migraciones 0060 a 0065 aplicadas.** Falta desplegar el código: hoy corren
+> el backend y el frontend viejos y la base va por delante. La **0065 es un
+> puente temporal** que hay que retirar después del despliegue — ver la tabla
+> al principio de `PENDIENTE.md`.
 
 > Para el estado de las migraciones y cómo comprobar cada cosa, ver
 > `DESPLIEGUE.md`. Para el detalle de lo pedido por el equipo, `PENDIENTE.md` en
@@ -100,10 +101,15 @@ Cada una queda inerte sin su llave: no falla, simplemente no aparece.
 
 ## 2 · Lo externo que no es una credencial
 
-- [ ] **Desplegar el backend en Render.** Nunca se ha desplegado. Por eso el
-      flujo de "vacante pública → candidato aplica" no se ha podido probar. Hasta
-      que exista una URL pública del backend, todo lo que dependa de webhooks
-      (pagos, Mercado Pago, Wompi) tampoco se puede verificar de verdad.
+- [ ] **Desplegar el backend en Render.** ⚠️ **Esto decía "nunca se ha
+      desplegado" y NO era cierto.** `https://gestor-eventos-backend-yx75.onrender.com`
+      está vivo y responde 200: es el que sirve la aplicación hoy. Fiarse de
+      esta línea en vez de comprobarlo costó dejar las páginas públicas de 31
+      eventos vacías durante unos minutos al aplicar la 0064 (ver la 0065).
+      Lo que sí sigue pendiente es **desplegar el código de esta ronda**, que
+      está en la rama y no en lo que corre. Y lo de la vacante pública habrá
+      que volver a diagnosticarlo: el 401 no se explica por un backend
+      inexistente.
 - [ ] **Activar la protección de contraseñas filtradas** en Supabase Auth. Se
       hace desde el panel, no desde el código: Authentication → Policies.
 - [ ] **Probar el correo en Gmail y en Outlook.** El HTML sale con la marca del

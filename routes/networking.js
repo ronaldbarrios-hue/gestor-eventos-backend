@@ -180,19 +180,216 @@ router.delete('/:eventoId/networking/citas/:citaId', async (req, res) => {
 
 /* ────────────── Gestión del organizador ────────────── */
 
-/* GET /eventos/:eventoId/expositores — lista de expositores para el MAPA y el
-   directorio (staff). Incluye borradores; sin gate de categoría. */
+/* Todo lo que se puede guardar de un stand, para poder leerlo también.
+
+   El select de antes devolvía nueve campos de los que CAMPOS_STAND acepta al
+   guardar: contacto_nombre, contacto_email, contacto_telefono, tipo_persona y
+   redes se escribían bien y no se volvían a ver nunca. En el panel parecía que
+   la ficha no tuviera contacto ni redes, y de ahí salió la idea de que hacía
+   falta "ampliarla" — lo que hacía falta era devolverla. */
+const COLS_STAND = `id, nombre, descripcion, logo_url, stand, sitio_web,
+  categoria_negocio, contacto_nombre, contacto_email, contacto_telefono,
+  tipo_persona, redes, galeria, cuota_puntos, activo, estado_ficha, ticket_id, orden`;
+
+/* GET /eventos/:eventoId/expositores — expositores para el MAPA y el directorio
+   (staff). Sin gate de categoría.
+
+   Con `?todos=1` vienen también los desactivados: el panel los necesita para
+   reactivarlos, y antes quedaban invisibles pese a que el comentario prometía
+   "incluye borradores". */
 router.get('/:eventoId/expositores', async (req, res) => {
+  const { eventoId } = req.params;
+  const todos = req.query.todos === '1' || req.query.todos === 'true';
+  try {
+    await assertOwner(eventoId, req.user.id);
+    let q = supabase
+      .from('networking_expositores')
+      .select(COLS_STAND)
+      .eq('evento_id', eventoId);
+    if (!todos) q = q.eq('activo', true);
+
+    const { data, error } = await q
+      .order('orden', { ascending: true }).order('nombre', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+
+    /* Cuánto ha repartido cada stand y cuánto le queda. Sale de
+       v_consumo_puntos_stand (0057), que lo suma de ticket_interacciones — la
+       única fuente de verdad de lo otorgado. Si la migración no está, se sigue
+       sin los números en vez de fallar. */
+    const consumo = {};
+    const { data: filas } = await supabase
+      .from('v_consumo_puntos_stand')
+      .select('expositor_id, otorgados, veces, asistentes_distintos, disponibles')
+      .eq('evento_id', eventoId);
+    for (const f of (filas || [])) consumo[f.expositor_id] = f;
+
+    /* Motivos y premios propios: es lo que dice si el stand puede operar o es
+       una tarjeta vacía. */
+    const ids = (data || []).map(x => x.id);
+    const conMotivos = new Set();
+    const conPremios = new Set();
+    if (ids.length) {
+      const [mots, recs] = await Promise.all([
+        supabase.from('evento_motivos').select('expositor_id').in('expositor_id', ids),
+        supabase.from('recompensas').select('expositor_id').in('expositor_id', ids),
+      ]);
+      for (const m of (mots.data || [])) conMotivos.add(m.expositor_id);
+      for (const r of (recs.data || [])) conPremios.add(r.expositor_id);
+    }
+
+    /* El código de la boleta-stand: es con lo que el expositor entra a su portal
+       (/expositor/:codigo). Estaba en tickets y el panel no lo tenía, así que
+       había que armar ese enlace a mano mirando la base. */
+    const codigos = {};
+    const ticketIds = (data || []).map(x => x.ticket_id).filter(Boolean);
+    if (ticketIds.length) {
+      const { data: tks } = await supabase
+        .from('tickets').select('id, codigo').in('id', ticketIds);
+      for (const tk of (tks || [])) codigos[tk.id] = tk.codigo;
+    }
+
+    const expositores = (data || []).map(x => ({
+      ...x,
+      puntos: consumo[x.id] || { otorgados: 0, veces: 0, asistentes_distintos: 0, disponibles: null },
+      tiene_motivos: conMotivos.has(x.id),
+      tiene_premios: conPremios.has(x.id),
+      /* El vínculo con la boleta-stand que lo creó estaba en ticket_id y no se
+         mostraba en ningún sitio. */
+      creado_por_boleta: Boolean(x.ticket_id),
+      codigo_boleta: x.ticket_id ? (codigos[x.ticket_id] || null) : null,
+      listo: conMotivos.has(x.id) && x.estado_ficha === 'completa',
+    }));
+
+    res.json({ expositores, consumo_disponible: Boolean(filas) });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* ── Bolsa de puntos del evento ───────────────────────────────────────
+   El organizador define un total y reparte cuota por stand. El tope lo aplica
+   además un trigger de la 0057: si mañana aparece otro camino para otorgar
+   puntos, sigue valiendo. Comprobarlo solo aquí sería confiar en que nadie
+   escriba una segunda ruta. */
+
+router.get('/:eventoId/expositores/bolsa', async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
+    const [bolsa, reparto] = await Promise.all([
+      supabase.from('v_bolsa_evento').select('*').eq('evento_id', eventoId).maybeSingle(),
+      supabase.from('v_consumo_puntos_stand')
+        .select('expositor_id, nombre, stand, cuota_puntos, otorgados, veces, asistentes_distintos, disponibles')
+        .eq('evento_id', eventoId).order('nombre', { ascending: true }),
+    ]);
+    /* Sin la 0057 no existen las vistas: se avisa en vez de reventar. */
+    if (bolsa.error || reparto.error) {
+      return res.json({ bolsa: null, reparto: [], almacenamiento_listo: false });
+    }
+    res.json({ bolsa: bolsa.data || null, reparto: reparto.data || [], almacenamiento_listo: true });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+router.put('/:eventoId/expositores/bolsa', async (req, res) => {
+  const { eventoId } = req.params;
+  const aEntero = (v) => (v === null || v === '' || v === undefined)
+    ? null
+    : Math.max(0, Math.trunc(Number(v)));
+  try {
+    await assertOwner(eventoId, req.user.id);
+    const total = aEntero(req.body?.total);
+    const cuotaDefecto = aEntero(req.body?.cuota_defecto);
+    if (total !== null && !Number.isFinite(total)) {
+      return res.status(400).json({ error: 'El total debe ser un número.' });
+    }
+
     const { data, error } = await supabase
-      .from('networking_expositores')
-      .select('id, nombre, descripcion, logo_url, stand, sitio_web, categoria_negocio, activo, estado_ficha, ticket_id, orden')
-      .eq('evento_id', eventoId).eq('activo', true)
-      .order('orden', { ascending: true }).order('nombre', { ascending: true });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ expositores: data || [] });
+      .from('evento_bolsa_puntos')
+      .upsert({
+        evento_id: eventoId, total, cuota_defecto: cuotaDefecto,
+        nota: req.body?.nota ? String(req.body.nota).slice(0, 300) : null,
+        updated_by: req.user.id, updated_at: new Date().toISOString(),
+      }, { onConflict: 'evento_id' })
+      .select('*').single();
+    if (error) return res.status(503).json({ error: 'Falta aplicar la migración 0057.', detalle: error.message });
+    res.json({ bolsa: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* Reparto: { cuotas: { <expositor_id>: numero|null } }.
+   La suma se valida ANTES de guardar nada: repartir de más y descubrirlo stand
+   por stand es peor que no dejar guardar. */
+router.put('/:eventoId/expositores/cuotas', async (req, res) => {
+  const { eventoId } = req.params;
+  const cuotas = req.body?.cuotas && typeof req.body.cuotas === 'object' ? req.body.cuotas : null;
+  if (!cuotas) return res.status(400).json({ error: 'Manda { cuotas: { id: puntos } }.' });
+
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const { data: mios } = await supabase
+      .from('networking_expositores').select('id, cuota_puntos').eq('evento_id', eventoId);
+    const validos = new Map((mios || []).map(x => [x.id, x.cuota_puntos]));
+
+    const limpias = {};
+    for (const [id, v] of Object.entries(cuotas)) {
+      if (!validos.has(id)) return res.status(400).json({ error: 'Un stand de la lista no es de este evento.' });
+      const n = (v === null || v === '' || v === undefined) ? null : Math.max(0, Math.trunc(Number(v)));
+      if (n !== null && !Number.isFinite(n)) {
+        return res.status(400).json({ error: 'Las cuotas deben ser números.' });
+      }
+      limpias[id] = n;
+    }
+
+    const { data: bolsa } = await supabase
+      .from('evento_bolsa_puntos').select('total').eq('evento_id', eventoId).maybeSingle();
+
+    if (bolsa?.total != null) {
+      /* Se suma lo que va a quedar: las cuotas que llegan más las que esta
+         petición no toca. */
+      let suma = 0;
+      for (const [id, actual] of validos) {
+        const futura = (id in limpias) ? limpias[id] : actual;
+        suma += futura || 0;
+      }
+      if (suma > bolsa.total) {
+        return res.status(400).json({
+          error: `El reparto suma ${suma} y la bolsa del evento son ${bolsa.total}. Sobran ${suma - bolsa.total}.`,
+        });
+      }
+    }
+
+    /* Nadie puede quedar con cuota por debajo de lo que ya repartió: sería
+       dejarle el contador en rojo sin explicación. */
+    const { data: consumo } = await supabase
+      .from('v_consumo_puntos_stand').select('expositor_id, nombre, otorgados').eq('evento_id', eventoId);
+    for (const c of (consumo || [])) {
+      if (!(c.expositor_id in limpias)) continue;
+      const nueva = limpias[c.expositor_id];
+      if (nueva !== null && nueva < Number(c.otorgados || 0)) {
+        return res.status(400).json({
+          error: `"${c.nombre}" ya repartió ${c.otorgados} puntos: su cuota no puede quedar en ${nueva}.`,
+        });
+      }
+    }
+
+    for (const [id, cuota] of Object.entries(limpias)) {
+      const { error } = await supabase
+        .from('networking_expositores')
+        .update({ cuota_puntos: cuota }).eq('id', id).eq('evento_id', eventoId);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    const { data: reparto } = await supabase
+      .from('v_consumo_puntos_stand')
+      .select('expositor_id, nombre, stand, cuota_puntos, otorgados, disponibles')
+      .eq('evento_id', eventoId).order('nombre', { ascending: true });
+
+    res.json({ reparto: reparto || [] });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
@@ -204,7 +401,7 @@ router.get('/:eventoId/expositores', async (req, res) => {
    y también se pueden agregar A MANO aquí (ticket_id = null). */
 const CAMPOS_STAND = ['nombre', 'descripcion', 'logo_url', 'stand', 'sitio_web',
   'categoria_negocio', 'contacto_nombre', 'contacto_email', 'contacto_telefono',
-  'tipo_persona', 'activo', 'estado_ficha', 'orden'];
+  'tipo_persona', 'redes', 'galeria', 'activo', 'estado_ficha', 'orden'];
 
 /* POST /eventos/:eventoId/expositores — crear un stand a mano. */
 router.post('/:eventoId/expositores', async (req, res) => {

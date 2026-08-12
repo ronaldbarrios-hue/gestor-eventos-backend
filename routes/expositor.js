@@ -52,7 +52,20 @@ router.get('/:codigo/panel', cargarExpositor, async (req, res) => {
     .from('agenda_sessions').select('*').eq('expositor_id', fichaId).order('inicio', { ascending: true });
   const { data: evento } = await supabase
     .from('eventos').select('id, slug, titulo, fecha_inicio, fecha_fin, timezone').eq('id', eventoId).maybeSingle();
-  res.json({ ficha, evento, motivos: motivos || [], recompensas, franjas: franjas || [] });
+
+  /* Cuánto ha repartido y cuánto le queda. Sin esto el expositor solo se entera
+     de que tiene tope cuando se lo come, en mitad del evento y con alguien
+     esperando delante. Si la 0057 no está aplicada, `cuota` va en null y el
+     portal simplemente no muestra el contador. */
+  const { data: cuota } = await supabase
+    .from('v_consumo_puntos_stand')
+    .select('cuota_puntos, otorgados, veces, asistentes_distintos, disponibles')
+    .eq('expositor_id', fichaId).maybeSingle();
+
+  res.json({
+    ficha, evento, motivos: motivos || [], recompensas, franjas: franjas || [],
+    cuota: cuota || null,
+  });
 });
 
 /* ───────────── Motivos propios ───────────── */
@@ -136,7 +149,28 @@ router.post('/:codigo/interacciones', cargarExpositor, async (req, res) => {
         nota: nota?.trim() || null, lugar: req.expositor.ficha.nombre,
         expositor_id: fichaId, operador_id: null,
       }).select('*').single();
-    if (eIns) return res.status(500).json({ error: eIns.message });
+
+    if (eIns) {
+      /* El tope de la bolsa lo aplica un trigger (migración 0057), así que el
+         error llega como una excepción de Postgres. Se traduce a algo que el
+         expositor pueda entender: verá "cuota agotada", no un mensaje de la
+         base de datos. */
+      if (String(eIns.message || '').includes('CUOTA_STAND_AGOTADA')) {
+        const { data: estado } = await supabase
+          .from('v_consumo_puntos_stand')
+          .select('cuota_puntos, otorgados, disponibles')
+          .eq('expositor_id', fichaId).maybeSingle();
+        return res.status(409).json({
+          error: estado
+            ? `Se agotó tu cuota de puntos: repartiste ${estado.otorgados} de ${estado.cuota_puntos}. Habla con la organización para que te asigne más.`
+            : 'Se agotó tu cuota de puntos. Habla con la organización.',
+          cuota_agotada: true,
+          cuota: estado || null,
+          sound: 'warn',
+        });
+      }
+      return res.status(500).json({ error: eIns.message });
+    }
 
     const saldo = await saldoDeTicket(ticket, { organizadorId: req.expositor.ownerId, eventoId, expositorId: fichaId });
     res.status(201).json({

@@ -13,10 +13,26 @@ router.use(verifySupabaseJWT);
    `requierePro: false` en la respuesta porque el frontend lo lee, y quitarlo de
    golpe dejaría la pantalla en un estado indefinido. */
 router.get('/me/agente/estado', async (req, res) => {
+  /* El aviso de capa gratuita se manda desde aquí y no se escribe en el
+     frontend, porque depende de con qué proveedor está corriendo el servidor.
+     Groq y Gemini tienen capa gratuita con límite de peticiones por minuto y por
+     día; Anthropic es de pago y no lo tiene.
+
+     Es lo único de GESTEK con un tope, y el tope no es del usuario: es del
+     proveedor. Decirlo antes es mejor que dejar que alguien se choque con un
+     "demasiadas peticiones" a mitad de una conversación y crea que se rompió. */
+  const CAPA_GRATUITA = { groq: 'Groq', gemini: 'Google Gemini' };
+  const nombreProveedor = CAPA_GRATUITA[agente.provider] || null;
+
   res.json({
     disponible: agente.disponible,
     provider: agente.provider || null,
     requierePro: false,
+    /* null cuando el proveedor no tiene límite de capa gratuita. */
+    aviso_uso: nombreProveedor
+      ? `El asistente funciona sobre la capa gratuita de ${nombreProveedor}, así que tiene un número limitado de usos por minuto y por día. Si te dice que espere un momento, es eso: no se rompió.`
+      : null,
+    capa_gratuita: Boolean(nombreProveedor),
   });
 });
 

@@ -49,10 +49,6 @@ module.exports = {
   /* Mercado Pago — plataforma (cuenta GESTEK) para el plan Pro */
   MP_PLATFORM_ACCESS_TOKEN: process.env.MP_PLATFORM_ACCESS_TOKEN || null,
   MP_PLATFORM_PUBLIC_KEY  : process.env.MP_PLATFORM_PUBLIC_KEY   || null,
-  PLAN_PRO_PRICE          : Number(process.env.PLAN_PRO_PRICE)         || 79900,
-  PLAN_PRO_CURRENCY       :        process.env.PLAN_PRO_CURRENCY       || 'COP',
-  PLAN_PRO_PRICE_USD      : Number(process.env.PLAN_PRO_PRICE_USD)     || 19.99,
-  PLAN_PRO_DURATION_DAYS  : Number(process.env.PLAN_PRO_DURATION_DAYS) || 30,
   ALLOW_DEV_PRO_ACTIVATION: process.env.ALLOW_DEV_PRO_ACTIVATION === 'true',
 
   /* Web Push VAPID */

@@ -42,11 +42,6 @@ function generarCodigo() {
   for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
-const PLAN_PRO_PRICE = Number(process.env.PLAN_PRO_PRICE || 79900);
-const PLAN_PRO_CURRENCY = process.env.PLAN_PRO_CURRENCY || 'COP';
-const PLAN_PRO_PRICE_USD = Number(process.env.PLAN_PRO_PRICE_USD || 19.99);
-const PLAN_PRO_DURATION_DAYS = Number(process.env.PLAN_PRO_DURATION_DAYS || 30);
-const PLAN_PRO_TRIAL_DAYS = Number(process.env.PLAN_PRO_TRIAL_DAYS || 14);
 function publicBaseUrl() {
   return process.env.FRONTEND_URL || 'http://localhost:5173';
 }
@@ -105,141 +100,19 @@ router.delete('/me/mercadopago', verifySupabaseJWT, async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
-/* ────────────── Plan Pro (cuenta receptora = GESTEK) ────────────── */
-router.get('/me/plan', verifySupabaseJWT, async (req, res) => {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('plan, plan_expires_at, plan_updated_at, plan_payment_id')
-    .eq('id', req.user.id).single();
-  if (error) return res.status(500).json({ error: error.message });
-  const activo = data?.plan === 'pro' && (!data.plan_expires_at || new Date(data.plan_expires_at) > new Date());
-  const enTrial = activo && String(data?.plan_payment_id || '').startsWith('trial_');
-  const trialUsado = String(data?.plan_payment_id || '').startsWith('trial_');
-  res.json({
-    plan: activo ? 'pro' : 'free',
-    expires_at: data?.plan_expires_at,
-    updated_at: data?.plan_updated_at,
-    precio: PLAN_PRO_PRICE,
-    currency: PLAN_PRO_CURRENCY,
-    precio_usd: PLAN_PRO_PRICE_USD,
-    duracion_dias: PLAN_PRO_DURATION_DAYS,
-    trial_dias: PLAN_PRO_TRIAL_DAYS,
-    en_trial: enTrial,
-    trial_disponible: !activo && !trialUsado,
-    dev_activation: process.env.ALLOW_DEV_PRO_ACTIVATION === 'true',
-  });
-});
-router.post('/me/plan/pro/trial', verifySupabaseJWT, async (req, res) => {
-  const { data: prof, error: e1 } = await supabase
-    .from('profiles').select('plan, plan_expires_at, plan_payment_id').eq('id', req.user.id).single();
-  if (e1) return res.status(500).json({ error: e1.message });
-  const activo = prof?.plan === 'pro' && (!prof.plan_expires_at || new Date(prof.plan_expires_at) > new Date());
-  if (activo) return res.status(400).json({ error: 'Ya tienes Pro activo.' });
-  if (String(prof?.plan_payment_id || '').startsWith('trial_')) {
-    return res.status(400).json({ error: 'Ya usaste tu prueba gratuita.' });
-  }
-  const venc = new Date(Date.now() + PLAN_PRO_TRIAL_DAYS * 24 * 3600 * 1000);
-  const { data, error } = await supabase
-    .from('profiles')
-    .update({
-      plan: 'pro',
-      plan_expires_at: venc.toISOString(),
-      plan_payment_id: `trial_${Date.now()}`,
-      plan_updated_at: new Date().toISOString(),
-    })
-    .eq('id', req.user.id)
-    .select('plan, plan_expires_at').single();
-  if (error) return res.status(500).json({ error: error.message });
-  await supabase.from('payment_transactions').insert({
-    user_id: req.user.id, kind: 'plan', status: 'approved',
-    monto: 0, currency: 'TRIAL',
-    raw: { trial: true, dias: PLAN_PRO_TRIAL_DAYS, at: new Date().toISOString() },
-  });
-  res.json({ ok: true, profile: data, trial_dias: PLAN_PRO_TRIAL_DAYS });
-});
-router.post('/me/plan/pro/activar-dev', verifySupabaseJWT, async (req, res) => {
-  if (process.env.ALLOW_DEV_PRO_ACTIVATION !== 'true') {
-    return res.status(403).json({ error: 'Activación dev no habilitada en este entorno.' });
-  }
-  const { data: prof } = await supabase
-    .from('profiles').select('plan, plan_expires_at').eq('id', req.user.id).single();
-  const base = prof?.plan === 'pro' && prof?.plan_expires_at && new Date(prof.plan_expires_at) > new Date()
-    ? new Date(prof.plan_expires_at)
-    : new Date();
-  const nuevoVenc = new Date(base.getTime() + PLAN_PRO_DURATION_DAYS * 24 * 3600 * 1000);
-  const { data, error } = await supabase
-    .from('profiles')
-    .update({
-      plan            : 'pro',
-      plan_expires_at : nuevoVenc.toISOString(),
-      plan_payment_id : `dev_${Date.now()}`,
-      plan_updated_at : new Date().toISOString(),
-    })
-    .eq('id', req.user.id)
-    .select('plan, plan_expires_at').single();
-  if (error) return res.status(500).json({ error: error.message });
-  await supabase.from('payment_transactions').insert({
-    user_id : req.user.id,
-    kind    : 'plan',
-    status  : 'approved',
-    monto   : 0,
-    currency: 'DEV',
-    raw     : { dev_activation: true, at: new Date().toISOString() },
-  });
-  res.json({ ok: true, profile: data });
-});
-router.post('/me/plan/pro/comprar', verifySupabaseJWT, async (req, res) => {
-  const platformToken = process.env.MP_PLATFORM_ACCESS_TOKEN;
-  if (!platformToken) {
-    return res.status(503).json({ error: 'GESTEK aún no tiene configurada la pasarela de pagos del plan Pro. Contactá al admin.' });
-  }
-  const { data: profile, error: ep } = await supabase
-    .from('profiles').select('id, email, nombre').eq('id', req.user.id).single();
-  if (ep) return res.status(500).json({ error: ep.message });
-  const externalRef = `plan_${req.user.id}`;
-  let preference;
-  try {
-    preference = await mp.createPreference(platformToken, {
-      items: [{
-        id          : 'gestek_plan_pro',
-        title       : 'GESTEK — Plan Pro',
-        description : `Suscripción de ${PLAN_PRO_DURATION_DAYS} días al plan Pro`,
-        quantity    : 1,
-        currency_id : PLAN_PRO_CURRENCY,
-        unit_price  : PLAN_PRO_PRICE,
-      }],
-      payer: {
-        name : profile.nombre || undefined,
-        email: profile.email  || req.user.email,
-      },
-      externalReference: externalRef,
-      notificationUrl  : `${apiBaseUrl()}/webhooks/mercadopago`,
-      successUrl       : `${publicBaseUrl()}/configuracion?plan=ok`,
-      failureUrl       : `${publicBaseUrl()}/planes?pago=fallo`,
-      pendingUrl       : `${publicBaseUrl()}/configuracion?plan=pendiente`,
-    });
-  } catch (e) {
-    return res.status(502).json({ error: `Mercado Pago rechazó la preferencia: ${e.message}` });
-  }
-  await supabase.from('payment_transactions').insert({
-    user_id      : req.user.id,
-    kind         : 'plan',
-    preference_id: preference.id,
-    status       : 'pending',
-    monto        : PLAN_PRO_PRICE,
-    currency     : PLAN_PRO_CURRENCY,
-    guest_email  : profile.email,
-    guest_nombre : profile.nombre,
-    raw          : { preference_id: preference.id, plan: 'pro' },
-  });
-  res.status(201).json({
-    checkout: {
-      preference_id: preference.id,
-      init_point: preference.init_point,
-      sandbox_init_point: preference.sandbox_init_point,
-    },
-  });
-});
+/* ────────────── Plan Pro: retirado ──────────────
+   GESTEK es de uso gratuito. Aquí vivían /me/plan, el trial, la
+   activación de desarrollo y la compra del plan: ciento treinta y cinco
+   líneas que ningún cliente llamaba —el frontend no tenía pantalla de
+   plan— y que solo servían para mantener viva la idea de que había algo
+   detrás de un muro.
+
+   Lo único con límite es el asistente de IA, y ese límite no es del
+   usuario: es la capa gratuita del proveedor. Se avisa en su pantalla.
+
+   Las columnas plan y plan_expires_at siguen en profiles: quitarlas es
+   una migración destructiva y no hace falta para esto. Nadie las lee. */
+
 /* ────────────── Compra pública ────────────── */
 router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, async (req, res) => {
   const { slug } = req.params;
@@ -616,23 +489,12 @@ async function procesarPagoPlan(pago, userId) {
       });
     }
   }
-  if (status === 'approved') {
-    const { data: prof } = await supabase
-      .from('profiles').select('plan, plan_expires_at').eq('id', userId).single();
-    const base = prof?.plan === 'pro' && prof?.plan_expires_at && new Date(prof.plan_expires_at) > new Date()
-      ? new Date(prof.plan_expires_at)
-      : new Date();
-    const nuevoVencimiento = new Date(base.getTime() + PLAN_PRO_DURATION_DAYS * 24 * 3600 * 1000);
-    await supabase.from('profiles').update({
-      plan            : 'pro',
-      plan_expires_at : nuevoVencimiento.toISOString(),
-      plan_payment_id : String(pago.id),
-      plan_updated_at : new Date().toISOString(),
-    }).eq('id', userId);
-  } else if (status === 'refunded' || status === 'cancelled') {
-    await supabase.from('profiles').update({
-      plan: 'free', plan_expires_at: null, plan_updated_at: new Date().toISOString(),
-    }).eq('id', userId);
-  }
+  /* Antes esto activaba el plan Pro al aprobarse el pago y lo quitaba al
+     reembolsarse. Ya no hay plan: GESTEK es de uso gratuito. La transacción se
+     sigue registrando arriba —es dinero que se movió y tiene que quedar
+     anotado—, pero no concede nada.
+
+     Si algún día vuelve un cobro de plataforma, aquí es donde va. */
 }
+
 module.exports = router;

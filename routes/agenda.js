@@ -126,7 +126,8 @@ router.get('/:eventoId/sessions', async (req, res) => {
 
 router.post('/:eventoId/sessions', async (req, res) => {
   const { eventoId } = req.params;
-  const { titulo, descripcion, inicio, fin, track, ubicacion, speaker_id, tipo, torneo_id } = req.body;
+  const { titulo, descripcion, inicio, fin, track, ubicacion, speaker_id, tipo, torneo_id,
+          requiere_inscripcion, cupo } = req.body;
   if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido.' });
   if (!inicio) return res.status(400).json({ error: 'Hora de inicio requerida.' });
   try {
@@ -143,6 +144,13 @@ router.post('/:eventoId/sessions', async (req, res) => {
         speaker_id : speaker_id || null,
         tipo       : tipo || 'charla',
         torneo_id  : torneo_id || null,
+        /* Inscripción por sub-evento (migración 0055). La boleta del evento
+           sigue siendo la llave; esto es apuntarse a esta actividad. */
+        requiere_inscripcion: requiere_inscripcion === true,
+        /* Cupo vacío o nulo = sin límite. No se convierte a 0, que significaría
+           "lleno desde el principio". */
+        cupo       : (cupo === null || cupo === undefined || cupo === '')
+          ? null : Math.max(0, Math.trunc(Number(cupo))),
       }).select(`*, speaker:speakers!speaker_id(id, nombre, foto_url, empresa)`).single();
     if (error) return res.status(500).json({ error: error.message });
     res.status(201).json({ session: data });
@@ -155,7 +163,8 @@ router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
   const { eventoId, sessionId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
-    const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id', 'orden', 'tipo', 'torneo_id', 'moderacion'];
+    const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id',
+      'orden', 'tipo', 'torneo_id', 'moderacion', 'requiere_inscripcion', 'cupo'];
     const updates = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });

@@ -178,6 +178,100 @@ El backend, las rutas y la migración 0055 están. Falta la pantalla.
 
 ---
 
+## 3.6 · Editor de preguntas por sub-evento
+
+El único trozo de lo pedido que quedó a medias, y se dice en pantalla en vez de
+prometerlo.
+
+Un sub-evento puede pedir inscripción con tres modos: `ninguno` (el normal, un
+botón y listo), `propio` (preguntas cortas de esa actividad) y `evento` (el
+formulario completo). El backend soporta los tres: `event_form_fields.session_id`
+existe, la validación funciona y el render público también.
+
+- [ ] Falta la pantalla para ESCRIBIR esas preguntas propias. Hoy el modo
+      `propio` se puede elegir y queda sin ninguna pregunta, así que se comporta
+      como `ninguno`. El texto del selector lo advierte.
+- [ ] Ojo al implementarlo: el `PUT /eventos/:id/formulario` hace un diff que
+      BORRA lo que no venga en el payload. Ya está filtrado por
+      `session_id is null` para que no se lleve las de sub-evento, pero el editor
+      nuevo necesita su propio endpoint con el mismo cuidado en sentido inverso.
+
+---
+
+## 3.7 · Mi Espacio y Vacantes: el análisis que pediste
+
+**La unificación de pantallas ya ocurrió, y no es ahí donde está la
+duplicación.** Comprobado en las rutas:
+
+- `/vacantes` → redirige a `/app/explorar?ver=vacantes`
+- `/mis-postulaciones` → redirige a `/mi-espacio?tab=postulaciones`
+- `/mi-trabajo` → redirige a `/mi-espacio`
+
+Y `MiEspacioPage` ya absorbe las pantallas de vacantes como pestañas: Mi panel,
+Colaborador, Perfil de talento, Mis postulaciones, Perfil de organizador y Mis
+stands (esta última solo si tienes alguno). Los archivos siguen viviendo en
+`pages/vacantes/` pero se renderizan desde Mi Espacio. Eso está bien resuelto.
+
+### Dónde está la duplicación de verdad
+
+**En los datos de la persona, no en las pantallas.** Los mismos campos se editan
+en dos sitios que no se hablan:
+
+| Dato | Se edita en | Y también en |
+|---|---|---|
+| Foto | Ajustes → Mi Perfil (`AvatarUploader`) | Mi Espacio → Perfil de talento (`Foto`) |
+| Teléfono | Registro / Completar perfil (metadata) | Mi Espacio → Perfil de talento |
+| Ciudad | Registro / Completar perfil (metadata) | Mi Espacio → Perfil de talento |
+
+Son dos almacenes distintos: los metadatos del usuario en Supabase Auth por un
+lado, y la tabla `perfil_talento` por otro. Cambiar la foto en Ajustes no cambia
+la del perfil de talento, y al contrario. El resultado es que la misma persona
+puede aparecer con dos fotos y dos teléfonos según por dónde se la mire, y nadie
+sabe cuál es el bueno.
+
+### El flujo que propongo
+
+La idea es **una identidad, varias facetas**. Hoy se comporta como tres
+identidades sueltas.
+
+1. **Un solo dato base, editable en un solo sitio.** Nombre, foto, teléfono,
+   ciudad y correo son de la PERSONA, no de una faceta. Deben vivir en un solo
+   lugar —los metadatos del perfil— y editarse solo en Ajustes → Mi Perfil.
+
+2. **Las facetas dejan de repetirlos y los muestran heredados**, con un enlace
+   del tipo «esto viene de tu perfil · cambiar». Así se ve el dato donde hace
+   falta sin abrir un segundo sitio donde escribirlo.
+
+3. **Cada faceta se queda solo con lo que es suyo:**
+   - *Talento:* titular, sobre ti, habilidades, hoja de vida, portafolio.
+   - *Organizador:* empresa, logo, marca, tagline, redes.
+   - *Expositor:* stand, categoría, galería (esto ya está aparte y bien).
+
+4. **La faceta aparece cuando se usa, no antes.** «Mis stands» ya lo hace: solo
+   sale si tienes alguno. Lo mismo debería valer para «Perfil de talento»
+   —mostrarlo cuando te postulas por primera vez o desde la vacante— y para
+   «Colaborador» —cuando te invitan a un equipo. Seis pestañas de entrada, la
+   mayoría vacías, es lo que hace sentir que la aplicación está duplicada aunque
+   no lo esté.
+
+5. **Explorar se queda como está.** Eventos y vacantes en la misma pantalla con
+   un conmutador es correcto: son las dos cosas que se buscan desde fuera, y
+   separarlas obligaría a adivinar en qué sección buscar.
+
+### Por dónde empezar
+
+- [ ] Migración: decidir si `perfil_talento` deja de tener `foto`, `telefono` y
+      `ciudad`, o si se sincronizan. Yo quitaría las columnas y leería del
+      perfil: dos fuentes para el mismo dato siempre acaban discrepando.
+- [ ] `PerfilTalentoEditor`: quitar esos tres campos y mostrarlos heredados.
+- [ ] `MiEspacioPage`: que las pestañas aparezcan por uso, como ya hace «Mis
+      stands».
+- [ ] Revisar que nada dependa de `perfil_talento.foto` antes de tocarla —el
+      snapshot que se congela al postularse la copia, y ahí sí tiene que
+      quedarse como estaba.
+
+---
+
 ## 4 · Deuda técnica anotada
 
 Nada de esto está roto ahora mismo, pero cada uno es una trampa esperando.

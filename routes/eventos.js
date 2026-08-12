@@ -329,10 +329,14 @@ router.get('/:id/formulario', async (req, res) => {
   const permiso = await puedeEditarEvento(req, req.params.id);
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
 
+  /* `session_id is null` es lo que separa el formulario del evento de las
+     preguntas propias de un sub-evento (migración 0059). Sin este filtro se
+     mezclarían las dos cosas en el mismo editor. */
   const { data, error } = await supabase
     .from('event_form_fields')
     .select(COLUMNAS_CAMPO)
     .eq('evento_id', req.params.id)
+    .is('session_id', null)
     .order('orden', { ascending: true });
   if (error) {
     /* Sin la 0055 no existen `grupo` ni `ayuda`: se reintenta sin ellas para
@@ -384,10 +388,15 @@ router.put('/:id/formulario', async (req, res) => {
     }
   }
 
+  /* OJO: este diff BORRA lo que no venga en el payload. Las preguntas de un
+     sub-evento comparten evento_id, así que sin `session_id is null` guardar el
+     formulario del evento se las llevaría por delante — el editor del evento no
+     las manda porque no las conoce. */
   const { data: existentes, error: eGet } = await supabase
     .from('event_form_fields')
     .select('id')
-    .eq('evento_id', req.params.id);
+    .eq('evento_id', req.params.id)
+    .is('session_id', null);
   if (eGet) return res.status(500).json({ error: eGet.message });
 
   const idsExistentes = new Set((existentes || []).map(c => c.id));
@@ -426,6 +435,7 @@ router.put('/:id/formulario', async (req, res) => {
     .from('event_form_fields')
     .select(COLUMNAS_CAMPO)
     .eq('evento_id', req.params.id)
+    .is('session_id', null)
     .order('orden', { ascending: true });
   if (eFinal) return res.status(500).json({ error: eFinal.message });
 

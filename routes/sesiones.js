@@ -42,7 +42,7 @@ const ESTADOS = ['inscrito', 'asistio', 'cancelada'];
 
 /* Campos del sub-evento que se exponen. */
 const COLS_SESION = `id, titulo, descripcion, inicio, fin, ubicacion, track, tipo,
-  requiere_inscripcion, cupo, inscritos, ticket_type_id`;
+  requiere_inscripcion, cupo, inscritos, ticket_type_id, formulario_modo`;
 
 function fallo(res, e) {
   const msg = e?.message || 'Error';
@@ -58,6 +58,34 @@ function faltaMigracion(error) {
   return /requiere_inscripcion|sesion_inscripciones|column .* does not exist/i.test(m);
 }
 const AVISO_MIGRACION = 'Falta aplicar la migración 0055 para usar la inscripción por sub-evento.';
+
+/* Las preguntas que aplican a un sub-evento, según su modo.
+
+   'ninguno' devuelve lista vacía: nada que preguntar, nada que validar.
+   'propio'  devuelve solo las preguntas colgadas de ESE sub-evento (session_id).
+   'evento'  devuelve el formulario general, que es como se comportaba antes. */
+async function camposDeSesion(eventoId, sesion) {
+  const modo = sesion?.formulario_modo || 'ninguno';
+  if (modo === 'ninguno') return [];
+
+  const cols = 'id, etiqueta, requerido, tipo, opciones, ticket_type_id, grupo, ayuda, orden';
+
+  if (modo === 'propio') {
+    const { data } = await supabase
+      .from('event_form_fields').select(cols)
+      .eq('session_id', sesion.id)
+      .order('orden', { ascending: true });
+    return data || [];
+  }
+
+  /* 'evento': las del evento, sin las que pertenezcan a otro sub-evento. */
+  const { data } = await supabase
+    .from('event_form_fields').select(cols)
+    .eq('evento_id', eventoId)
+    .is('session_id', null)
+    .order('orden', { ascending: true });
+  return data || [];
+}
 
 /* ─────────────── PÚBLICO ─────────────── */
 
@@ -83,8 +111,26 @@ publico.get('/slug/:slug/sesiones', async (req, res) => {
     ...s,
     libres: s.cupo == null ? null : Math.max(0, s.cupo - (s.inscritos || 0)),
     lleno: s.cupo != null && (s.inscritos || 0) >= s.cupo,
+    /* Para que la página sepa si tiene que mostrar preguntas o basta un botón. */
+    pide_datos: (s.formulario_modo || 'ninguno') !== 'ninguno',
   }));
-  res.json({ sesiones, almacenamiento_listo: true });
+
+  /* Las preguntas de los que tienen formulario propio, para poder pintarlas sin
+     una petición por sub-evento. */
+  const conPropio = (data || []).filter(s => s.formulario_modo === 'propio').map(s => s.id);
+  const preguntas = {};
+  if (conPropio.length) {
+    const { data: campos } = await supabase
+      .from('event_form_fields')
+      .select('id, session_id, etiqueta, requerido, tipo, opciones, grupo, ayuda, orden')
+      .in('session_id', conPropio)
+      .order('orden', { ascending: true });
+    for (const c of (campos || [])) {
+      (preguntas[c.session_id] = preguntas[c.session_id] || []).push(c);
+    }
+  }
+
+  res.json({ sesiones, preguntas, almacenamiento_listo: true });
 });
 
 /* Apuntarse a un sub-evento.
@@ -142,13 +188,18 @@ publico.post('/slug/:slug/sesiones/:sesionId/inscribir', async (req, res) => {
     return res.status(409).json({ error: 'Este sub-evento ya está lleno.' });
   }
 
-  /* El formulario que aplica: el del tipo de boleta que fije el sub-evento, o el
-     de la boleta con la que viene, o el general del evento. */
-  const tipoParaForm = sesion.ticket_type_id || ticket?.ticket_type_id || null;
-  const { data: campos } = await supabase
-    .from('event_form_fields')
-    .select('id, etiqueta, requerido, tipo, opciones, ticket_type_id')
-    .eq('evento_id', evento.id);
+  /* Qué se le pregunta al inscribirse. El caso NORMAL es nada: la boleta ya
+     identificó a la persona, y volver a pedirle sus datos para apuntarse a un
+     taller del mismo evento es hacerle escribir dos veces lo mismo.
+
+     Solo si el organizador lo pide se piden preguntas, y entonces son las suyas
+     de ese sub-evento — cortas y sobre la actividad— y no el formulario general
+     del evento. El modo 'evento' se mantiene para los sub-eventos que ya venían
+     comportándose así. */
+  const campos = await camposDeSesion(evento.id, sesion);
+  const tipoParaForm = sesion.formulario_modo === 'evento'
+    ? (sesion.ticket_type_id || ticket?.ticket_type_id || null)
+    : null;
 
   const falloForm = validarFormulario(campos, respuestas, tipoParaForm);
   if (falloForm) return res.status(400).json({ error: falloForm });

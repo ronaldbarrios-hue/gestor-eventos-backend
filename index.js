@@ -64,6 +64,7 @@ app.use('/eventos/publicos/expositor', require('./routes/expositor.js'));
 /* Inscripción a sub-eventos: va ANTES del router general de publicos para que
    /slug/:slug/sesiones no lo capture la ruta de /slug/:slug. */
 app.use('/eventos/publicos', require('./routes/sesiones.js').publico);
+app.use('/eventos/publicos', require('./routes/legal.js').publico);
 app.use('/eventos/publicos', require('./routes/eventos.publicos.js'));
 app.use('/me',               require('./routes/me.js'));
 app.use('/me',               require('./routes/integraciones.js'));
@@ -99,6 +100,7 @@ app.use('/eventos',          require('./routes/clientes.js'));
 app.use('/eventos',          require('./routes/chat.js'));
 app.use('/eventos',          require('./routes/agenda.js'));
 app.use('/eventos',          require('./routes/sesiones.js').panel);
+app.use('/eventos',          require('./routes/legal.js').panel);
 app.use('/eventos',          require('./routes/tareas.js'));
 app.use('/eventos',          require('./routes/waitlist.js'));
 app.use('/eventos',          require('./routes/auditoria.js'));

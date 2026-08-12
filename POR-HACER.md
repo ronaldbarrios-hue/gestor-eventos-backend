@@ -9,7 +9,7 @@ Todo lo que queda, en un solo sitio. Dos mitades muy distintas:
 - **Lo de desarrollo** (secciones 3 y siguientes): se puede hacer sin depender de
   nadie.
 
-Última revisión: 12 de agosto de 2026.
+Última revisión: 12 de agosto de 2026. Migraciones 0052 a 0059 aplicadas.
 
 > Para el estado de las migraciones y cómo comprobar cada cosa, ver
 > `DESPLIEGUE.md`. Para el detalle de lo pedido por el equipo, `PENDIENTE.md` en
@@ -105,10 +105,13 @@ Cada una queda inerte sin su llave: no falla, simplemente no aparece.
 - [ ] **Probar el correo en Gmail y en Outlook.** El HTML sale con la marca del
       evento y se ha comprobado renderizando, pero nunca se ha visto en un cliente
       de correo real. Outlook rompe cosas que ningún navegador rompe.
-- [ ] **Decidir si el plan Pro sigue existiendo.** Se quitaron las cuatro puertas
-      y la pasarela del plan sigue construida pero sin conectar. Si la respuesta
-      es que no existe, hay código de plan que sobra; si es que sí, hay que
-      decidir qué queda detrás.
+- [x] ~~Decidir si el plan Pro sigue existiendo.~~ **Decidido: no existe.** Todo
+      GESTEK es de uso gratuito. Se quitaron las cuatro puertas, las rutas de
+      compra y trial, la rama del webhook que activaba Pro, y todo lo que lo
+      anunciaba en la landing, la FAQ y Ajustes. Lo único con tope es el asistente
+      de IA, por correr sobre capa gratuita, y lleva su aviso.
+      Las columnas `plan` y `plan_expires_at` siguen en `profiles` sin que nadie
+      las lea: quitarlas es una migración destructiva y no hacía falta.
 - [ ] **Comprobar `QR_JWT_SECRET` antes de cualquier despliegue nuevo.** Si cambia,
       **todos los QR ya emitidos dejan de validar.** Tiene que ser el mismo
       secreto en todos los entornos que compartan base de datos.
@@ -117,30 +120,30 @@ Cada una queda inerte sin su llave: no falla, simplemente no aparece.
 
 ## 3 · Desarrollo · lo que ya está decidido y falta hacer
 
-### 3.1 · Sub-eventos, la parte visible
+### 3.1 · Sub-eventos — HECHO, salvo un trozo
 
-El backend, las rutas y la migración 0055 están. Falta la pantalla.
+Ya está: el interruptor de «pide inscripción» con su cupo en `AgendaTab`, la
+pestaña **Participación** junto al control de ingreso, marcar asistencia con el
+código de la boleta, y exportar los inscritos a CSV con las respuestas de la
+ficha (las columnas se descubren de lo guardado).
 
-- [ ] Interruptor de **«este sub-evento pide inscripción»** con su cupo, en
-      `AgendaTab`. Hoy solo se puede activar escribiendo en la base.
-- [ ] **Pantalla de participación**: cuánta gente fue al evento y cuánta a cada
-      actividad. Los datos salen de `v_participacion_sesiones`; el endpoint es
-      `GET /eventos/:id/sesiones/participacion`.
-- [ ] **Marcar asistencia escaneando el QR** que la persona ya tiene, reusando el
-      escáner de Check-in. El endpoint acepta el código de la boleta.
-- [ ] Formulario de inscripción en la **agenda pública**, para que alguien se
-      apunte desde fuera del panel.
-- [ ] Exportar los inscritos a CSV con sus respuestas de la ficha. Es lo que se
-      va a pedir para reportar, y ahora mismo hay que sacarlo de la base a mano.
+- [ ] Falta el **formulario de inscripción en la agenda pública**, para que alguien
+      se apunte desde fuera del panel. El endpoint público existe
+      (`POST /eventos/publicos/slug/:slug/sesiones/:id/inscribir`) y el listado ya
+      dice por cada sub-evento si `pide_datos` y qué preguntas tiene; falta la
+      pantalla que lo use.
+- [ ] Ver 3.6 para el editor de las preguntas propias de un sub-evento.
 
-### 3.2 · `AuthPage` en dos caminos
+### 3.2 · `AuthPage` — HECHO
 
-- [ ] Partir el registro en **«solo quiero asistir»** y **«voy a organizar
-      eventos»**, con formularios distintos y no el mismo con campos ocultos.
-- [ ] **Ascenso de cuenta**: quien entró como invitado puede pasar a organizador
-      sin volver a registrarse. `modoActivo` ya existe en el perfil
-      (`organizador` / `asistente`), así que la mitad del camino está.
-- [ ] Roza el **#36** del documento de equipo: "cambiar propósito" se pierde en el
+El registro ya estaba partido en dos caminos desde antes: el paso 0 pregunta entre
+«solo quiero asistir» y «voy a organizar», y `esFlujoLigero` adapta el resto.
+
+El ascenso de cuenta ya está: tarjeta en Ajustes → Espacio de Trabajo, visible
+solo a quien está en modo asistente, con la vuelta atrás aparte. `cambiarModo`
+llevaba en el contexto de auth desde el principio sin que nadie la llamara.
+
+- [ ] Queda el **#36** del documento de equipo: «cambiar propósito» se pierde en el
       registro y la casilla del teléfono va apretada.
 
 ### 3.3 · Lista de espera de verdad

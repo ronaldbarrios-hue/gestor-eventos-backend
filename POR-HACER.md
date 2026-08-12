@@ -11,10 +11,10 @@ Todo lo que queda, en un solo sitio. Dos mitades muy distintas:
 
 Última revisión: 12 de agosto de 2026. Migraciones 0052 a 0059 aplicadas.
 
-> **Migraciones 0060 a 0065 aplicadas.** Falta desplegar el código: hoy corren
-> el backend y el frontend viejos y la base va por delante. La **0065 es un
-> puente temporal** que hay que retirar después del despliegue — ver la tabla
-> al principio de `PENDIENTE.md`.
+> **Migraciones 0060 a 0067 aplicadas y el backend desplegado.** Falta el
+> frontend: Vercel no auto-despliega y hay que lanzarlo a mano. Las **0065–0067
+> son un puente temporal** que hay que retirar después — ver la tabla al
+> principio de `PENDIENTE.md`.
 
 > Para el estado de las migraciones y cómo comprobar cada cosa, ver
 > `DESPLIEGUE.md`. Para el detalle de lo pedido por el equipo, `PENDIENTE.md` en

@@ -26,6 +26,7 @@ const {
   TIPOS, IDS_TIPOS, VARIABLES,
   renderEmail, ctxDeEvento, plantillaDe, enviarEmailEvento, diagnosticoProveedor,
 } = require('../lib/emailPlantillas.js');
+const { verificarConexion } = require('../lib/email.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -261,7 +262,27 @@ router.post('/eventos/:id/emails/previsualizar', async (req, res) => {
 router.get('/eventos/:id/emails/diagnostico', async (req, res) => {
   try {
     await cargarEvento(req.params.id, req.user.id);
-    res.json(diagnosticoProveedor());
+    const base = diagnosticoProveedor();
+
+    /* `?verificar=1` abre la conexión de verdad y hace login. Es lo que
+       distingue «las variables están puestas» de «el correo funciona»: hasta
+       ahora una contraseña equivocada daba `configurado: true` y los envíos se
+       descartaban en silencio. Va bajo bandera porque tarda un segundo y el
+       panel pinta el diagnóstico al entrar; el botón «Probar conexión» sí la pide. */
+    if (req.query.verificar === '1') {
+      const conexion = await Promise.race([
+        verificarConexion(),
+        new Promise(r => setTimeout(() => r({
+          ok: false,
+          causa: 'conexion',
+          mensaje: 'El servidor de correo no respondió en 12 segundos.',
+          sugerencia: 'Suele ser el puerto bloqueado desde donde corre el backend, o un host mal escrito.',
+        }), 12_000)),
+      ]);
+      return res.json({ ...base, conexion });
+    }
+
+    res.json(base);
   } catch (e) { fallo(res, e); }
 });
 

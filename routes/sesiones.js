@@ -27,6 +27,7 @@
 
 const express = require('express');
 const supabase = require('../lib/supabase.js');
+const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const {
@@ -231,6 +232,9 @@ publico.post('/slug/:slug/sesiones/:sesionId/inscribir', async (req, res) => {
     }
     return res.status(500).json({ error: error.message });
   }
+
+  /* Constancia de aceptación (0069). Mejor esfuerzo, después de inscribir. */
+  anotarConstancia('sesion_inscripciones', inscripcion.id, evento.id, req.body?.legal_aceptado);
 
   /* Aviso por correo, best-effort: la inscripción ya quedó. */
   if (email) {

@@ -4,6 +4,7 @@ const supabase = require('../lib/supabase.js');
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
+const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
@@ -821,6 +822,10 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
   ticket.qr_token = qr_token;
+
+  /* Constancia de que aceptó los términos del evento (0069). Va después de
+     emitir y sin bloquear: perder la anotación se rehace, perder la venta no. */
+  anotarConstancia('tickets', ticket.id, evento.id, req.body.legal_aceptado);
 
   await supabase.from('ticket_types').update({ vendidos: (tipo.vendidos || 0) + 1 }).eq('id', tipo.id);
 

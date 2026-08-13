@@ -9,6 +9,7 @@ const { resolverTicket } = require('../lib/ticketLookup.js');
 const { notificar } = require('../lib/notificar.js');
 const { correrAutomatizaciones } = require('../lib/automatizaciones.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
+const { COLUMNAS_CAMPO, validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -198,7 +199,10 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
 
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona el tipo de boleta para los importados.' });
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No hay filas para importar.' });
-  if (rows.length > 1000) return res.status(400).json({ error: 'Máximo 1000 filas por import. Divide el archivo.' });
+  /* El tope sube de 1.000 a 5.000: con 7.000 asistentes, partir el archivo en
+     siete trozos a mano es una invitacion a importar dos veces el mismo. El
+     panel manda por lotes de todas formas. */
+  if (rows.length > 5000) return res.status(400).json({ error: 'Maximo 5000 filas por envio. El panel las manda por lotes.' });
 
   try {
     const evImp = await assertOwner(eventoId, req.user.id);
@@ -208,48 +212,105 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
     if (et) return res.status(500).json({ error: et.message });
     if (!tipo) return res.status(404).json({ error: 'Tipo de boleta no encontrado.' });
 
-    /* Emails ya existentes para no duplicar */
-    const emails = rows.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean);
-    const { data: existentes } = await supabase
-      .from('tickets').select('guest_email')
-      .eq('evento_id', eventoId)
-      .in('guest_email', emails);
-    const dup = new Set((existentes || []).map(r => r.guest_email));
+    /* Campos del formulario del evento: lo importado se valida con el MISMO
+       motor que una compra publica, para que un Excel no meta por la puerta de
+       atras datos que el formulario habria rechazado. */
+    const { data: campos } = await supabase
+      .from('event_form_fields').select(COLUMNAS_CAMPO)
+      .eq('evento_id', eventoId).is('session_id', null)
+      .order('orden', { ascending: true });
+    const camposForm = campos || [];
 
-    const ok = [];
-    const errores = [];
+    /* Correos ya emitidos, para no duplicar. Se consulta por trozos porque un
+       `in` con 5.000 valores no pasa. */
+    const emails = rows.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean);
+    const dup = new Set();
+    for (let i = 0; i < emails.length; i += 300) {
+      const { data: ex } = await supabase
+        .from('tickets').select('guest_email')
+        .eq('evento_id', eventoId).in('guest_email', emails.slice(i, i + 300));
+      (ex || []).forEach(x => x.guest_email && dup.add(x.guest_email));
+    }
+
     const estado = marcar_pagado ? 'pagado' : 'emitido';
     const precio_efectivo = marcar_pagado ? Number(tipo.precio) : null;
+    const ahora = marcar_pagado ? new Date().toISOString() : null;
+
+    const errores = [];
+    const aInsertar = [];
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      const fila = r.__fila || i + 1;
       const email = (r.email || '').toLowerCase().trim();
       const nombre = (r.nombre || '').trim();
-      if (!email || !email.includes('@')) { errores.push({ fila: i + 1, motivo: 'Email inválido.', row: r }); continue; }
-      if (!nombre)                         { errores.push({ fila: i + 1, motivo: 'Nombre vacío.',    row: r }); continue; }
-      if (dup.has(email))                  { errores.push({ fila: i + 1, motivo: 'Ya existe ticket con ese email.', row: r }); continue; }
 
-      const codigo = generarCodigo();
-      const { data: ticket, error: ei } = await supabase
-        .from('tickets').insert({
+      if (!nombre) { errores.push({ fila, motivo: 'Sin nombre.', row: r }); continue; }
+
+      /* El correo pasa a ser OPCIONAL, y es el cambio que importa: cuando el
+         correo del evento no funciona, la lista que hay que cargar es justo la
+         de la gente a la que se le va a entregar la boleta impresa o por
+         WhatsApp. Exigirlo dejaba fuera exactamente ese caso. */
+      if (email && !email.includes('@')) { errores.push({ fila, motivo: 'Correo invalido.', row: r }); continue; }
+      if (email && dup.has(email))       { errores.push({ fila, motivo: 'Ya existe una boleta con ese correo.', row: r }); continue; }
+
+      let respuestas = null;
+      if (r.respuestas && typeof r.respuestas === 'object') {
+        const fallo = validarFormulario(camposForm, r.respuestas, tipo.id);
+        if (fallo) { errores.push({ fila, motivo: fallo, row: r }); continue; }
+        const limpias = normalizarRespuestas(camposForm, r.respuestas);
+        respuestas = Object.keys(limpias).length ? limpias : null;
+      }
+
+      if (email) dup.add(email);
+      aInsertar.push({
+        fila,
+        row: {
           evento_id: eventoId,
           ticket_type_id: tipo.id,
-          guest_email: email,
+          guest_email: email || null,
           guest_nombre: nombre,
-          codigo,
+          codigo: generarCodigo(),
           estado,
           precio_pagado: precio_efectivo,
-          pagado_at: marcar_pagado ? new Date().toISOString() : null,
-        }).select('id, codigo').single();
-      if (ei) { errores.push({ fila: i + 1, motivo: ei.message, row: r }); continue; }
-
-      const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: eventoId, codigo: ticket.codigo });
-      await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
-      dup.add(email);
-      ok.push({ fila: i + 1, codigo, email });
+          pagado_at: ahora,
+          respuestas,
+        },
+      });
     }
 
-    /* Bumpear contadores best-effort */
+    /* Insercion por lotes. Antes era un INSERT por fila: 7.000 asistentes eran
+       7.000 viajes de ida y vuelta, varios minutos con el panel colgado. */
+    const ok = [];
+    const LOTE = 200;
+    for (let i = 0; i < aInsertar.length; i += LOTE) {
+      const trozo = aInsertar.slice(i, i + LOTE);
+      const { data: creados, error: ei } = await supabase
+        .from('tickets').insert(trozo.map(t => t.row)).select('id, codigo, guest_email');
+
+      if (ei) {
+        /* Si el lote entero falla, se reintenta fila a fila: asi no se pierden
+           200 por culpa de una, y se puede decir CUAL fallo. */
+        for (const t of trozo) {
+          const { data: uno, error: e1 } = await supabase
+            .from('tickets').insert(t.row).select('id, codigo, guest_email').single();
+          if (e1) errores.push({ fila: t.fila, motivo: e1.message, row: t.row });
+          else ok.push({ fila: t.fila, id: uno.id, codigo: uno.codigo, email: uno.guest_email });
+        }
+        continue;
+      }
+      (creados || []).forEach((c, j) => ok.push({
+        fila: trozo[j] ? trozo[j].fila : null, id: c.id, codigo: c.codigo, email: c.guest_email,
+      }));
+    }
+
+    /* El QR firmado de cada boleta. Es lo que hace que la impresa valga en la
+       puerta, asi que sin esto la importacion no sirve para repartir. */
+    for (const t of ok) {
+      const qr_token = signTicketQR({ ticket_id: t.id, evento_id: eventoId, codigo: t.codigo });
+      await supabase.from('tickets').update({ qr_token }).eq('id', t.id);
+    }
+
     if (ok.length > 0) {
       await supabase.from('ticket_types').update({ vendidos: (tipo.vendidos || 0) + ok.length }).eq('id', tipo.id);
       if (marcar_pagado) {
@@ -257,10 +318,7 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
         if (ev) await supabase.from('eventos').update({ aforo_vendido: (ev.aforo_vendido || 0) + ok.length }).eq('id', eventoId);
       }
 
-      /* Gamificación: el staff que inscribe suma puntos por asistente
-         registrado (no el owner consigo mismo). Un solo asiento en el balance
-         para todo el lote; el detalle por-lote se registra con `puntos`. */
-      const organizadorId = evImp?.owner_id;
+      const organizadorId = evImp && evImp.owner_id;
       if (organizadorId && req.user.id !== organizadorId) {
         const reglas = await reglasPuntosDeEvento(eventoId);
         if (reglas.activo && reglas.registro_operado > 0) {
@@ -273,7 +331,12 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
       }
     }
 
-    res.json({ creados: ok.length, errores, ok });
+    res.json({
+      creados: ok.length,
+      errores,
+      ok,
+      sin_correo: ok.filter(t => !t.email).length,
+    });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

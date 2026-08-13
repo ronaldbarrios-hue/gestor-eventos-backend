@@ -27,6 +27,7 @@ const {
   renderEmail, ctxDeEvento, plantillaDe, enviarEmailEvento, diagnosticoProveedor,
 } = require('../lib/emailPlantillas.js');
 const { verificarConexion } = require('../lib/email.js');
+const smtpEvento = require('../lib/smtpEvento.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -283,6 +284,59 @@ router.get('/eventos/:id/emails/diagnostico', async (req, res) => {
     }
 
     res.json(base);
+  } catch (e) { fallo(res, e); }
+});
+
+/* ─────────── Buzón propio del organizador ───────────
+   Cada evento puede salir con el correo de su propio organizador. Lo pidió el
+   equipo: «que cada uno pegue las credenciales de su correo y ya». No toca DNS
+   —el correo sale de su cuenta de verdad— pero hereda los topes de su
+   proveedor, así que el aviso de volumen viaja en la respuesta. */
+
+/* Enviar con el buzón de otro exige más que editar: quien lo configura puede
+   escribirle a toda la lista en nombre del organizador. */
+const PERMS_SMTP = ['editar_evento'];
+
+router.get('/eventos/:id/emails/smtp', async (req, res) => {
+  try {
+    await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
+    const estado = await smtpEvento.verConfig(req.params.id);
+    res.json(estado);
+  } catch (e) { fallo(res, e); }
+});
+
+router.put('/eventos/:id/emails/smtp', async (req, res) => {
+  try {
+    await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
+    const r = await smtpEvento.guardar(req.params.id, req.body || {}, req.user.id);
+    if (!r.ok) return res.status(400).json({ error: r.error });
+
+    /* Se comprueba en el mismo paso: guardar sin verificar deja a alguien
+       creyendo que su correo funciona hasta que un asistente no recibe nada. */
+    const prueba = await smtpEvento.verificar(req.params.id);
+    res.json({
+      ok: true,
+      conexion: prueba,
+      aviso: prueba.ok
+        ? 'Los correos de este evento saldrán desde tu buzón. Ojo con el tope diario de tu proveedor: Gmail gratis ~500/día, Workspace ~2.000, un buzón de cPanel 200/hora.'
+        : null,
+    });
+  } catch (e) { fallo(res, e); }
+});
+
+router.post('/eventos/:id/emails/smtp/probar', async (req, res) => {
+  try {
+    await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
+    res.json(await smtpEvento.verificar(req.params.id));
+  } catch (e) { fallo(res, e); }
+});
+
+router.delete('/eventos/:id/emails/smtp', async (req, res) => {
+  try {
+    await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
+    const r = await smtpEvento.borrar(req.params.id);
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    res.json({ ok: true, aviso: 'Los correos vuelven a salir con el remitente de la plataforma.' });
   } catch (e) { fallo(res, e); }
 });
 

@@ -60,8 +60,13 @@ router.get('/:eventoId/clientes', async (req, res) => {
 
     let query = supabase
       .from('tickets')
+      /* `qr_token` viaja porque la escarapela impresa tiene que llevar el
+         MISMO QR que la boleta digital. Antes no venía, así que el diseñador
+         de credenciales imprimía una URL a /mi-ticket — y el escáner de
+         control de ingreso manda lo que lee como token firmado, así que la
+         escarapela impresa NO pasaba el control. */
       .select(`
-        id, codigo, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, acceso, created_at,
+        id, codigo, qr_token, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, acceso, created_at,
         guest_email, guest_nombre, respuestas,
         usuario:profiles!user_id(id, nombre, email, avatar_url),
         tipo:ticket_types!ticket_type_id(id, nombre, precio, currency)

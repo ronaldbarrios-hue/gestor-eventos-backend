@@ -53,6 +53,10 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date()
 
 /* Rutas */
 app.use('/api/v1',           require('./routes/api.js'));
+/* Conector MCP: GESTEK dentro de Claude. Mismo token gtk_live_ que la API
+   pública, mismas herramientas que el asistente del panel. */
+app.use('/',                 require('./routes/mcp.js'));
+app.use('/',                 require('./routes/conexiones.js'));
 /* PÚBLICOS primero: estos routers no requieren auth. Deben ir ANTES de
    los routers montados en '/' que aplican router.use(verifySupabaseJWT),
    porque al estar montados en '/' interceptan TODA petición (incluida

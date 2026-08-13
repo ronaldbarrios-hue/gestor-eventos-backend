@@ -127,9 +127,13 @@ async function manejar(peticion, ownerId) {
 
 /* ── Transporte ───────────────────────────────────────────────────────── */
 
-router.use(verifyApiToken);
-
-router.post('/mcp', async (req, res) => {
+/* OJO: el middleware va POR RUTA, no con router.use().
+   Este router se monta en '/', y un `router.use(auth)` se ejecuta para CADA
+   peticion que pasa por el — no solo para las que casan con sus rutas. Puesto
+   arriba, exigiria un token gtk_live_ a la API publica entera: paginas de
+   evento, categorias, todo. Cuesta repetir el middleware en tres lineas y
+   evita tumbar el sitio. */
+router.post('/mcp', verifyApiToken, async (req, res) => {
   const cuerpo = req.body;
 
   /* JSON-RPC admite lotes. Los conectores los usan poco, pero rechazarlos
@@ -161,7 +165,7 @@ router.get('/mcp', (_req, res) => {
 
 /* Para que el organizador confirme que su token sirve antes de pelearse con la
    configuración del cliente. */
-router.get('/mcp/estado', (req, res) => {
+router.get('/mcp/estado', verifyApiToken, (req, res) => {
   res.json({
     ok: true,
     servidor: SERVIDOR,

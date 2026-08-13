@@ -16,15 +16,17 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const conexionIA = require('../lib/conexionIA.js');
 
 const router = express.Router();
-router.use(verifySupabaseJWT);
 
-router.get('/me/conexiones/ia', async (req, res) => {
+/* Igual que en mcp.js: este router se monta en '/', asi que el middleware va
+   por ruta. Un router.use() aqui exigiria sesion a toda la API publica. */
+
+router.get('/me/conexiones/ia', verifySupabaseJWT, async (req, res) => {
   try {
     res.json(await conexionIA.verConexion(req.user.id));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.put('/me/conexiones/ia', async (req, res) => {
+router.put('/me/conexiones/ia', verifySupabaseJWT, async (req, res) => {
   try {
     const r = await conexionIA.guardar(req.user.id, req.body || {});
     if (!r.ok) return res.status(400).json({ error: r.error });
@@ -40,13 +42,13 @@ router.put('/me/conexiones/ia', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.post('/me/conexiones/ia/probar', async (req, res) => {
+router.post('/me/conexiones/ia/probar', verifySupabaseJWT, async (req, res) => {
   try {
     res.json(await conexionIA.verificar(req.user.id));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.delete('/me/conexiones/ia', async (req, res) => {
+router.delete('/me/conexiones/ia', verifySupabaseJWT, async (req, res) => {
   try {
     const r = await conexionIA.borrar(req.user.id);
     if (!r.ok) return res.status(400).json({ error: r.error });

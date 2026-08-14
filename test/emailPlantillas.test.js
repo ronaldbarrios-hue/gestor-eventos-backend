@@ -283,3 +283,62 @@ test('el diagnóstico prefiere cPanel sobre las demás opciones', () => {
   for (const k of ['CPANEL_SMTP_USER', 'CPANEL_SMTP_PASS', 'RESEND_API_KEY']) delete process.env[k];
   Object.assign(process.env, guardado);
 });
+
+/* ── Que el punto de envío no lance ──────────────────────────────────────
+
+   Esto protege el fallo más caro que ha tenido el proyecto. La cabecera de
+   enviarEmailEvento promete que nunca lanza, y nueve puntos de envío se lo
+   creen: todos llaman con `.catch(() => {})`. Pero el contrato también dice
+   que `evento` puede ser sólo el id, y con una cadena `'page_json' in evento`
+   lanzaba TypeError fuera del try. El error se escapaba y se lo tragaba el
+   catch vacío de quien llamara.
+
+   No fallaba: se evaporaba. Cero filas en evento_email_envios con 34 boletas
+   emitidas, y 1.949 recordatorios que nunca salieron.
+
+   La prueba no comprueba que el correo salga —eso necesita un proveedor—,
+   sino que la llamada RESUELVE en vez de reventar. */
+
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+
+test('enviarEmailEvento acepta el id del evento como cadena y no lanza', async () => {
+  const r = await enviarEmailEvento({
+    evento: '39a482a1-0035-4379-a0bc-4bb88c8cab1d',
+    tipo: 'ticket',
+    to: 'alguien@ejemplo.com',
+    registrar: false,
+  });
+  assert.equal(typeof r, 'object');
+  assert.equal(typeof r.ok, 'boolean');
+
+  /* La parte que de verdad protege el arreglo.
+
+     Sin el `typeof === 'object'` el TypeError sigue ocurriendo; lo que pasa es
+     que el try que se puso alrededor lo atrapa y devuelve un objeto igual. O
+     sea: comprobar «no lanza» NO distingue entre manejarlo y taparlo, y la
+     primera versión de esta prueba pasaba con el fallo reintroducido.
+
+     Aquí sí se distingue: un id en texto es entrada VÁLIDA por contrato, así
+     que tiene que llegar a intentar la lectura del evento (y quedarse en
+     'sin_evento', porque en las pruebas no hay base). Si aparece
+     'evento_ilegible', es que volvió a reventar y sólo lo tapó el catch. */
+  assert.ok(
+    !String(r.motivo || '').startsWith('evento_ilegible'),
+    `el id en texto volvió a reventar: ${r.motivo}`,
+  );
+});
+
+test('enviarEmailEvento tampoco lanza con entradas absurdas', async () => {
+  for (const evento of [null, undefined, 0, '', [], true]) {
+    const r = await enviarEmailEvento({
+      evento, tipo: 'ticket', to: 'alguien@ejemplo.com', registrar: false,
+    });
+    assert.equal(typeof r, 'object', `reventó con ${JSON.stringify(evento)}`);
+    assert.equal(r.ok, false);
+  }
+});
+
+test('un destinatario sin arroba se descarta antes de tocar nada', async () => {
+  const r = await enviarEmailEvento({ evento: 'x', tipo: 'ticket', to: 'no-es-un-correo' });
+  assert.equal(r.motivo, 'sin_destinatario');
+});

@@ -331,11 +331,19 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
       }
     }
 
+    /* La importación NO manda correos, y es deliberado: son miles de filas de
+       una vez, y esta vía existe precisamente para cuando el correo no está
+       disponible. Pero «creados: 47» se lee como «47 personas ya tienen su
+       boleta», y no es verdad: nadie ha sido avisado. Decirlo aquí evita que
+       alguien dé por hecha una entrega que no ocurrió. */
     res.json({
       creados: ok.length,
       errores,
       ok,
       sin_correo: ok.filter(t => !t.email).length,
+      nota_correo: ok.length
+        ? 'Las boletas quedaron creadas, pero NO se envió ningún correo: la importación no notifica. Reparte los códigos desde «Reparto sin correo» (imprimir o WhatsApp).'
+        : null,
     });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });

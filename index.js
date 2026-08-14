@@ -55,6 +55,9 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date()
 app.use('/api/v1',           require('./routes/api.js'));
 /* Conector MCP: GESTEK dentro de Claude. Mismo token gtk_live_ que la API
    pública, mismas herramientas que el asistente del panel. */
+/* OAuth del conector: los metadatos y el registro son publicos a proposito
+   — un cliente MCP los lee antes de tener credenciales. */
+app.use('/',                 require('./routes/oauth.js'));
 app.use('/',                 require('./routes/mcp.js'));
 app.use('/',                 require('./routes/conexiones.js'));
 /* PÚBLICOS primero: estos routers no requieren auth. Deben ir ANTES de

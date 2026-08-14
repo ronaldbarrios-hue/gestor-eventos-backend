@@ -60,18 +60,55 @@ test('ningún router que autentique con router.use() se monta antes de las rutas
 
 test('el servidor MCP protege sus rutas, sin proteger de más', () => {
   const src = fs.readFileSync(path.join(RAIZ, 'routes/mcp.js'), 'utf8');
-  assert.ok(
-    /router\.post\(\s*'\/mcp'\s*,\s*verifyApiToken/.test(src),
-    'POST /mcp tiene que exigir el token',
-  );
-  assert.ok(
-    /router\.get\(\s*'\/mcp\/estado'\s*,\s*verifyApiToken/.test(src),
-    'GET /mcp/estado tiene que exigir el token',
-  );
+
+  /* Se comprueba que HAYA un guardián, no cómo se llama: el nombre cambió una
+     vez (verifyApiToken → autenticar, al añadir OAuth) y acoplar la prueba al
+     nombre sólo produce un fallo que no significa nada. Lo que importa es que
+     entre la ruta y el handler haya algo. */
+  const conGuardia = (metodo, ruta) =>
+    new RegExp(`router\\.${metodo}\\(\\s*'${ruta}'\\s*,\\s*\\w+\\s*,`).test(src);
+
+  assert.ok(conGuardia('post', '\\/mcp'), 'POST /mcp tiene que pasar por un middleware de autenticación');
+  assert.ok(conGuardia('get', '\\/mcp\\/estado'), 'GET /mcp/estado tiene que pasar por un middleware de autenticación');
+
   assert.ok(
     !RE_AUTH_ROUTER.test(src),
-    'el token no se exige a nivel de router: bloquearía la API pública',
+    'la autenticación no se exige a nivel de router: bloquearía la API pública',
   );
+
+  /* Sin esta cabecera en el 401, un cliente MCP no descubre que hay OAuth ni
+     dónde autorizar: ve un 401 pelado y el conector no arranca. Es el detalle
+     que hace que todo el flujo de OAuth sirva para algo. */
+  assert.ok(
+    /WWW-Authenticate/i.test(src) && /resource_metadata/.test(src),
+    'el 401 debe llevar WWW-Authenticate con resource_metadata',
+  );
+});
+
+test('los metadatos de OAuth son públicos: sin ellos no hay descubrimiento', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'routes/oauth.js'), 'utf8');
+
+  /* Claude lee los metadatos y se registra ANTES de tener credenciales. Si
+     alguna de esas rutas exigiera sesión, el conector no se podría ni
+     descubrir — y el error sería un 401 en un sitio donde nadie lo busca. */
+  const publicas = [
+    "\\/\\.well-known\\/oauth-protected-resource",
+    "\\/\\.well-known\\/oauth-authorization-server",
+    "\\/oauth\\/register",
+    "\\/oauth\\/token",
+  ];
+  for (const ruta of publicas) {
+    const conSesion = new RegExp(`router\\.\\w+\\(\\s*'${ruta}'\\s*,\\s*verifySupabaseJWT`);
+    assert.ok(!conSesion.test(src), `${ruta} no puede exigir sesión: el cliente la llama sin estar autenticado`);
+  }
+
+  /* Y al contrario: aprobar SÍ tiene que exigirla, porque de ahí sale a qué
+     cuenta se ata el permiso. */
+  assert.ok(
+    /router\.post\(\s*'\/oauth\/aprobar'\s*,\s*verifySupabaseJWT/.test(src),
+    'aprobar tiene que exigir sesión: es lo que ata el permiso a una cuenta',
+  );
+  assert.ok(!RE_AUTH_ROUTER.test(src), 'router.use(auth) aquí bloquearía los metadatos');
 });
 
 test('las conexiones del organizador tampoco autentican a nivel de router', () => {

@@ -23,7 +23,9 @@
 */
 
 const express = require('express');
-const { verifyApiToken } = require('../lib/apitoken.js');
+const { hashToken } = require('../lib/apitoken.js');
+const supabase = require('../lib/supabase.js');
+const oauth = require('../lib/oauth.js');
 const agente = require('../lib/agente.js');
 
 const router = express.Router();
@@ -127,13 +129,65 @@ async function manejar(peticion, ownerId) {
 
 /* ── Transporte ───────────────────────────────────────────────────────── */
 
+/* ── Autenticacion: dos caminos ────────────────────────────────────────
+
+   · OAuth (gtkat_...) — lo que usa claude.ai, que no tiene donde pegar un
+     token a mano.
+   · Token de API (gtk_live_...) — lo que usan Claude Code y Claude Desktop,
+     donde si se puede poner una cabecera.
+
+   Se aceptan los dos porque cubren clientes distintos, no porque sobre uno.
+
+   Y el 401 lleva `WWW-Authenticate` con la URL de los metadatos: es asi como
+   un cliente MCP DESCUBRE que hay que autorizar y donde. Sin esa cabecera,
+   claude.ai ve un 401 pelado, no sabe que existe OAuth, y el conector no
+   arranca nunca. Es el detalle que hace que todo lo demas sirva. */
+async function autenticar(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const m = auth.match(/^Bearer\s+(\S+)$/i);
+
+  const rechazar = (motivo) => {
+    const base = oauth.baseUrl(req);
+    res.set('WWW-Authenticate',
+      `Bearer realm="GESTEK", resource_metadata="${base}/.well-known/oauth-protected-resource"`);
+    return res.status(401).json({ error: motivo });
+  };
+
+  if (!m) return rechazar('Falta el token. Conecta GESTEK como conector para autorizarlo.');
+  const token = m[1];
+
+  /* OAuth primero: es el camino que va a usar la mayoria. */
+  if (token.startsWith('gtkat_')) {
+    const d = await oauth.dueñoDelToken(token);
+    if (!d) return rechazar('Autorizacion invalida o caducada.');
+    req.apiOwner = d.ownerId;
+    req.mcpVia = 'oauth';
+    return next();
+  }
+
+  /* Token de API de toda la vida. */
+  if (token.startsWith('gtk_live_')) {
+    const { data: tok } = await supabase
+      .from('api_tokens').select('*').eq('token_hash', hashToken(token)).maybeSingle();
+    if (!tok || tok.revoked) return rechazar('Token invalido o revocado.');
+    supabase.from('api_tokens')
+      .update({ last_used_at: new Date().toISOString() }).eq('id', tok.id)
+      .then(() => {}, () => {});
+    req.apiOwner = tok.owner_id;
+    req.mcpVia = 'token';
+    return next();
+  }
+
+  return rechazar('Formato de token no reconocido.');
+}
+
 /* OJO: el middleware va POR RUTA, no con router.use().
    Este router se monta en '/', y un `router.use(auth)` se ejecuta para CADA
    peticion que pasa por el — no solo para las que casan con sus rutas. Puesto
-   arriba, exigiria un token gtk_live_ a la API publica entera: paginas de
-   evento, categorias, todo. Cuesta repetir el middleware en tres lineas y
-   evita tumbar el sitio. */
-router.post('/mcp', verifyApiToken, async (req, res) => {
+   arriba, exigiria un token a la API publica entera: paginas de evento,
+   categorias, todo. Cuesta repetir el middleware en tres lineas y evita
+   tumbar el sitio. */
+router.post('/mcp', autenticar, async (req, res) => {
   const cuerpo = req.body;
 
   /* JSON-RPC admite lotes. Los conectores los usan poco, pero rechazarlos
@@ -165,13 +219,14 @@ router.get('/mcp', (_req, res) => {
 
 /* Para que el organizador confirme que su token sirve antes de pelearse con la
    configuración del cliente. */
-router.get('/mcp/estado', verifyApiToken, (req, res) => {
+router.get('/mcp/estado', autenticar, (req, res) => {
   res.json({
     ok: true,
     servidor: SERVIDOR,
     protocolo: PROTOCOLO,
     herramientas: TOOLS_MCP.length,
     cuenta: req.apiOwner,
+    via: req.mcpVia,
   });
 });
 
@@ -179,4 +234,4 @@ module.exports = router;
 
 /* Para las pruebas: el protocolo se comprueba sin levantar el servidor ni
    tocar la base. */
-module.exports._test = { manejar, TOOLS_MCP, comoMCP, PROTOCOLO };
+module.exports._test = { manejar, TOOLS_MCP, comoMCP, PROTOCOLO, autenticar };

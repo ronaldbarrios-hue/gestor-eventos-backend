@@ -342,3 +342,37 @@ test('un destinatario sin arroba se descarta antes de tocar nada', async () => {
   const r = await enviarEmailEvento({ evento: 'x', tipo: 'ticket', to: 'no-es-un-correo' });
   assert.equal(r.motivo, 'sin_destinatario');
 });
+
+/* ── Plantilla escrita en el momento ───────────────────────────────
+
+   Un recordatorio suelto es texto que alguien acaba de escribir: no está
+   guardado como plantilla del evento. Tiene que ganar sobre la plantilla
+   guardada, y sobre todo tiene que SOBREVIVIR A LA COLA — viaja dentro del
+   ctx encolado, y si se pierde por el camino el correo sale con el relleno
+   «Escribe aquí tu mensaje» y nadie se entera hasta leer su bandeja. */
+
+test('una plantilla puesta a mano se usa tal cual', () => {
+  const plantilla = {
+    asunto: 'Recordatorio: Feria',
+    encabezado: 'Feria',
+    cuerpo: 'Traigan documento de identidad.',
+  };
+  const { asunto, html } = renderEmail({
+    tipo: 'personalizado', plantilla, evento: EVENTO, ctx: { nombre: 'Ana' },
+  });
+  assert.equal(asunto, 'Recordatorio: Feria');
+  assert.ok(html.includes('Traigan documento de identidad.'));
+  assert.ok(!html.includes('Escribe aquí tu mensaje'), 'salió el texto de relleno');
+});
+
+test('la plantilla del ctx encolado se recupera y no ensucia las variables', () => {
+  const plantilla = { asunto: 'A', encabezado: 'B', cuerpo: 'C' };
+  const fila = { ctx: { nombre: 'Ana', _plantilla: plantilla } };
+
+  /* El mismo desestructurado que hace enviarDesdeLaCola. */
+  const { _plantilla: recuperada = null, ...ctx } = fila.ctx || {};
+
+  assert.deepEqual(recuperada, plantilla);
+  assert.ok(!('_plantilla' in ctx), '_plantilla no debe llegar al render como variable');
+  assert.equal(ctx.nombre, 'Ana');
+});

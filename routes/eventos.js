@@ -10,6 +10,7 @@ const { assertPermiso } = require('../lib/acceso.js');
 const {
   TIPOS_CAMPO, GRUPOS, FICHAS,
   MAX_CAMPOS_FORMULARIO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  PLANTILLA,
 } = require('../lib/formularioCampos.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
@@ -420,7 +421,7 @@ router.get('/:id/formulario', async (req, res) => {
       .order('orden', { ascending: true });
     if (e2) return res.status(500).json({ error: e2.message });
     return res.json({
-      campos: viejo || [], tipos: TIPOS_CAMPO, grupos: GRUPOS, fichas: FICHAS,
+      campos: viejo || [], tipos: TIPOS_CAMPO, grupos: GRUPOS, fichas: FICHAS, plantilla: PLANTILLA,
       max_campos: MAX_CAMPOS_FORMULARIO, agrupacion_lista: false,
     });
   }
@@ -428,6 +429,11 @@ router.get('/:id/formulario', async (req, res) => {
     campos: data || [],
     /* El catálogo viaja con la respuesta: el panel no mantiene su propia copia. */
     tipos: TIPOS_CAMPO,
+    /* La plantilla de importacion viaja con el catalogo por el mismo motivo
+       que los tipos: si el frontend mantiene su propia copia de las columnas,
+       acaban divergiendo y el archivo que se descarga deja de ser el que se
+       acepta al subir. */
+    plantilla: PLANTILLA,
     grupos: GRUPOS,
     fichas: FICHAS,
     max_campos: MAX_CAMPOS_FORMULARIO,

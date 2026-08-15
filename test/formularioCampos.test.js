@@ -12,7 +12,8 @@ const assert = require('node:assert/strict');
 const {
   TIPOS_CAMPO, IDS_TIPOS_CAMPO, CON_OPCIONES, GRUPOS, FICHAS,
   validarRespuesta, validarFormulario, normalizarRespuestas,
-  esBuscable, UMBRAL_BUSCABLE, filaCampo,
+  esBuscable, UMBRAL_BUSCABLE, filaCampo, validarDefinicion,
+  PLANTILLA, COLUMNAS_PLANTILLA, TIPOS_PREGUNTA, TIPOS_DATO, resolverTipoPlantilla,
 } = require('../lib/formularioCampos.js');
 
 const campo = (extra) => ({ id: 'c1', etiqueta: 'Campo', tipo: 'texto', requerido: false, ...extra });
@@ -276,4 +277,99 @@ test('sólo se guarda un booleano explícito; lo demás vuelve a null', () => {
    cambia aquí, esta prueba falla y recuerda que hay una segunda copia. */
 test('el umbral es 8 — si cambia, cambiar también CampoFormulario.jsx', () => {
   assert.equal(UMBRAL_BUSCABLE, 8);
+});
+
+
+/* -- La plantilla de importacion --------------------------------------
+
+   Lo que se protege aqui es que la plantilla que se DESCARGA y la que se
+   ACEPTA al subir sigan siendo la misma. Son dos caminos distintos sobre la
+   misma definicion, y es exactamente el tipo de par que se separa sin que
+   nadie lo note: alguien agrega una columna al generador, el validador no se
+   entera, y la plantilla oficial deja de pasar su propia validacion. */
+
+test('la plantilla que se descarga pasa su propia validacion', () => {
+  const idx = Object.fromEntries(COLUMNAS_PLANTILLA.map((c, i) => [c.id, i]));
+  const campos = [];
+
+  for (const fila of PLANTILLA.ejemplo) {
+    assert.equal(fila.length, COLUMNAS_PLANTILLA.length,
+      `la fila de ejemplo "${fila[idx.pregunta]}" no tiene una celda por columna`);
+
+    const r = resolverTipoPlantilla(fila[idx.tipo_pregunta], fila[idx.tipo_dato]);
+    assert.ok(!r.error, `el ejemplo se rechaza a si mismo: ${r.error}`);
+
+    campos.push({
+      etiqueta: fila[idx.pregunta],
+      tipo: r.tipo,
+      opciones: r.exigeOpciones
+        ? String(fila[idx.opciones]).split(';').map(x => x.trim()).filter(Boolean)
+        : null,
+      requerido: /^s/i.test(String(fila[idx.obligatoria])),
+    });
+  }
+
+  assert.equal(validarDefinicion(campos), null);
+});
+
+test('todo tipo de la plantilla existe en el catalogo real', () => {
+  const validos = new Set(IDS_TIPOS_CAMPO);
+  for (const t of TIPOS_PREGUNTA) {
+    assert.ok(validos.has(t.tipo), `tipo de pregunta "${t.titulo}" apunta a ${t.tipo}, que no existe`);
+  }
+  for (const t of TIPOS_DATO) {
+    if (t.tipo) assert.ok(validos.has(t.tipo), `tipo de dato "${t.titulo}" apunta a ${t.tipo}, que no existe`);
+  }
+});
+
+test('el tipo de dato aporta la verificacion sobre un texto corto', () => {
+  assert.equal(resolverTipoPlantilla('Texto corto', 'Correo electronico').tipo, 'email');
+  assert.equal(resolverTipoPlantilla('Texto corto', 'Telefono').tipo, 'telefono');
+  assert.equal(resolverTipoPlantilla('Texto corto', 'Documento').tipo, 'documento');
+  assert.equal(resolverTipoPlantilla('Texto corto', 'Texto').tipo, 'texto');
+  assert.equal(resolverTipoPlantilla('Texto corto', '').tipo, 'texto');
+});
+
+test('elegir una o varias manda sobre el tipo de dato', () => {
+  /* Una lista de opciones no puede ser un correo por mucho que la columna de
+     dato lo diga: si ganara el dato, el campo perderia sus opciones. */
+  const una = resolverTipoPlantilla('Elegir una opcion', 'Correo electronico');
+  assert.equal(una.tipo, 'seleccion');
+  assert.equal(una.exigeOpciones, true);
+
+  const varias = resolverTipoPlantilla('Elegir varias opciones', 'Numero');
+  assert.equal(varias.tipo, 'multiple');
+  assert.equal(varias.exigeOpciones, true);
+});
+
+test('los titulos se reconocen sin importar tildes ni mayusculas', () => {
+  for (const escrito of ['Texto corto', 'texto corto', 'TEXTO CORTO', '  Texto   corto  ']) {
+    assert.equal(resolverTipoPlantilla(escrito, '').tipo, 'texto', `no reconocio "${escrito}"`);
+  }
+  assert.equal(resolverTipoPlantilla('Elegir una opcion', '').tipo, 'seleccion');
+  assert.equal(resolverTipoPlantilla('Elegir una opci\u00f3n', '').tipo, 'seleccion');
+});
+
+test('un tipo desconocido se rechaza diciendo cuales valen', () => {
+  const r = resolverTipoPlantilla('Desplegable bonito', '');
+  assert.ok(r.error);
+  /* El mensaje tiene que listar las opciones validas: "tipo invalido" a secas
+     obliga a ir a buscar la documentacion que nadie tiene abierta. */
+  assert.ok(r.error.includes('Texto corto'), 'el error deberia listar los tipos validos');
+
+  const d = resolverTipoPlantilla('Texto corto', 'Cedula o algo');
+  assert.ok(d.error);
+  assert.ok(d.error.includes('Documento'), 'el error deberia listar los datos validos');
+});
+
+test('sin tipo de pregunta no se adivina nada', () => {
+  /* Adivinar es justo lo que se elimino: el importador viejo mapeaba por
+     sinonimos y fallaba en silencio. */
+  assert.ok(resolverTipoPlantilla('', 'Correo electronico').error);
+  assert.ok(resolverTipoPlantilla(null, null).error);
+});
+
+test('las columnas obligatorias son las mismas que exige el importador', () => {
+  const obligatorias = COLUMNAS_PLANTILLA.filter(c => c.obligatoria).map(c => c.id);
+  assert.deepEqual(obligatorias, ['pregunta', 'tipo_pregunta']);
 });

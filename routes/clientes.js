@@ -609,4 +609,95 @@ router.patch('/:eventoId/alertas/:id/resolver', async (req, res) => {
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
+/* GET /eventos/:eventoId/clientes/exportar — todo, para llevarselo.
+
+   Lo que exportaba el sistema hasta ahora eran siete columnas fijas y NINGUNA
+   respuesta del formulario. Alguien montaba la ficha de caracterizacion de 22
+   preguntas, la gente la respondia, y al exportar no salia ni una: los datos
+   por los que se pide el formulario se quedaban dentro. Ademas cortaba en 2.000
+   filas sin decirlo, que con 7.000 asistentes es perder cuatro de cada siete
+   personas y no enterarse.
+
+   Aqui las preguntas mandan: una columna por campo, en el orden en el que se
+   preguntan, y con la etiqueta como cabecera. Si manana el organizador agrega
+   una pregunta, la columna aparece sola.
+
+   Se pagina internamente porque Supabase limita cuantas filas devuelve de una
+   vez. Eso es un detalle del proveedor, no algo que quien exporta deba sufrir. */
+router.get('/:eventoId/clientes/exportar', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);
+
+    const { data: ev } = await supabase
+      .from('eventos').select('titulo, slug').eq('id', eventoId).maybeSingle();
+
+    /* Las preguntas, en su orden. Sin `session_id` para quedarnos con las del
+       evento y no mezclar las de los sub-eventos, que tienen su propia hoja. */
+    const { data: campos } = await supabase
+      .from('event_form_fields')
+      .select(COLUMNAS_CAMPO)
+      .eq('evento_id', eventoId)
+      .is('session_id', null)
+      .order('orden');
+
+    const LOTE = 1000;
+    const filas = [];
+    for (let desde = 0; ; desde += LOTE) {
+      const { data, error } = await supabase
+        .from('tickets')
+        .select(`codigo, estado, precio_pagado, created_at, pagado_at, checked_in_at,
+                 guest_nombre, guest_email, respuestas,
+                 tipo:ticket_types!ticket_type_id(nombre)`)
+        .eq('evento_id', eventoId)
+        .order('created_at', { ascending: true })
+        .range(desde, desde + LOTE - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      filas.push(...(data || []));
+      if (!data || data.length < LOTE) break;
+    }
+
+    /* Una respuesta de seleccion multiple es una lista. Se une con "; " y no
+       con coma, porque la coma es el separador de columnas en media Europa y
+       partiria la celda al abrir el archivo. */
+    const aTexto = (v) => {
+      if (v == null) return '';
+      if (Array.isArray(v)) return v.join('; ');
+      if (typeof v === 'boolean') return v ? 'Si' : 'No';
+      if (typeof v === 'object') return JSON.stringify(v);
+      return String(v);
+    };
+
+    const columnas = [
+      'Nombre', 'Correo', 'Tipo de boleta', 'Estado', 'Codigo',
+      'Precio pagado', 'Fecha de registro', 'Fecha de pago', 'Ingreso',
+      ...(campos || []).map(c => c.etiqueta),
+    ];
+
+    const datos = filas.map(t => {
+      const r = t.respuestas || {};
+      return [
+        t.guest_nombre || '', t.guest_email || '', t.tipo?.nombre || '',
+        t.estado || '', t.codigo || '',
+        t.precio_pagado ?? '', t.created_at || '', t.pagado_at || '', t.checked_in_at || '',
+        /* La respuesta se busca por id del campo, que es como se guarda. Se
+           prueba tambien por etiqueta para no perder lo respondido antes de
+           que existieran los ids. */
+        ...(campos || []).map(c => aTexto(r[c.id] ?? r[c.etiqueta])),
+      ];
+    });
+
+    res.json({
+      evento: ev?.titulo || 'evento',
+      slug: ev?.slug || 'evento',
+      columnas,
+      filas: datos,
+      total: datos.length,
+      preguntas: (campos || []).length,
+    });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 module.exports = router;

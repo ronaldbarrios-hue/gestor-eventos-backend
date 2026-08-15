@@ -80,7 +80,20 @@ function generarCodigo() {
 
 /* GET /eventos/publicos/ticket/:codigo
    Incluye `respuestas` (del formulario personalizado, si ya se llenaron) y
-   `evento.campos_formulario` (para saber qué preguntas hacen falta). */
+   `evento.campos_formulario` (para saber qué preguntas hacen falta).
+
+   `fecha_fin` y `page_json` se añadieron después, porque su ausencia rompía
+   dos cosas en la página de la boleta sin dar ningún error:
+
+   - Sin `fecha_fin`, el enlace «Añadir a Google Calendar» caía a su respaldo
+     de dos horas. En un evento de dos días el asistente se guardaba una cita
+     de 9 a 11 de la mañana del primer día. Importa más de lo que parece: al
+     dejar los recordatorios en manos del calendario, esa cita es el único
+     aviso que recibe.
+   - Sin `page_json`, la escarapela digital se pintaba siempre con el diseño
+     por defecto. El organizador la configura en Asistentes → Tarjeta, la
+     previsualiza, la guarda… y el asistente nunca veía su marca ni su logo,
+     ni en pantalla ni en la versión impresa. */
 router.get('/ticket/:codigo', async (req, res) => {
   const codigo = req.params.codigo.toUpperCase().trim();
   if (!codigo || codigo.length < 4) return res.status(400).json({ error: 'Código inválido.' });
@@ -91,7 +104,7 @@ router.get('/ticket/:codigo', async (req, res) => {
       id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
       guest_nombre, guest_email,
       tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor),
-      evento:eventos!evento_id(id, slug, titulo, fecha_inicio, location_nombre, cover_url)
+      evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json)
     `)
     .eq('codigo', codigo)
     .maybeSingle();

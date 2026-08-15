@@ -8,7 +8,11 @@ const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
-const { validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
+/* `COLUMNAS_CAMPO` y no una lista escrita a mano: las dos consultas de abajo
+   tenían su propia copia recortada, y por eso `grupo`, `ayuda` y `buscable` se
+   guardaban, se editaban en el panel… y no llegaban nunca a la página pública.
+   El servidor es la autoridad, pero sólo si sirve lo que guarda. */
+const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { conSitio } = require('../lib/eventoSitio.js');
@@ -115,7 +119,7 @@ router.get('/ticket/:codigo', async (req, res) => {
   if (data.evento?.id) {
     const { data: campos } = await supabase
       .from('event_form_fields')
-      .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
+      .select(COLUMNAS_CAMPO)
       .eq('evento_id', data.evento.id)
       .order('orden', { ascending: true });
     data.evento.campos_formulario = campos || [];
@@ -315,7 +319,7 @@ router.get('/slug/:slug', async (req, res) => {
 
   const { data: camposForm } = await supabase
     .from('event_form_fields')
-    .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
+    .select(COLUMNAS_CAMPO)
     .eq('evento_id', evento.id)
     .order('orden', { ascending: true });
   evento.campos_formulario = camposForm || [];

@@ -129,10 +129,35 @@ router.get('/:eventoId/sessions', async (req, res) => {
   }
 });
 
+/* La subcategoria la escribe el organizador (Deportes, Gaming...), asi que
+   acaba con variantes: "Gaming", "gaming", "GAMING " son la misma cosa para
+   cualquiera menos para un `group by`. Antes de guardar se busca si el evento
+   ya usa una que solo se diferencie en mayusculas o espacios, y se reutiliza
+   TAL CUAL esta escrita. Asi la primera vez la escribe quien quiera y las
+   siguientes se pegan a ella, sin obligar a nadie a crear un catalogo antes.
+
+   Devuelve null para vacio: una cadena vacia y "sin subcategoria" son lo
+   mismo, y guardar '' haria aparecer un grupo fantasma en los filtros. */
+async function normalizarSubcategoria(eventoId, valor) {
+  const limpio = String(valor ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!limpio) return null;
+
+  const { data } = await supabase
+    .from('agenda_sessions').select('subcategoria')
+    .eq('evento_id', eventoId).not('subcategoria', 'is', null);
+
+  const clave = limpio.toLocaleLowerCase('es');
+  const existente = (data || [])
+    .map(f => f.subcategoria)
+    .find(v => String(v).toLocaleLowerCase('es') === clave);
+
+  return existente || limpio;
+}
+
 router.post('/:eventoId/sessions', async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, descripcion, inicio, fin, track, ubicacion, speaker_id, tipo, torneo_id,
-          requiere_inscripcion, cupo, formulario_modo } = req.body;
+          requiere_inscripcion, cupo, formulario_modo, subcategoria } = req.body;
   if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido.' });
   if (!inicio) return res.status(400).json({ error: 'Hora de inicio requerida.' });
   if (formulario_modo && !MODOS_FORMULARIO.includes(formulario_modo)) {
@@ -151,6 +176,8 @@ router.post('/:eventoId/sessions', async (req, res) => {
         ubicacion  : ubicacion || null,
         speaker_id : speaker_id || null,
         tipo       : tipo || 'charla',
+        /* Agrupacion libre DENTRO del tipo: competencia -> Deportes -> Futbol. */
+        subcategoria: await normalizarSubcategoria(eventoId, subcategoria),
         torneo_id  : torneo_id || null,
         /* Inscripción por sub-evento (migración 0055). La boleta del evento
            sigue siendo la llave; esto es apuntarse a esta actividad. */
@@ -176,7 +203,8 @@ router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
   try {
     await assertOwner(eventoId, req.user.id);
     const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id',
-      'orden', 'tipo', 'torneo_id', 'moderacion', 'requiere_inscripcion', 'cupo', 'formulario_modo'];
+      'orden', 'tipo', 'torneo_id', 'moderacion', 'requiere_inscripcion', 'cupo', 'formulario_modo',
+      'subcategoria'];
     const updates = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });
@@ -187,6 +215,11 @@ router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
        panel por mucho que hubiera un selector. */
     if ('formulario_modo' in updates && !MODOS_FORMULARIO.includes(updates.formulario_modo)) {
       return res.status(400).json({ error: 'formulario_modo debe ser ninguno, propio o evento.' });
+    }
+    /* Misma normalizacion que al crear: si no, editar una sesion es la via
+       facil de meter la variante en minusculas. */
+    if ('subcategoria' in updates) {
+      updates.subcategoria = await normalizarSubcategoria(eventoId, updates.subcategoria);
     }
     if ('cupo' in updates) {
       updates.cupo = (updates.cupo === null || updates.cupo === undefined || updates.cupo === '')

@@ -1,86 +1,97 @@
-/* GESTEK — #49 · Buzón de sugerencias para los catálogos.
+/* GESTEK — Pedir una dinámica que la plataforma todavía no tiene.
 
-   Los tipos de evento y los roles de vacante son listas que decidimos
-   nosotros. Cuando alguien monta algo que no está, elige "Otro" y ahí muere:
-   nadie se entera de qué falta y la lista se amplía adivinando.
+   La categoría de un espacio la fija la plataforma (charla, taller, competencia,
+   stand…) y eso es deliberado: es lo que permite que un torneo active sus
+   llaves y una charla pida ponente. Si fuera texto libre habría que adivinar el
+   comportamiento comparando contra lo que cada quien escribiera.
 
-   Esto recoge lo que la persona buscaba, en el momento exacto en que no lo
-   encuentra, con el contexto de lo que estaba haciendo. No es un sistema de
-   tickets: no hay respuesta ni hilo. Es una libreta que se lee de vez en
-   cuando y de la que salen altas de catálogo.
+   La consecuencia honesta es que quien monta un show de stand-up no encuentra
+   su dinámica. Sin un sitio donde pedirla, la salida es elegir «Otro» y
+   apañárselas — y nosotros no nos enteramos nunca de qué falta, que es la peor
+   parte: el catálogo se queda congelado porque nadie sabe que se quedó corto.
 
-   Rutas (montadas en /me):
-     POST /me/sugerencias  — dejar una
-     GET  /me/sugerencias  — las mías, para poder ver que sí se mandó
-*/
-
-'use strict';
+   Lo que se pide en la solicitud es `como_funciona`, y es lo único que de
+   verdad importa. Saber que alguien quiere «stand-up» no permite construir
+   nada; saber que necesita turnos, inscripción de comediantes y votación del
+   público, sí. Preguntarlo aquí ahorra la conversación de vuelta. */
 
 const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 
 const router = express.Router();
-router.use(verifySupabaseJWT);
 
-const CATALOGOS = ['evento', 'vacante'];
-const MAX_TEXTO = 400;
-/* Tope diario por persona. No es para castigar a nadie: es para que un bucle
-   accidental del front no llene la tabla en una tarde. */
-const MAX_POR_DIA = 20;
+const LIMITES = { titulo: 120, como_funciona: 4000, alternativa: 500 };
 
-router.post('/sugerencias', async (req, res) => {
-  const catalogo = String(req.body?.catalogo || '').trim();
-  const texto = String(req.body?.texto || '').trim();
+function validar(body) {
+  const titulo = String(body?.titulo || '').trim();
+  const como = String(body?.como_funciona || '').trim();
 
-  if (!CATALOGOS.includes(catalogo)) {
-    return res.status(400).json({ error: 'catalogo debe ser "evento" o "vacante".' });
+  if (titulo.length < 3) return { error: 'Ponle un nombre a la dinámica.' };
+  if (titulo.length > LIMITES.titulo) return { error: `El nombre no puede pasar de ${LIMITES.titulo} caracteres.` };
+
+  /* El mínimo no es capricho. Una solicitud que dice «stand-up comedy» y nada
+     más obliga a escribir de vuelta para preguntar lo básico, y ahí se muere la
+     mitad de las solicitudes. */
+  if (como.length < 40) {
+    return { error: 'Cuéntanos cómo funciona: si hay inscritos, si hay turnos o rondas, si el público vota, qué se ve en la agenda. Con eso podemos construirla; sólo con el nombre, no.' };
   }
-  if (!texto) return res.status(400).json({ error: 'Escribe qué te faltó encontrar.' });
-  if (texto.length > MAX_TEXTO) {
-    return res.status(400).json({ error: `Máximo ${MAX_TEXTO} caracteres.` });
+  if (como.length > LIMITES.como_funciona) return { error: 'La descripción es demasiado larga.' };
+
+  return {
+    ok: true,
+    fila: {
+      titulo,
+      como_funciona: como,
+      alternativa: String(body?.alternativa || '').trim().slice(0, LIMITES.alternativa) || null,
+    },
+  };
+}
+
+/* POST /sugerencias/dinamica */
+router.post('/sugerencias/dinamica', verifySupabaseJWT, async (req, res) => {
+  const v = validar(req.body);
+  if (v.error) return res.status(400).json({ error: v.error });
+
+  /* El evento se guarda sólo si es de quien escribe: sirve de contexto para
+     entender la solicitud, no para dar acceso a nada. */
+  let eventoId = null;
+  if (req.body?.evento_id) {
+    const { data } = await supabase
+      .from('eventos').select('id').eq('id', req.body.evento_id).eq('owner_id', req.user.id).maybeSingle();
+    eventoId = data?.id || null;
   }
 
-  const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const { count } = await supabase.from('sugerencias_catalogo')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', req.user.id).gte('created_at', desde);
-  if ((count || 0) >= MAX_POR_DIA) {
-    return res.status(429).json({ error: 'Has mandado muchas sugerencias hoy. Mañana seguimos leyéndote.' });
-  }
-
-  /* El contexto se guarda tal cual pero acotado: viene del navegador y no hay
-     razón para aceptar un objeto de cualquier tamaño en una tabla que sólo se
-     lee a ojo. */
-  let contexto = {};
-  if (req.body?.contexto && typeof req.body.contexto === 'object') {
-    for (const [k, v] of Object.entries(req.body.contexto).slice(0, 10)) {
-      contexto[String(k).slice(0, 40)] = String(v ?? '').slice(0, 200);
-    }
-  }
-
-  const { data, error } = await supabase.from('sugerencias_catalogo')
-    .insert({ catalogo, texto, contexto, user_id: req.user.id })
-    .select('id, catalogo, texto, estado, created_at').single();
+  const { data, error } = await supabase
+    .from('sugerencias_dinamica')
+    .insert({ ...v.fila, owner_id: req.user.id, evento_id: eventoId })
+    .select('id, titulo, estado, created_at')
+    .single();
 
   if (error) {
-    /* Sin la 0063 aplicada la tabla no existe. Se dice qué pasa en vez de
-       devolver un error de Postgres crudo. */
-    if (/relation .* does not exist/i.test(error.message)) {
-      return res.status(503).json({ error: 'El buzón todavía no está disponible. Falta aplicar la migración 0063.' });
+    if (/sugerencias_dinamica|does not exist/i.test(error.message)) {
+      return res.status(503).json({ error: 'Falta aplicar la migración 0075.' });
     }
     return res.status(500).json({ error: error.message });
   }
-  res.status(201).json({ sugerencia: data });
+  res.status(201).json({ ok: true, sugerencia: data });
 });
 
-router.get('/sugerencias', async (req, res) => {
-  const { data, error } = await supabase.from('sugerencias_catalogo')
-    .select('id, catalogo, texto, estado, created_at')
-    .eq('user_id', req.user.id)
+/* GET /sugerencias/dinamica — las propias, con la respuesta del equipo si la
+   hubo. Que quien pidió algo pueda ver en qué quedó es lo que hace que vuelva
+   a pedir; un buzón sin respuesta se usa una vez. */
+router.get('/sugerencias/dinamica', verifySupabaseJWT, async (req, res) => {
+  const { data, error } = await supabase
+    .from('sugerencias_dinamica')
+    .select('id, titulo, como_funciona, estado, respuesta, created_at, evento_id')
+    .eq('owner_id', req.user.id)
     .order('created_at', { ascending: false })
     .limit(50);
-  if (error) return res.json({ sugerencias: [] });
+
+  if (error) {
+    if (/sugerencias_dinamica|does not exist/i.test(error.message)) return res.json({ sugerencias: [] });
+    return res.status(500).json({ error: error.message });
+  }
   res.json({ sugerencias: data || [] });
 });
 

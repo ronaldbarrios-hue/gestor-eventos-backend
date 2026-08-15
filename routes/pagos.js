@@ -12,10 +12,28 @@ const { signTicketQR } = require('../lib/qr.js');
 const mp = require('../lib/mercadopago.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
+const { webhookLimiter } = require('../config/security.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
+
+/* Sin el secreto el webhook sigue aceptándose, y es a propósito: rechazarlo
+   dejaría sin confirmar los pagos buenos, que es peor que el riesgo que evita.
+   El pago nunca se cree lo que llega por el webhook —se vuelve a pedir a
+   Mercado Pago— así que la firma no protege el dinero: protege el servidor.
+
+   Lo que sí cambia sin secreto es que el camino caro queda cerrado (ver el
+   webhook más abajo). Y se avisa al arrancar, porque el modo degradado
+   silencioso es justo lo que hace que una variable lleve meses sin ponerse. */
+if (!MP_WEBHOOK_SECRET) {
+  console.warn(
+    '[webhook MP] MP_WEBHOOK_SECRET no está configurada: las notificaciones se ' +
+    'aceptan sin verificar firma y la recuperación de pagos huérfanos queda ' +
+    'desactivada. Ponla en el panel de Mercado Pago → Webhooks y añádela al entorno.'
+  );
+}
+
 function verifyMPSignature(req) {
   if (!MP_WEBHOOK_SECRET) return { ok: true, reason: 'no_secret_configured' };
   const sigHeader = req.headers['x-signature'];
@@ -262,7 +280,7 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   });
 });
 /* ────────────── Webhook Mercado Pago ────────────── */
-router.post('/webhooks/mercadopago', async (req, res) => {
+router.post('/webhooks/mercadopago', webhookLimiter, async (req, res) => {
   const sig = verifyMPSignature(req);
   if (!sig.ok) {
     console.warn('[webhook MP] firma inválida:', sig.reason);
@@ -287,6 +305,28 @@ router.post('/webhooks/mercadopago', async (req, res) => {
         .from('profiles').select('mp_access_token').eq('id', ev.owner_id).single();
       accessToken = pr?.mp_access_token || null;
     }
+    /* Quién cobró, preguntándoselo al aviso en vez de adivinándolo.
+
+       Mercado Pago manda `user_id` —el vendedor— en la notificación, y desde
+       que el organizador conecta su cuenta guardamos su equivalente en
+       `profiles.mp_user_id`. Con eso el dueño del pago sale de UNA consulta.
+
+       Importa porque la fila de `payment_transactions` se crea con el
+       `preference_id` y sin `payment_id`: el primer aviso de cada pago no la
+       encuentra y, sin este atajo, caía siempre en el barrido de más abajo.
+       Así el barrido pasa a ser lo que debía ser, el último recurso. */
+    if (!accessToken) {
+      const vendedor = req.body?.user_id || req.query?.user_id;
+      if (vendedor) {
+        const { data: dueno } = await supabase
+          .from('profiles').select('mp_access_token')
+          .eq('mp_user_id', String(vendedor))
+          .not('mp_access_token', 'is', null)
+          .maybeSingle();
+        if (dueno?.mp_access_token) accessToken = dueno.mp_access_token;
+      }
+    }
+
     if (!accessToken) {
       const platformToken = process.env.MP_PLATFORM_ACCESS_TOKEN;
       if (platformToken) {
@@ -294,8 +334,31 @@ router.post('/webhooks/mercadopago', async (req, res) => {
           const pago = await mp.getPayment(platformToken, paymentId);
           await procesarPago(pago);
           return;
-        } catch { /* not it */ }
+        } catch { /* no es de la cuenta de la plataforma */ }
       }
+
+      /* Probar el pago contra el token de CADA organizador conectado es el
+         camino normal, no la excepción: `payment_transactions` se crea con el
+         `preference_id` y sin `payment_id`, así que el primer aviso de cada
+         pago no encuentra fila y cae aquí.
+
+         El problema es que era un amplificador abierto a internet: sin firma,
+         cualquiera mandando ids inventados en bucle provocaba una llamada
+         saliente a Mercado Pago por cada organizador conectado, y el webhook
+         responde 200 antes de procesar, así que ni el limitador lo frenaba.
+         Con veinte organizadores, una petición barata para el atacante costaba
+         veinte peticiones lentas al servidor.
+
+         Ahora ese recorrido exige firma verificada. Con `MP_WEBHOOK_SECRET`
+         puesta el comportamiento es idéntico al de antes; sin ella se pierde
+         la recuperación de pagos huérfanos, que es lo que se puede perder sin
+         que nadie se quede sin su boleta —el pago vuelve a intentarse y el
+         organizador puede marcarlo a mano—, y a cambio no hay palanca. */
+      if (!MP_WEBHOOK_SECRET) {
+        console.warn('[webhook MP] pago', paymentId, 'sin transacción conocida; se ignora porque no hay firma que verificar.');
+        return;
+      }
+
       const { data: conectados } = await supabase
         .from('profiles').select('id, mp_access_token').not('mp_access_token', 'is', null);
       for (const p of conectados || []) {
@@ -304,7 +367,7 @@ router.post('/webhooks/mercadopago', async (req, res) => {
           accessToken = p.mp_access_token;
           await procesarPago(pago);
           return;
-        } catch { /* try next */ }
+        } catch { /* no es de este organizador */ }
       }
       return;
     }

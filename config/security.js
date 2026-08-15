@@ -94,6 +94,24 @@ const authLimiter = rateLimit({
   handler               : rateLimitHandler,
 });
 
+/* Limiter del webhook de pagos.
+
+   `authLimiter` no lo protegía: lleva `skipSuccessfulRequests` y el webhook
+   responde 200 SIEMPRE —es lo correcto, un webhook contesta rápido y procesa
+   después—, así que ninguna petición gastaba cuota y una inundación pasaba
+   entera. Éste cuenta todas.
+
+   El tope es alto a propósito: los avisos legítimos de Mercado Pago llegan
+   todos desde sus servidores y en una apertura de ventas pueden venir en
+   ráfaga. Lo que se corta es el bombardeo, no la venta. */
+const webhookLimiter = rateLimit({
+  windowMs       : 60 * 1000,
+  max            : 240,
+  standardHeaders: 'draft-7',
+  legacyHeaders  : false,
+  handler        : rateLimitHandler,
+});
+
 /* Limiter global para toda la API */
 const apiLimiter = rateLimit({
   windowMs       : env.RATE_LIMIT_API_WINDOW * 60 * 1000,
@@ -146,4 +164,4 @@ function applySecurity(app) {
   }
 }
 
-module.exports = { applySecurity, authLimiter, apiLimiter, sanitizeBody, ALLOWED_ORIGINS };
+module.exports = { applySecurity, authLimiter, apiLimiter, webhookLimiter, sanitizeBody, ALLOWED_ORIGINS };

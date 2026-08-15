@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const {
   TIPOS_CAMPO, IDS_TIPOS_CAMPO, CON_OPCIONES, GRUPOS, FICHAS,
   validarRespuesta, validarFormulario, normalizarRespuestas,
+  esBuscable, UMBRAL_BUSCABLE, filaCampo,
 } = require('../lib/formularioCampos.js');
 
 const campo = (extra) => ({ id: 'c1', etiqueta: 'Campo', tipo: 'texto', requerido: false, ...extra });
@@ -232,4 +233,47 @@ test('normalizar ignora lo que no corresponde a ningún campo', () => {
 test('una casilla sin marcar se guarda como false, no se pierde', () => {
   const out = normalizarRespuestas([{ id: 'b', tipo: 'checkbox' }], { b: false });
   assert.equal(out.b, false);
+});
+
+/* ── Listas largas ───────────────────────────────────────────────────── */
+
+test('una lista larga se marca como buscable y una corta no', () => {
+  const muchas = Array.from({ length: 40 }, (_, i) => `Barrio ${i}`);
+  assert.equal(esBuscable({ tipo: 'seleccion', opciones: muchas }), true);
+  assert.equal(esBuscable({ tipo: 'multiple', opciones: muchas }), true);
+  assert.equal(esBuscable({ tipo: 'seleccion', opciones: ['A', 'B', 'C'] }), false);
+});
+
+test('un booleano explícito manda sobre el tamaño', () => {
+  const muchas = Array.from({ length: 40 }, (_, i) => `Barrio ${i}`);
+  assert.equal(esBuscable({ tipo: 'seleccion', opciones: ['A'], buscable: true }), true);
+  assert.equal(esBuscable({ tipo: 'seleccion', opciones: muchas, buscable: false }), false);
+});
+
+test('los tipos sin opciones nunca son buscables', () => {
+  for (const tipo of ['texto', 'parrafo', 'numero', 'fecha', 'checkbox', 'foto']) {
+    assert.equal(esBuscable({ tipo, buscable: true }), false, `${tipo} no debería serlo`);
+  }
+  assert.equal(esBuscable(null), false);
+});
+
+test('sólo se guarda un booleano explícito; lo demás vuelve a null', () => {
+  const muchas = Array.from({ length: 40 }, (_, i) => `B${i}`);
+  const auto = filaCampo({ tipo: 'seleccion', etiqueta: 'Barrio', opciones: muchas }, 0);
+  assert.equal(auto.buscable, null, 'sin decisión explícita debe quedar en automático');
+
+  const forzado = filaCampo({ tipo: 'seleccion', etiqueta: 'Barrio', opciones: muchas, buscable: false }, 0);
+  assert.equal(forzado.buscable, false);
+
+  /* Si un campo deja de tener opciones, la decisión vieja no puede sobrevivir:
+     arrastraría un `buscable` que ya no significa nada. */
+  const texto = filaCampo({ tipo: 'texto', etiqueta: 'Nombre', buscable: true }, 0);
+  assert.equal(texto.buscable, null);
+});
+
+/* El umbral está duplicado en el frontend (CampoFormulario.jsx) porque el
+   renderizador público no siempre tiene el catálogo cargado. Si alguien lo
+   cambia aquí, esta prueba falla y recuerda que hay una segunda copia. */
+test('el umbral es 8 — si cambia, cambiar también CampoFormulario.jsx', () => {
+  assert.equal(UMBRAL_BUSCABLE, 8);
 });

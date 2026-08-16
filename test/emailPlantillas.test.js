@@ -376,3 +376,66 @@ test('la plantilla del ctx encolado se recupera y no ensucia las variables', () 
   assert.ok(!('_plantilla' in ctx), '_plantilla no debe llegar al render como variable');
   assert.equal(ctx.nombre, 'Ana');
 });
+
+/* ── La plantilla visual del organizador: cabecera, pie y color ──────────
+   Sube su diseño partido en dos y el texto va en medio, sobre el color que
+   elija. Se hizo así y no con una imagen de fondo detrás de todo porque una
+   `background-image` bajo el texto se cae en Outlook y Gmail la recorta en
+   móvil — y un QR encima de una foto pierde lectura el día del evento.
+
+   Lo que estas pruebas vigilan es que los tres campos LLEGUEN al HTML: el
+   frontend los guarda en page_json.emails y el servidor los tiene que usar.
+   Si alguien cambia el cascarón y se olvida de uno, el organizador sube su
+   diseño, ve la vista previa bien y el correo sale sin él. */
+
+test('la cabecera y el pie del organizador salen en el HTML', () => {
+  const { html } = renderEmail({
+    tipo: 'ticket',
+    plantilla: {
+      imagen: 'https://cdn.ejemplo.com/cabecera.png',
+      pie_imagen: 'https://cdn.ejemplo.com/pie.png',
+    },
+    evento: EVENTO,
+    ctx: CTX,
+  });
+  assert.ok(html.includes('https://cdn.ejemplo.com/cabecera.png'), 'falta la cabecera');
+  assert.ok(html.includes('https://cdn.ejemplo.com/pie.png'), 'falta el pie');
+});
+
+test('una cabecera diseñada se muestra entera; la portada del evento se recorta', () => {
+  const disenada = renderEmail({
+    tipo: 'ticket',
+    plantilla: { imagen: 'https://cdn.ejemplo.com/cabecera.png' },
+    evento: EVENTO, ctx: CTX,
+  }).html;
+  /* Recortar el diseño de alguien a 200px le corta el logo por la mitad. */
+  assert.ok(!/cabecera\.png[\s\S]{0,220}max-height:200px/.test(disenada),
+    'la cabecera del organizador no debe recortarse');
+
+  const portada = renderEmail({
+    tipo: 'ticket',
+    plantilla: {},
+    evento: { ...EVENTO, cover_url: 'https://cdn.ejemplo.com/portada.jpg' },
+    ctx: CTX,
+  }).html;
+  assert.ok(/portada\.jpg[\s\S]{0,220}max-height:200px/.test(portada),
+    'la portada del evento sí se recorta');
+});
+
+test('el color de fondo del organizador manda sobre el de la marca', () => {
+  const { html } = renderEmail({
+    tipo: 'ticket',
+    plantilla: { fondo: '#0B3D2E' },
+    evento: EVENTO, ctx: CTX,
+  });
+  assert.ok(html.includes('#0B3D2E'), 'no se aplicó el color elegido');
+});
+
+test('un color inventado no rompe el correo: cae al de la marca', () => {
+  const { html } = renderEmail({
+    tipo: 'ticket',
+    plantilla: { fondo: 'rojo; background:url(javascript:alert(1))' },
+    evento: EVENTO, ctx: CTX,
+  });
+  assert.ok(!html.includes('javascript:'), 'se coló un valor sin validar en el style');
+});

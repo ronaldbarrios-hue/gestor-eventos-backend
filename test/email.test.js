@@ -117,6 +117,51 @@ test('si los dos buzones fallan, el error que vuelve es el real, no un "sin prov
   }
 });
 
+test('cada buzón manda con SU PROPIA dirección — nunca con la del otro', async () => {
+  /* Esto es justo lo que Hostinger (y proveedores parecidos) rechazan si no
+     se respeta: mandar con un remitente que no es el buzón autenticado. */
+  const guardado = { ...process.env };
+  limpiarEnv();
+  ponerDosBuzones();
+  const { llamadas, restaurar } = falsearTransportes();
+  email.reiniciar();
+
+  try {
+    for (let i = 0; i < 2; i++) {
+      const r = await email.sendMail({ to: 'destino@correo.com', subject: 'Prueba', html: '<p>hola</p>' });
+      assert.equal(r.ok, true);
+    }
+    assert.match(llamadas[0].msg.from, /uno@dominio-a\.com/, 'el buzón A debe mandar con su propia dirección');
+    assert.match(llamadas[1].msg.from, /dos@dominio-b\.com/, 'el buzón B debe mandar con su propia dirección, no con la de A');
+  } finally {
+    restaurar();
+    email.reiniciar();
+    Object.assign(process.env, guardado);
+  }
+});
+
+test('EMAIL_FROM2 deja fijar el remitente del buzón 2, igual que EMAIL_FROM ya hace con el buzón 1', async () => {
+  const guardado = { ...process.env };
+  limpiarEnv();
+  ponerDosBuzones();
+  process.env.EMAIL_FROM = 'GESTEK <no-reply@dominio-a.com>';
+  process.env.EMAIL_FROM2 = 'GESTEK <no-reply@dominio-b.com>';
+  const { llamadas, restaurar } = falsearTransportes();
+  email.reiniciar();
+
+  try {
+    for (let i = 0; i < 2; i++) {
+      await email.sendMail({ to: 'destino@correo.com', subject: 'Prueba', html: '<p>hola</p>' });
+    }
+    assert.match(llamadas[0].msg.from, /no-reply@dominio-a\.com/);
+    assert.match(llamadas[1].msg.from, /no-reply@dominio-b\.com/);
+  } finally {
+    restaurar();
+    email.reiniciar();
+    Object.assign(process.env, guardado);
+  }
+});
+
 test('con un solo buzón configurado, el comportamiento es el de siempre (sin alternar)', async () => {
   const guardado = { ...process.env };
   limpiarEnv();

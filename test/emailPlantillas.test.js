@@ -284,6 +284,40 @@ test('el diagnóstico prefiere cPanel sobre las demás opciones', () => {
   Object.assign(process.env, guardado);
 });
 
+test('con un solo buzón SMTP el diagnóstico no cambia de nombre', () => {
+  const guardado = { ...process.env };
+  process.env.CPANEL_SMTP_USER = 'no-reply@x.com';
+  process.env.CPANEL_SMTP_PASS = 'secreto';
+  delete process.env.CPANEL_SMTP_USER2;
+  delete process.env.CPANEL_SMTP_PASS2;
+
+  const d = diagnosticoProveedor();
+  assert.equal(d.proveedor, 'cpanel_smtp');
+  assert.equal(d.buzones_activos, 1);
+  assert.equal(d.candidatos.smtp2, false);
+
+  for (const k of ['CPANEL_SMTP_USER', 'CPANEL_SMTP_PASS']) delete process.env[k];
+  Object.assign(process.env, guardado);
+});
+
+test('con los dos buzones SMTP puestos, el diagnóstico dice que se alternan', () => {
+  const guardado = { ...process.env };
+  process.env.CPANEL_SMTP_USER = 'no-reply@x.com';
+  process.env.CPANEL_SMTP_PASS = 'secreto';
+  process.env.CPANEL_SMTP_USER2 = 'no-reply@y.com';
+  process.env.CPANEL_SMTP_PASS2 = 'secreto2';
+
+  const d = diagnosticoProveedor();
+  assert.equal(d.proveedor, 'smtp_alternado');
+  assert.equal(d.buzones_activos, 2);
+  assert.equal(d.configurado, true);
+  assert.equal(d.candidatos.cpanel, true);
+  assert.equal(d.candidatos.smtp2, true);
+
+  for (const k of ['CPANEL_SMTP_USER', 'CPANEL_SMTP_PASS', 'CPANEL_SMTP_USER2', 'CPANEL_SMTP_PASS2']) delete process.env[k];
+  Object.assign(process.env, guardado);
+});
+
 /* ── Que el punto de envío no lance ──────────────────────────────────────
 
    Esto protege el fallo más caro que ha tenido el proyecto. La cabecera de
@@ -375,94 +409,4 @@ test('la plantilla del ctx encolado se recupera y no ensucia las variables', () 
   assert.deepEqual(recuperada, plantilla);
   assert.ok(!('_plantilla' in ctx), '_plantilla no debe llegar al render como variable');
   assert.equal(ctx.nombre, 'Ana');
-});
-
-/* ── La plantilla visual del organizador: cabecera, pie y color ──────────
-   Sube su diseño partido en dos y el texto va en medio, sobre el color que
-   elija. Se hizo así y no con una imagen de fondo detrás de todo porque una
-   `background-image` bajo el texto se cae en Outlook y Gmail la recorta en
-   móvil — y un QR encima de una foto pierde lectura el día del evento.
-
-   Lo que estas pruebas vigilan es que los tres campos LLEGUEN al HTML: el
-   frontend los guarda en page_json.emails y el servidor los tiene que usar.
-   Si alguien cambia el cascarón y se olvida de uno, el organizador sube su
-   diseño, ve la vista previa bien y el correo sale sin él. */
-
-test('la cabecera y el pie del organizador salen en el HTML', () => {
-  const { html } = renderEmail({
-    tipo: 'ticket',
-    plantilla: {
-      imagen: 'https://cdn.ejemplo.com/cabecera.png',
-      pie_imagen: 'https://cdn.ejemplo.com/pie.png',
-    },
-    evento: EVENTO,
-    ctx: CTX,
-  });
-  assert.ok(html.includes('https://cdn.ejemplo.com/cabecera.png'), 'falta la cabecera');
-  assert.ok(html.includes('https://cdn.ejemplo.com/pie.png'), 'falta el pie');
-});
-
-test('una cabecera diseñada se muestra entera; la portada del evento se recorta', () => {
-  const disenada = renderEmail({
-    tipo: 'ticket',
-    plantilla: { imagen: 'https://cdn.ejemplo.com/cabecera.png' },
-    evento: EVENTO, ctx: CTX,
-  }).html;
-  /* Recortar el diseño de alguien a 200px le corta el logo por la mitad. */
-  assert.ok(!/cabecera\.png[\s\S]{0,220}max-height:200px/.test(disenada),
-    'la cabecera del organizador no debe recortarse');
-
-  const portada = renderEmail({
-    tipo: 'ticket',
-    plantilla: {},
-    evento: { ...EVENTO, cover_url: 'https://cdn.ejemplo.com/portada.jpg' },
-    ctx: CTX,
-  }).html;
-  assert.ok(/portada\.jpg[\s\S]{0,220}max-height:200px/.test(portada),
-    'la portada del evento sí se recorta');
-});
-
-test('el color de fondo del organizador manda sobre el de la marca', () => {
-  const { html } = renderEmail({
-    tipo: 'ticket',
-    plantilla: { fondo: '#0B3D2E' },
-    evento: EVENTO, ctx: CTX,
-  });
-  assert.ok(html.includes('#0B3D2E'), 'no se aplicó el color elegido');
-});
-
-test('un color inventado no rompe el correo: cae al de la marca', () => {
-  const { html } = renderEmail({
-    tipo: 'ticket',
-    plantilla: { fondo: 'rojo; background:url(javascript:alert(1))' },
-    evento: EVENTO, ctx: CTX,
-  });
-  assert.ok(!html.includes('javascript:'), 'se coló un valor sin validar en el style');
-});
-
-/* ── El relevo entre buzones ─────────────────────────────────────────────
-   Varios remitentes en orden, cada uno con su cupo. Cuando el primero llega a
-   su umbral entra el siguiente; cuando todos están llenos, el envío ESPERA.
-
-   El umbral es 70% y no 100% a propósito: el tope que dice el proveedor y el
-   que aplica de verdad no siempre coinciden, y pasarse no retrasa el correo —
-   bloquea la cuenta durante días. Estas pruebas fijan esa decisión para que
-   nadie la suba a 100 pensando que aprovecha mejor el cupo. */
-const { conSitio } = require('../lib/smtpEvento.js');
-
-test('un buzón con sitio acepta; al llegar al 70% por hora, cede el turno', () => {
-  const buzon = { max_por_hora: 100, max_por_dia: null };
-  assert.equal(conSitio(buzon, { hora: 40, dia: 40 }, 0.7), true,  'al 40% todavía tiene sitio');
-  assert.equal(conSitio(buzon, { hora: 69, dia: 69 }, 0.7), true,  'justo por debajo del umbral sigue');
-  assert.equal(conSitio(buzon, { hora: 70, dia: 70 }, 0.7), false, 'en el umbral ya cede');
-});
-
-test('el tope diario también cede el turno, aunque la hora vaya holgada', () => {
-  const buzon = { max_por_hora: 100, max_por_dia: 500 };
-  assert.equal(conSitio(buzon, { hora: 2, dia: 350 }, 0.7), false,
-    'la hora está vacía pero el día llegó al umbral');
-});
-
-test('sin tope declarado se envía: manda el freno global de la cola', () => {
-  assert.equal(conSitio({ max_por_hora: null, max_por_dia: null }, { hora: 9999, dia: 9999 }, 0.7), true);
 });

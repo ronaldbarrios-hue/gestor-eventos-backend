@@ -439,3 +439,30 @@ test('un color inventado no rompe el correo: cae al de la marca', () => {
   });
   assert.ok(!html.includes('javascript:'), 'se coló un valor sin validar en el style');
 });
+
+/* ── El relevo entre buzones ─────────────────────────────────────────────
+   Varios remitentes en orden, cada uno con su cupo. Cuando el primero llega a
+   su umbral entra el siguiente; cuando todos están llenos, el envío ESPERA.
+
+   El umbral es 70% y no 100% a propósito: el tope que dice el proveedor y el
+   que aplica de verdad no siempre coinciden, y pasarse no retrasa el correo —
+   bloquea la cuenta durante días. Estas pruebas fijan esa decisión para que
+   nadie la suba a 100 pensando que aprovecha mejor el cupo. */
+const { conSitio } = require('../lib/smtpEvento.js');
+
+test('un buzón con sitio acepta; al llegar al 70% por hora, cede el turno', () => {
+  const buzon = { max_por_hora: 100, max_por_dia: null };
+  assert.equal(conSitio(buzon, { hora: 40, dia: 40 }, 0.7), true,  'al 40% todavía tiene sitio');
+  assert.equal(conSitio(buzon, { hora: 69, dia: 69 }, 0.7), true,  'justo por debajo del umbral sigue');
+  assert.equal(conSitio(buzon, { hora: 70, dia: 70 }, 0.7), false, 'en el umbral ya cede');
+});
+
+test('el tope diario también cede el turno, aunque la hora vaya holgada', () => {
+  const buzon = { max_por_hora: 100, max_por_dia: 500 };
+  assert.equal(conSitio(buzon, { hora: 2, dia: 350 }, 0.7), false,
+    'la hora está vacía pero el día llegó al umbral');
+});
+
+test('sin tope declarado se envía: manda el freno global de la cola', () => {
+  assert.equal(conSitio({ max_por_hora: null, max_por_dia: null }, { hora: 9999, dia: 9999 }, 0.7), true);
+});

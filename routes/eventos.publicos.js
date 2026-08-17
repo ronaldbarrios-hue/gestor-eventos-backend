@@ -299,6 +299,7 @@ router.get('/slug/:slug', async (req, res) => {
       branding, paginas, navbar,
       modo_publico, url_externa,
       pago_llave, pago_qr_url, pago_instrucciones,
+      owner_id,
       categoria:categorias(slug, nombre),
       organizador:profiles!owner_id(nombre, handle, avatar_url, empresa, branding, empresa_logo_url),
       ticket_types(id, nombre, descripcion, precio, currency, cupo, vendidos,
@@ -309,7 +310,12 @@ router.get('/slug/:slug', async (req, res) => {
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
-  if (!evento || evento.estado !== 'publicado') {
+  /* El organizador dueño del evento SÍ puede verlo aunque esté en borrador —
+     es justo lo que necesita el botón "Ver sitio público"/preview del editor
+     de la landing. Cualquier otra persona (o nadie logueado) sigue viendo
+     404 mientras no esté publicado: el borrador no se filtra al público. */
+  const esDueño = Boolean(req.user?.id) && req.user.id === evento?.owner_id;
+  if (!evento || (evento.estado !== 'publicado' && !esDueño)) {
     return res.status(404).json({ error: 'Este evento no existe o no está publicado.' });
   }
 
@@ -408,6 +414,10 @@ router.get('/slug/:slug', async (req, res) => {
     referrer     : req.headers['referer'] || null,
   }).then(() => {}, () => {});
 
+  /* owner_id solo hacía falta para decidir si el dueño puede previsualizar
+     su borrador (arriba) — no es dato del público, no viaja en la respuesta. */
+  delete evento.owner_id;
+
   /* `conSitio` devuelve el evento con la marca, las páginas y el navbar
      también dentro de `page_json` (0064). La página pública lleva años
      leyendo `page_json.branding` y no tiene por qué enterarse de que ahora
@@ -429,23 +439,28 @@ async function cargarTorneoPublico(torneo) {
   return { torneo, equipos: equipos || [], partidos: partidos || [] };
 }
 
-async function eventoPublicado(slug) {
+async function eventoPublicado(slug, requesterId) {
   /* Se traen también el título y el organizador: las páginas públicas que
      cuelgan del evento (torneo, agenda) necesitan pintar su cabecera y el
      enlace de vuelta, y antes solo recibían el id — por eso flotaban sin
      contexto. */
   const { data: evento } = await supabase
     .from('eventos')
-    .select(`id, estado, titulo, slug,
+    .select(`id, estado, titulo, slug, owner_id,
              organizador:profiles!owner_id(nombre, empresa, branding, empresa_logo_url)`)
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
-  if (!evento || evento.estado !== 'publicado') return null;
+  if (!evento) return null;
+  /* Igual que en /slug/:slug: el dueño puede previsualizar su borrador,
+     nadie más. */
+  const esDueño = Boolean(requesterId) && requesterId === evento.owner_id;
+  if (evento.estado !== 'publicado' && !esDueño) return null;
+  delete evento.owner_id;
   return evento;
 }
 
 /* GET /eventos/publicos/slug/:slug/torneos — lista de torneos del evento. */
 router.get('/slug/:slug/torneos', async (req, res) => {
-  const evento = await eventoPublicado(req.params.slug);
+  const evento = await eventoPublicado(req.params.slug, req.user?.id);
   if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
   const { data: torneos } = await supabase
     .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, orden')
@@ -456,7 +471,7 @@ router.get('/slug/:slug/torneos', async (req, res) => {
 
 /* GET /eventos/publicos/slug/:slug/torneos/:torneoId — un torneo concreto. */
 router.get('/slug/:slug/torneos/:torneoId', async (req, res) => {
-  const evento = await eventoPublicado(req.params.slug);
+  const evento = await eventoPublicado(req.params.slug, req.user?.id);
   if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
   const { data: torneo } = await supabase
     .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, num_grupos, avanzan_por_grupo')
@@ -468,7 +483,7 @@ router.get('/slug/:slug/torneos/:torneoId', async (req, res) => {
 /* GET /eventos/publicos/slug/:slug/torneo — RETROCOMPAT: primer torneo,
    más la lista de todos para que la página pública ofrezca el selector. */
 router.get('/slug/:slug/torneo', async (req, res) => {
-  const evento = await eventoPublicado(req.params.slug);
+  const evento = await eventoPublicado(req.params.slug, req.user?.id);
   if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
 
   const { data: torneos } = await supabase
@@ -525,7 +540,7 @@ function campeonDe(torneo, equipos, partidos) {
    fixture entero. Es lo que se incrusta en la web del organizador: quien la
    visita quiere saber quién ganó y quién jugó, no navegar el bracket. */
 router.get('/slug/:slug/torneos-resumen', async (req, res) => {
-  const evento = await eventoPublicado(req.params.slug);
+  const evento = await eventoPublicado(req.params.slug, req.user?.id);
   if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
 
   const { data: torneos } = await supabase
@@ -569,7 +584,7 @@ router.get('/slug/:slug/torneos-resumen', async (req, res) => {
    se movió, que es dato de asistente y no información del evento. La versión
    interna de esa tabla vive en el panel y ahí se queda. */
 router.get('/slug/:slug/ranking', async (req, res) => {
-  const evento = await eventoPublicado(req.params.slug);
+  const evento = await eventoPublicado(req.params.slug, req.user?.id);
   if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
 
   const { data, error } = await supabase.from('ticket_interacciones')
@@ -639,8 +654,9 @@ router.get('/slug/:slug/agenda', async (req, res) => {
   const { slug } = req.params;
 
   const { data: evento } = await supabase
-    .from('eventos').select('id, estado').eq('slug', slug).is('deleted_at', null).maybeSingle();
-  if (!evento || evento.estado !== 'publicado') return res.status(404).json({ error: 'Evento no disponible.' });
+    .from('eventos').select('id, estado, owner_id').eq('slug', slug).is('deleted_at', null).maybeSingle();
+  const esDueño = Boolean(req.user?.id) && req.user.id === evento?.owner_id;
+  if (!evento || (evento.estado !== 'publicado' && !esDueño)) return res.status(404).json({ error: 'Evento no disponible.' });
 
   /* Los campos de inscripción viajan con la agenda desde la 0055/0059: la
      página pública necesita saber cuáles piden apuntarse, cuánto queda libre y

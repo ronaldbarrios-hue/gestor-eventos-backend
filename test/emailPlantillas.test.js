@@ -241,6 +241,37 @@ test('un botón sin URL válida no se pinta', () => {
   assert.ok(!html.includes('javascript:alert'), 'se colgó un esquema peligroso en el botón');
 });
 
+test('la cabecera subida por el organizador se muestra entera, la portada del evento se recorta', () => {
+  const conDiseno = renderEmail({
+    tipo: 'personalizado', plantilla: { imagen: 'https://ejemplo.com/cabecera.png' }, evento: EVENTO, ctx: CTX,
+  }).html;
+  assert.ok(conDiseno.includes('height:auto;'), 'la cabecera diseñada debería mostrarse sin recortar');
+
+  const sinPlantilla = renderEmail({
+    tipo: 'personalizado', plantilla: {}, evento: { ...EVENTO, cover_url: 'https://ejemplo.com/portada.png' }, ctx: CTX,
+  }).html;
+  assert.ok(sinPlantilla.includes('max-height:200px'), 'la portada del evento sí debería recortarse');
+});
+
+test('el pie que sube el organizador aparece como imagen, sin la línea del footer de texto encima', () => {
+  const { html } = renderEmail({
+    tipo: 'personalizado', plantilla: { pie_imagen: 'https://ejemplo.com/pie.png' }, evento: EVENTO, ctx: CTX,
+  });
+  assert.ok(html.includes('ejemplo.com/pie.png'), 'debería incluir la imagen del pie');
+});
+
+test('el color del centro que elige el organizador reemplaza al de la marca', () => {
+  const { html } = renderEmail({
+    tipo: 'personalizado', plantilla: { fondo: '#112233' }, evento: EVENTO, ctx: CTX,
+  });
+  assert.ok(html.includes('background:#112233'), 'debería usar el color elegido, no el de la marca');
+});
+
+test('sin color elegido, el centro usa la superficie de la marca de siempre', () => {
+  const { html } = renderEmail({ tipo: 'personalizado', plantilla: {}, evento: EVENTO, ctx: CTX });
+  assert.ok(!html.includes('background:#112233'));
+});
+
 test('un tipo desconocido no revienta: cae en personalizado', () => {
   const { html } = renderEmail({ tipo: 'no-existe', plantilla: {}, evento: EVENTO, ctx: CTX });
   assert.ok(html.startsWith('<!doctype html>'));

@@ -51,6 +51,33 @@ app.get('/', (_req, res) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
+/* TEMPORAL — diagnóstico de red saliente hacia Hostinger, para depurar el
+   ENETUNREACH/timeout que ve el envío de correo. Sin parámetros de entrada
+   (no hay riesgo de SSRF: los destinos están fijos en el código), y no
+   expone nada sensible — solo si la conexión abre o no. Borrar este bloque
+   una vez resuelto. */
+app.get('/debug-red', async (_req, res) => {
+  const net = require('net');
+  const probar = (host, port) => new Promise((resolve) => {
+    const inicio = Date.now();
+    const socket = net.connect(port, host);
+    const terminar = (resultado) => {
+      socket.destroy();
+      resolve({ host, port, ms: Date.now() - inicio, ...resultado });
+    };
+    socket.setTimeout(8000);
+    socket.on('connect', () => terminar({ ok: true }));
+    socket.on('timeout', () => terminar({ ok: false, error: 'TIMEOUT' }));
+    socket.on('error', (e) => terminar({ ok: false, error: e.code || e.message }));
+  });
+  const resultados = await Promise.all([
+    probar('smtp.hostinger.com', 465),
+    probar('smtp.hostinger.com', 587),
+    probar('google.com', 443), // control: si esto también falla, es Render bloqueando salida en general
+  ]);
+  res.json({ resultados });
+});
+
 /* Rutas */
 app.use('/api/v1',           require('./routes/api.js'));
 /* Conector MCP: GESTEK dentro de Claude. Mismo token gtk_live_ que la API

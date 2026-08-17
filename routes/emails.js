@@ -28,12 +28,14 @@ const {
 } = require('../lib/emailPlantillas.js');
 const { verificarConexion } = require('../lib/email.js');
 const smtpEvento = require('../lib/smtpEvento.js');
+const cola = require('../lib/colaCorreo.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-const MAX_DESTINATARIOS = 500;  // tope de seguridad por envío
-const LOTE = 5;                 // concurrencia para no saturar el SMTP
+const MAX_DESTINATARIOS = 500;       // tope de seguridad por envío directo (cola apagada)
+const MAX_DESTINATARIOS_COLA = 20000; // tope de seguridad al encolar una campaña entera de una vez
+const LOTE = 5;                       // concurrencia para no saturar el SMTP (solo envío directo)
 
 /* Campos que el organizador puede guardar en una plantilla. */
 const CAMPOS = ['asunto', 'encabezado', 'cuerpo', 'boton_texto', 'boton_url', 'imagen', 'footer'];
@@ -407,6 +409,43 @@ router.post('/eventos/:id/emails/enviar', async (req, res) => {
     catch (e) { return res.status(500).json({ error: 'No se pudieron resolver los destinatarios: ' + e.message }); }
 
     if (destinatarios.length === 0) return res.status(400).json({ error: 'No hay destinatarios para ese segmento.' });
+
+    /* Con la cola encendida (EMAIL_COLA_ACTIVA=1), una campaña no se manda
+       dentro de este mismo request: se encola entera de una sola vez
+       (encolarLote — un insert por lote de 500 filas, no uno por persona) y
+       sale después al ritmo que aguante el proveedor, con reintentos. Así
+       7.000 destinatarios no dependen de que la conexión HTTP se quede
+       abierta ni de golpear a Resend de un tirón. Prioridad 5 (masivo): una
+       boleta recién comprada por otra persona sigue adelantando en la fila. */
+    if (cola.activa()) {
+      if (destinatarios.length > MAX_DESTINATARIOS_COLA) {
+        return res.status(400).json({ error: `Demasiados destinatarios (${destinatarios.length}). El máximo por campaña es ${MAX_DESTINATARIOS_COLA}.` });
+      }
+      const filas = destinatarios.map(d => ({
+        evento_id: evento.id,
+        tipo,
+        to: d.email,
+        ctx: { nombre: d.nombre, codigo: d.codigo, tipo_boleta: d.tipo_boleta },
+        prioridad: 5,
+      }));
+      const r = await cola.encolarLote(filas, { prioridad: 5 });
+      if (r.ok) {
+        return res.json({
+          modo: 'cola',
+          encolados: r.metidas,
+          total: destinatarios.length,
+          por_hora: cola.porHora(),
+          aviso: `Se está enviando de a poco (hasta ${cola.porHora()} por hora) para cuidar la reputación del correo. El avance queda en "Últimos envíos".`,
+        });
+      }
+      /* r.motivo === 'sin_cola': la migración 0070 no está aplicada todavía.
+         Cae al envío directo de abajo, con su tope de siempre, para no dejar
+         la campaña sin salir por una migración que falta. */
+      if (r.motivo !== 'sin_cola') {
+        return res.status(500).json({ error: 'No se pudo encolar la campaña: ' + r.motivo });
+      }
+    }
+
     if (destinatarios.length > MAX_DESTINATARIOS) {
       return res.status(400).json({ error: `Demasiados destinatarios (${destinatarios.length}). El máximo por envío es ${MAX_DESTINATARIOS}.` });
     }
@@ -425,7 +464,7 @@ router.post('/eventos/:id/emails/enviar', async (req, res) => {
       }));
     }
 
-    res.json({ enviados, fallidos: errores.length, total: destinatarios.length, errores: errores.slice(0, 20) });
+    res.json({ modo: 'directo', enviados, fallidos: errores.length, total: destinatarios.length, errores: errores.slice(0, 20) });
   } catch (e) { fallo(res, e); }
 });
 

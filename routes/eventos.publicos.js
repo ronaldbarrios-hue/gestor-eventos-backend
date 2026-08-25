@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const supabase = require('../lib/supabase.js');
+const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
@@ -878,7 +879,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
         tipo_boleta: tipo.nombre,
         codigo     : ticket.codigo,
         qr_token   : ticket.qr_token,
-        enlace     : `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${ticket.codigo}`,
+        enlace     : await enlaceBoleta(evento, ticket.codigo),
       },
     }).then(r => console.log('[reservar] email confirmación resultado:', r));
 

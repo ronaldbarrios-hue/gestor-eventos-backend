@@ -1,5 +1,6 @@
 const express = require('express');
 const supabase = require('../lib/supabase.js');
+const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { otorgarBadge } = require('../lib/gamificacion.js');
 const { esUrlImagenSegura } = require('../lib/urls.js');
@@ -172,7 +173,7 @@ router.post('/boletas/:id/transferir', async (req, res) => {
     }
 
     /* Aviso por correo a la nueva persona, con su QR ya listo */
-    const frontendUrl = (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0];
+    const enlaceNuevo = await enlaceBoleta(ticket.evento_id, nuevoCodigo);
     const resultadoEmail = await enviarEmailEvento({
       evento: ticket.evento_id,
       tipo: 'ticket',
@@ -182,7 +183,7 @@ router.post('/boletas/:id/transferir', async (req, res) => {
         tipo_boleta: ticket.tipo?.nombre,
         codigo     : nuevoCodigo,
         qr_token,
-        enlace     : `${frontendUrl}/mi-ticket/${nuevoCodigo}`,
+        enlace     : enlaceNuevo,
       },
     });
 

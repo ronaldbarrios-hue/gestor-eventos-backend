@@ -7,6 +7,7 @@
 const express = require('express');
 const crypto  = require('crypto');
 const supabase = require('../lib/supabase.js');
+const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const mp = require('../lib/mercadopago.js');
@@ -458,7 +459,7 @@ async function procesarPago(pago) {
           tipo_boleta: tipoNombre,
           codigo     : tFull.codigo,
           qr_token   : tFull.qr_token,
-          enlace     : `${process.env.FRONTEND_URL?.split(',')[0] || 'https://gestor-eventos-frontend.vercel.app'}/mi-ticket/${tFull.codigo}`,
+          enlace     : await enlaceBoleta(ticket.evento_id, tFull.codigo),
         },
       }).then(r => console.log('[pagos] email confirmación resultado:', r));
       avisarExpositorSiAplica(ticketId).catch(() => {});

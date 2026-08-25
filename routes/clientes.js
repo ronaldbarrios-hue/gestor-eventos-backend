@@ -663,6 +663,92 @@ router.post('/:eventoId/zonas/limpiar', async (req, res) => {
   }
 });
 
+/* GET /eventos/:eventoId/mapa/vivo — el estado de TODO lo que hay en el plano.
+
+   El mapa decía dónde están las cosas y nada más; para saber cómo iban había
+   que ir a cuatro pantallas distintas y juntarlas en la cabeza. Con esto, un
+   clic en el plano contesta: cuánta gente hay en esa zona, cuántos han entrado
+   por esa puerta y cómo va la inscripción de ese sub-evento.
+
+   Sólo se calcula lo que está PUESTO en el plano, no todo el evento. Es lo que
+   mantiene barata una petición que se repite cada pocos segundos: si el
+   organizador colocó tres zonas y dos puertas, se cuentan tres zonas y dos
+   puertas, no las cuarenta sesiones de la agenda. */
+router.get('/:eventoId/mapa/vivo', async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertCheckinAccess(eventoId, req.user.id);
+    const { data: ev } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
+    const pj = ev?.page_json || {};
+    const marcadores = Array.isArray(pj.mapa?.marcadores) ? pj.mapa.marcadores : [];
+    const accesosCfg = Array.isArray(pj.accesos) ? pj.accesos : [];
+
+    const zonas = await ocupacion(eventoId);
+
+    /* Puertas: una cuenta por puerta y no una lectura de todas las boletas.
+       Traerlas para sumarlas en JS volvería a chocar con el tope de mil filas
+       de PostgREST, que es el mismo fallo que ya arreglamos en el aforo. */
+    const puestas = new Set(marcadores.filter(m => m.tipo === 'acceso' && m.acceso_id).map(m => m.acceso_id));
+    const accesos = await Promise.all(
+      accesosCfg.filter(a => puestas.has(a.id)).map(async (a) => {
+        const { count } = await supabase.from('tickets')
+          .select('id', { count: 'exact', head: true })
+          .eq('evento_id', eventoId).eq('estado', 'usado').eq('acceso', a.nombre);
+        return { id: a.id, nombre: a.nombre, ingresos: count || 0 };
+      })
+    );
+
+    /* Sub-eventos: inscritos y cuántos de ésos han pasado ya su QR por la
+       puerta de la actividad. Son dos números distintos a propósito — apuntarse
+       no es aparecer, y esa diferencia es la que se reporta después. */
+    const sesionIds = [...new Set(marcadores.filter(m => m.tipo === 'sesion' && m.sesion_id).map(m => m.sesion_id))];
+    let sesiones = [];
+    if (sesionIds.length) {
+      const { data: ses } = await supabase.from('agenda_sessions')
+        .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, requiere_inscripcion')
+        .in('id', sesionIds);
+      sesiones = await Promise.all((ses || []).map(async (s) => {
+        /* Cada cuenta se arma desde cero: un builder de supabase-js se muta al
+           encadenarle filtros, así que reutilizar uno para dos consultas mezcla
+           las condiciones de las dos. */
+        const cuenta = (filtrar) => filtrar(
+          supabase.from('sesion_inscripciones')
+            .select('id', { count: 'exact', head: true })
+            .eq('evento_id', eventoId).eq('session_id', s.id)
+        );
+        const [{ count: inscritos }, { count: asistieron }] = await Promise.all([
+          cuenta(q => q.neq('estado', 'cancelada')),
+          cuenta(q => q.eq('estado', 'asistio')),
+        ]);
+        return {
+          ...s,
+          inscritos: inscritos || 0,
+          asistieron: asistieron || 0,
+          libres: s.cupo == null ? null : Math.max(0, s.cupo - (inscritos || 0)),
+        };
+      }));
+    }
+
+    /* El ingreso al recinto, que es otra cosa que el aforo de las zonas: una
+       persona puede haber entrado al evento y no estar dentro de ninguna zona. */
+    const { count: ingresados } = await supabase.from('tickets')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', eventoId).eq('estado', 'usado');
+
+    res.json({
+      zonas, accesos, sesiones,
+      total: {
+        dentro_zonas: zonas.reduce((s, z) => s + z.dentro, 0),
+        excedido    : zonas.reduce((s, z) => s + z.excedido, 0),
+        ingresados  : ingresados || 0,
+      },
+      at: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 /* GET /eventos/:eventoId/zonas/reporte?intervalo=15 — el reporte del aforo.
    Devuelve, por zona: totales del histórico completo (el corte no lo esconde),
    ocupación actual, pico simultáneo con su hora, estancia media y la curva del

@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const supabase = require('../lib/supabase.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
+const { ocupacion } = require('../lib/aforoZonas.js');
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
@@ -400,13 +401,41 @@ router.get('/slug/:slug', async (req, res) => {
     const marc = Array.isArray(evento.page_json?.mapa?.marcadores) ? evento.page_json.mapa.marcadores : [];
     const sesionIds = [...new Set(marc.filter(m => m?.tipo === 'sesion' && m.sesion_id).map(m => m.sesion_id))];
     if (sesionIds.length) {
+      /* Van tambien el cupo y los inscritos: en el mapa la pregunta del
+         visitante no es solo "donde es el taller" sino "todavia puedo entrar".
+         Sin eso, el marcador manda a la agenda a averiguarlo. */
       const { data: ses } = await supabase
-        .from('agenda_sessions').select('id, titulo, tipo, inicio, fin, ubicacion').in('id', sesionIds);
-      evento.mapa_sesiones = ses || [];
+        .from('agenda_sessions')
+        .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, inscritos, requiere_inscripcion')
+        .in('id', sesionIds);
+      evento.mapa_sesiones = (ses || []).map(s => ({
+        ...s,
+        libres: s.cupo == null ? null : Math.max(0, s.cupo - (s.inscritos || 0)),
+        lleno : s.cupo != null && (s.inscritos || 0) >= s.cupo,
+      }));
     } else {
       evento.mapa_sesiones = [];
     }
   } catch { evento.mapa_sesiones = []; }
+
+  /* Aforo de las zonas en el mapa publico: SOLO si el organizador lo activa.
+
+     Apagado por defecto y a proposito. Es un dato de operacion, y calcularlo
+     aqui sale caro justo donde mas caro es: esta respuesta la pide cada
+     visitante que abre la pagina, no un punado de gente del panel. Quien lo
+     encienda sabe lo que gana --"la Zona Gamer esta llena, ve a otra"-- y lo
+     que cuesta. */
+  try {
+    if (evento.page_json?.mapa?.mostrar_aforo) {
+      const zonas = await ocupacion(evento.id);
+      evento.mapa_aforo = zonas.map(z => ({
+        id: z.id, nombre: z.nombre, dentro: z.dentro, aforo_max: z.aforo_max,
+        lleno: Boolean(z.aforo_max && z.dentro >= z.aforo_max),
+      }));
+    } else {
+      evento.mapa_aforo = null;
+    }
+  } catch { evento.mapa_aforo = null; }
 
   supabase.from('event_views').insert({
     evento_id    : evento.id,

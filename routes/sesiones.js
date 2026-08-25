@@ -35,6 +35,7 @@ const {
   TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
 } = require('../lib/formularioCampos.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const { resolverTicket } = require('../lib/ticketLookup.js');
 
 const publico = express.Router();
 const panel = express.Router();
@@ -469,17 +470,28 @@ panel.get('/:eventoId/sesiones/:sesionId/inscripciones', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-/* Marcar asistencia. Acepta el código de la boleta o el id de la inscripción,
-   porque en la puerta del taller se escanea el QR que ya tiene la persona. */
+/* Marcar asistencia a UN sub-evento. Acepta el QR firmado de la boleta, su
+   código corto o el id de la inscripción.
+
+   Esto es lo único que suma a las métricas de un sub-evento, y es a propósito:
+   entrar al evento no es asistir a un taller. El check-in de la puerta cuenta
+   el ingreso al recinto y no toca nada de aquí; para que una charla sume, la
+   persona tiene que estar inscrita en ella y volver a pasar su QR en su
+   puerta. Sin las dos cosas, "asistió a la charla" querría decir "estaba en el
+   edificio", que no es lo que nadie quiere reportar.
+
+   Por eso no hay atajo para marcar a quien no está inscrito: la respuesta dice
+   quién es y que le falta registrarse, y el staff lo registra primero. */
 panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
   const { eventoId, sesionId } = req.params;
   const codigo = String(req.body?.codigo || '').trim().toUpperCase();
+  const qrToken = req.body?.qr_token || null;
   const inscripcionId = req.body?.inscripcion_id || null;
 
   try {
     await assertPermiso(eventoId, req.user.id, PERMS_MARCAR, 'id, owner_id');
-    if (!codigo && !inscripcionId) {
-      return res.status(400).json({ error: 'Manda el código de la boleta o el id de la inscripción.' });
+    if (!codigo && !qrToken && !inscripcionId) {
+      return res.status(400).json({ error: 'Manda el QR o el código de la boleta, o el id de la inscripción.' });
     }
 
     let query = supabase
@@ -487,13 +499,20 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
       .select('id, estado, nombre, email, ticket_id')
       .eq('evento_id', eventoId).eq('session_id', sesionId);
 
+    /* La boleta se resuelve con el mismo helper que el resto de escáneres: en
+       la puerta de un taller se escanea el QR de la escarapela, que puede ser
+       el token firmado o el código corto según cuándo se imprimió. */
+    let ticket = null;
     if (inscripcionId) {
       query = query.eq('id', inscripcionId);
     } else {
-      const { data: t } = await supabase
-        .from('tickets').select('id').eq('codigo', codigo).eq('evento_id', eventoId).maybeSingle();
-      if (!t) return res.status(404).json({ error: 'Ese código no existe en este evento.' });
-      query = query.eq('ticket_id', t.id);
+      try {
+        ticket = await resolverTicket(eventoId, { qr_token: qrToken, codigo });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      if (!ticket) return res.status(404).json({ error: 'Esa boleta no existe en este evento.' });
+      query = query.eq('ticket_id', ticket.id);
     }
 
     const { data: insc, error: eGet } = await query.maybeSingle();
@@ -501,10 +520,16 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
       if (faltaMigracion(eGet)) return res.status(503).json({ error: AVISO_MIGRACION });
       return res.status(500).json({ error: eGet.message });
     }
-    if (!insc) return res.status(404).json({ error: 'Esa persona no está inscrita en este sub-evento.' });
+    if (!insc) {
+      return res.status(404).json({
+        error: 'Esa persona no está inscrita en este sub-evento. Regístrala primero y vuelve a escanear.',
+        no_inscrito: true,
+        ticket: ticket ? { codigo: ticket.codigo, nombre: ticket.guest_nombre, tipo: ticket.tipo?.nombre } : null,
+      });
+    }
     if (insc.estado === 'cancelada') return res.status(400).json({ error: 'Esa inscripción está cancelada.' });
     if (insc.estado === 'asistio') {
-      return res.json({ ok: true, ya_marcada: true, inscripcion: insc });
+      return res.json({ ok: true, ya_marcada: true, inscripcion: insc, ticket: ticket ? { codigo: ticket.codigo } : null });
     }
 
     const { data, error } = await supabase
@@ -515,7 +540,17 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
       .single();
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json({ ok: true, ya_marcada: false, inscripcion: data });
+    /* Cuántos van dentro de ESTE sub-evento, para que la puerta del taller vea
+       su propio número sin salir de la pantalla del escáner. */
+    const { data: todas } = await supabase
+      .from('sesion_inscripciones')
+      .select('estado').eq('evento_id', eventoId).eq('session_id', sesionId);
+    const conteo = {
+      inscritos : (todas || []).filter(i => i.estado !== 'cancelada').length,
+      asistieron: (todas || []).filter(i => i.estado === 'asistio').length,
+    };
+
+    res.json({ ok: true, ya_marcada: false, inscripcion: data, conteo, ticket: ticket ? { codigo: ticket.codigo } : null });
   } catch (e) { fallo(res, e); }
 });
 

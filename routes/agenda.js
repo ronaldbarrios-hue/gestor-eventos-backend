@@ -18,6 +18,14 @@ function assertOwner(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['gestionar_agenda', 'editar_evento'], 'id, owner_id');
 }
 
+/* LEER la agenda pide menos que editarla: quien está en la puerta de un taller
+   tiene permiso de check-in y nada más, y necesita la lista de sub-eventos para
+   elegir a cuál le está marcando asistencia. Sin esto, el único que podía usar
+   el escáner de sub-eventos era quien podía reescribir el calendario. */
+function assertLectura(eventoId, userId) {
+  return assertPermiso(eventoId, userId, ['gestionar_agenda', 'editar_evento', 'checkin'], 'id, owner_id');
+}
+
 /* El organizador siempre puede; cualquier otro usuario necesita tener al
    menos una boleta para el evento — mismo criterio que Rueda de Negocios,
    para poder marcar favoritos en su itinerario personal. */
@@ -116,7 +124,7 @@ router.delete('/:eventoId/speakers/:speakerId', async (req, res) => {
 router.get('/:eventoId/sessions', async (req, res) => {
   const { eventoId } = req.params;
   try {
-    await assertOwner(eventoId, req.user.id);
+    await assertLectura(eventoId, req.user.id);
     const { data, error } = await supabase
       .from('agenda_sessions')
       .select(`*, speaker:speakers!speaker_id(id, nombre, foto_url, empresa)`)

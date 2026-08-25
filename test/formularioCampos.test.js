@@ -373,3 +373,35 @@ test('las columnas obligatorias son las mismas que exige el importador', () => {
   const obligatorias = COLUMNAS_PLANTILLA.filter(c => c.obligatoria).map(c => c.id);
   assert.deepEqual(obligatorias, ['pregunta', 'tipo_pregunta']);
 });
+
+/* ── El tope de preguntas se cuenta POR BOLETA ───────────────────────────
+   Antes era por evento, y entonces las dos cosas eran lo mismo porque el
+   formulario era uno solo. Desde que cada tipo de boleta tiene el suyo, contar
+   el total castiga lo razonable: cuatro boletas de quince preguntas son
+   quince para cada persona, no sesenta.
+
+   Lo que importa es cuántas ve UNA persona: las de su boleta más las que se
+   piden a todas. */
+const unCampo = (i, ticket) => ({ etiqueta: 'p' + i, tipo: 'texto', ticket_type_id: ticket || null });
+const repetir = (n, ticket, desde = 0) => Array.from({ length: n }, (_, i) => unCampo(desde + i, ticket));
+
+test('cuatro boletas de 20 preguntas propias caben, aunque sumen 80', () => {
+  const campos = [
+    ...repetir(20, 'a', 0), ...repetir(20, 'b', 100),
+    ...repetir(20, 'c', 200), ...repetir(20, 'd', 300),
+  ];
+  assert.equal(validarDefinicion(campos), null,
+    'ninguna persona ve más de 20; el total del evento no debería importar');
+});
+
+test('las compartidas cuentan para TODAS las boletas', () => {
+  /* 50 compartidas + 15 propias = 65 para quien compre esa boleta. */
+  const campos = [...repetir(50, null, 0), ...repetir(15, 'a', 100)];
+  const fallo = validarDefinicion(campos);
+  assert.ok(fallo && /65/.test(fallo), `debería avisar de las 65 reales, dijo: ${fallo}`);
+});
+
+test('sin boletas propias, el tope es el total de compartidas', () => {
+  assert.equal(validarDefinicion(repetir(60, null)), null, '60 justas caben');
+  assert.ok(validarDefinicion(repetir(61, null)), '61 ya no');
+});

@@ -10,6 +10,8 @@ const { notificar } = require('../lib/notificar.js');
 const { correrAutomatizaciones } = require('../lib/automatizaciones.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { COLUMNAS_CAMPO, validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
+const { auditar } = require('../lib/auditar.js');
+const { zonasDelEvento, ocupacion, juntar } = require('../lib/aforoZonas.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -484,52 +486,55 @@ router.post('/:eventoId/reingreso', async (req, res) => {
     const ticket = await resolverTicket(eventoId, { qr_token, codigo });
     if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.' });
 
-    let accesoNombre = null, zonaNombre = null, zonaMax = null;
+    let accesoNombre = null, zona = null;
     if (acceso_id || zona_id) {
       const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
       const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
-      const zonas = Array.isArray(evCfg?.page_json?.zonas) ? evCfg.page_json.zonas : [];
       accesoNombre = accesos.find(a => a.id === acceso_id)?.nombre || null;
-      const zonaObj = zonas.find(z => z.id === zona_id);
-      zonaNombre = zonaObj?.nombre || null;
-      zonaMax = Number(zonaObj?.aforo_max) || null;
+      if (zona_id) {
+        const zonas = await zonasDelEvento(eventoId);
+        zona = zonas.find(z => z.id === zona_id) || null;
+        if (!zona) return res.status(400).json({ error: 'Esa zona ya no existe en el evento.' });
+      }
     }
+    const zonaNombre = zona?.nombre || null;
 
     /* El estado se evalúa acotado a la zona si se indicó (una persona puede
-       estar DENTRO del recinto pero FUERA de una zona concreta). */
-    let q = supabase.from('ticket_movimientos').select('tipo').eq('ticket_id', ticket.id);
-    q = zonaNombre ? q.eq('zona', zonaNombre) : q.is('zona', null);
-    const { data: ult } = await q.order('created_at', { ascending: false }).limit(1).maybeSingle();
-    const dentroAhora = ult?.tipo ? ult.tipo === 'entrada' : (zonaNombre ? false : ticket.estado === 'usado');
+       estar DENTRO del recinto pero FUERA de una zona concreta). El histórico
+       anterior a la 0079 sólo guardó el nombre, así que la boleta se busca por
+       id de zona O por su nombre: si no, un reingreso viejo se leería como
+       "nunca entró" y la primera salida se registraría como entrada. */
+    const ultimoDe = async (filtrar) => {
+      const { data } = await filtrar(
+        supabase.from('ticket_movimientos').select('tipo, created_at').eq('ticket_id', ticket.id)
+      ).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      return data || null;
+    };
+    const ult = zona
+      ? [
+          await ultimoDe(q => q.eq('zona_id', zona.id)),
+          await ultimoDe(q => q.is('zona_id', null).eq('zona', zonaNombre)),
+        ].filter(Boolean).sort((a, b) => b.created_at.localeCompare(a.created_at))[0] || null
+      : await ultimoDe(q => q.is('zona', null).is('zona_id', null));
+    const dentroAhora = ult?.tipo ? ult.tipo === 'entrada' : (zona ? false : ticket.estado === 'usado');
     const nuevo = (tipo === 'entrada' || tipo === 'salida') ? tipo : (dentroAhora ? 'salida' : 'entrada');
 
     const { data: mov, error } = await supabase.from('ticket_movimientos').insert({
-      ticket_id: ticket.id, evento_id: eventoId, tipo: nuevo,
-      acceso: accesoNombre, zona: zonaNombre, operador_id: req.user.id,
+      ticket_id: ticket.id, evento_id: eventoId, tipo: nuevo, cantidad: 1, origen: 'qr',
+      acceso: accesoNombre, zona: zonaNombre, zona_id: zona?.id || null, operador_id: req.user.id,
     }).select('id, tipo, acceso, zona, created_at').single();
     if (error) return res.status(500).json({ error: error.message });
 
-    /* Alerta automática: si la zona llegó a su aforo, avisar (una sola vez). */
-    if (nuevo === 'entrada' && zonaNombre && zonaMax) {
-      const { data: movsZona } = await supabase.from('ticket_movimientos')
-        .select('tipo').eq('evento_id', eventoId).eq('zona', zonaNombre);
-      const ocupacion = (movsZona || []).reduce((s, m) => s + (m.tipo === 'entrada' ? 1 : -1), 0);
-      if (ocupacion >= zonaMax) {
-        const { data: yaAlerta } = await supabase.from('evento_alertas')
-          .select('id').eq('evento_id', eventoId).eq('tipo', 'aforo').eq('zona', zonaNombre).eq('resuelta', false).maybeSingle();
-        if (!yaAlerta) {
-          await supabase.from('evento_alertas').insert({
-            evento_id: eventoId, tipo: 'aforo', nivel: 'critico', zona: zonaNombre,
-            mensaje: `La zona "${zonaNombre}" llegó a su aforo (${ocupacion}/${zonaMax}).`,
-          });
-          if (ev?.owner_id) avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Aforo lleno: ${zonaNombre}`, cuerpo: `${ocupacion}/${zonaMax} personas.`, link: `/eventos/${eventoId}?s=asistentes&t=accesos`, eventoId });
-          correrAutomatizaciones(eventoId, 'aforo_lleno', { zona: zonaNombre });
-        }
-      }
+    /* Estado de la zona DESPUÉS del movimiento — es lo que el escáner pinta.
+       El aforo no bloquea: si está lleno se registra igual y se avisa. */
+    let estadoZona = null;
+    if (zona) {
+      estadoZona = (await ocupacion(eventoId, [zona]).catch(() => []))[0] || null;
+      if (nuevo === 'entrada' && estadoZona) await alertarAforo(eventoId, ev, estadoZona);
     }
 
     res.status(201).json({
-      ok: true, movimiento: mov, dentro: nuevo === 'entrada', zona: zonaNombre,
+      ok: true, movimiento: mov, dentro: nuevo === 'entrada', zona: zonaNombre, aforo: estadoZona,
       ticket: { codigo: ticket.codigo, nombre: ticket.guest_nombre || 'Asistente', tipo: ticket.tipo?.nombre || 'General' },
     });
   } catch (e) {
@@ -537,23 +542,198 @@ router.post('/:eventoId/reingreso', async (req, res) => {
   }
 });
 
-/* GET /eventos/:eventoId/zonas/aforo — ocupación en vivo por zona
-   (entradas - salidas de cada zona configurada en page_json.zonas). */
+/* ───────────── Aforo por zonas ─────────────
+   La cuenta vive en lib/aforoZonas.js; aquí sólo se expone y se escribe. */
+
+/* Aviso de aforo, una sola vez por episodio: se levanta al llegar al tope y
+   se sube a crítico si además se pasa. No frena a nadie — pasarse del aforo
+   es un dato que hay que tener, no una puerta que se cierra. */
+async function alertarAforo(eventoId, ev, z) {
+  if (!z?.aforo_max || z.dentro < z.aforo_max) return;
+  const { data: abierta } = await supabase.from('evento_alertas')
+    .select('id, nivel').eq('evento_id', eventoId).eq('tipo', 'aforo')
+    .eq('zona', z.nombre).eq('resuelta', false).maybeSingle();
+  const nivel = z.excedido > 0 ? 'critico' : 'warning';
+  const mensaje = z.excedido > 0
+    ? `La zona "${z.nombre}" está por encima de su aforo: ${z.dentro}/${z.aforo_max} (+${z.excedido}).`
+    : `La zona "${z.nombre}" llegó a su aforo (${z.dentro}/${z.aforo_max}).`;
+  if (abierta) {
+    /* Ya hay aviso abierto: sólo se reescribe si la cosa empeoró, para no
+       convertir el tablero en un chorro de alertas repetidas. */
+    if (nivel === 'critico' && abierta.nivel !== 'critico') {
+      await supabase.from('evento_alertas').update({ nivel, mensaje }).eq('id', abierta.id);
+    }
+    return;
+  }
+  await supabase.from('evento_alertas').insert({
+    evento_id: eventoId, tipo: 'aforo', nivel, mensaje, zona: z.nombre,
+  });
+  if (ev?.owner_id) {
+    avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Aforo: ${z.nombre}`, cuerpo: `${z.dentro}/${z.aforo_max} personas.`, link: `/eventos/${eventoId}?s=asistentes&t=aforo`, eventoId });
+  }
+  correrAutomatizaciones(eventoId, 'aforo_lleno', { zona: z.nombre });
+}
+
+/* GET /eventos/:eventoId/zonas/aforo — ocupación en vivo por zona. */
 router.get('/:eventoId/zonas/aforo', async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertCheckinAccess(eventoId, req.user.id);
-    const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
-    const zonas = Array.isArray(evCfg?.page_json?.zonas) ? evCfg.page_json.zonas : [];
-    const { data: movs } = await supabase.from('ticket_movimientos')
-      .select('zona, tipo').eq('evento_id', eventoId).not('zona', 'is', null);
-    const neto = {};
-    for (const m of movs || []) neto[m.zona] = (neto[m.zona] || 0) + (m.tipo === 'entrada' ? 1 : -1);
-    const resultado = zonas.map(z => ({
-      id: z.id, nombre: z.nombre, aforo_max: z.aforo_max || null,
-      dentro: Math.max(0, neto[z.nombre] || 0),
-    }));
-    res.json({ zonas: resultado });
+    const zonas = await ocupacion(eventoId);
+    res.json({
+      zonas,
+      total: {
+        dentro  : zonas.reduce((s, z) => s + z.dentro, 0),
+        entradas: zonas.reduce((s, z) => s + z.entradas, 0),
+        salidas : zonas.reduce((s, z) => s + z.salidas, 0),
+        excedido: zonas.reduce((s, z) => s + z.excedido, 0),
+      },
+      at: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* POST /eventos/:eventoId/zonas/movimiento — entrada/salida SIN boleta.
+   body: { zona_id, tipo: 'entrada'|'salida', cantidad?, nota? }
+   El contador de mano del staff de la puerta de una zona: no toda la gente
+   que cruza una zona pasa por un QR, y obligar a escanear para tener el número
+   significaba no tener el número. */
+router.post('/:eventoId/zonas/movimiento', async (req, res) => {
+  const { eventoId } = req.params;
+  const { zona_id, tipo, nota } = req.body || {};
+  const cantidad = Math.min(500, Math.max(1, Math.floor(Number(req.body?.cantidad) || 1)));
+  if (tipo !== 'entrada' && tipo !== 'salida') return res.status(400).json({ error: 'El movimiento tiene que ser entrada o salida.' });
+  try {
+    const ev = await assertCheckinAccess(eventoId, req.user.id);
+    const zona = (await zonasDelEvento(eventoId)).find(z => z.id === zona_id);
+    if (!zona) return res.status(404).json({ error: 'Zona no encontrada.' });
+
+    const { error } = await supabase.from('ticket_movimientos').insert({
+      ticket_id: null, evento_id: eventoId, tipo, cantidad, origen: 'manual',
+      zona: zona.nombre, zona_id: zona.id, operador_id: req.user.id,
+      nota: nota ? String(nota).slice(0, 200) : null,
+    });
+    if (error) return res.status(500).json({ error: error.message });
+
+    const estado = (await ocupacion(eventoId, [zona]))[0] || null;
+    if (tipo === 'entrada' && estado) await alertarAforo(eventoId, ev, estado);
+    res.status(201).json({ ok: true, zona: estado });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* POST /eventos/:eventoId/zonas/limpiar — poner el contador a cero.
+   body: { zona_id?, motivo? } · sin zona_id, se limpian todas.
+   No borra nada: escribe un corte y la ocupación se cuenta desde ahí. El
+   reporte del día sigue viendo todos los movimientos. */
+router.post('/:eventoId/zonas/limpiar', async (req, res) => {
+  const { eventoId } = req.params;
+  const { zona_id, motivo } = req.body || {};
+  try {
+    await assertOwner(eventoId, req.user.id, ['gestionar_clientes']);
+    const todas = await zonasDelEvento(eventoId);
+    const objetivo = zona_id ? todas.filter(z => z.id === zona_id) : todas;
+    if (objetivo.length === 0) return res.status(404).json({ error: 'Zona no encontrada.' });
+
+    const antes = await ocupacion(eventoId, objetivo);
+    const { error } = await supabase.from('zona_cortes').insert(objetivo.map(z => ({
+      evento_id: eventoId, zona_id: z.id, zona: z.nombre,
+      motivo: motivo ? String(motivo).slice(0, 200) : null,
+      dentro_antes: antes.find(a => a.id === z.id)?.dentro ?? null,
+      created_by: req.user.id,
+    })));
+    if (error) return res.status(500).json({ error: error.message });
+
+    /* Un aforo en cero ya no está lleno: las alertas abiertas de esas zonas
+       se cierran solas, si no el tablero quedaría en rojo sin motivo. */
+    await supabase.from('evento_alertas').update({ resuelta: true })
+      .eq('evento_id', eventoId).eq('tipo', 'aforo').eq('resuelta', false)
+      .in('zona', objetivo.map(z => z.nombre));
+
+    auditar(req, eventoId, 'aforo.limpiar', {
+      entidad: 'evento', entidadId: eventoId,
+      detalle: { zonas: objetivo.map(z => z.nombre), dentro_antes: antes.map(a => a.dentro), motivo: motivo || null },
+    });
+    res.json({ ok: true, zonas: await ocupacion(eventoId) });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* GET /eventos/:eventoId/zonas/reporte?intervalo=15 — el reporte del aforo.
+   Devuelve, por zona: totales del histórico completo (el corte no lo esconde),
+   ocupación actual, pico simultáneo con su hora, estancia media y la curva del
+   día para dibujarla. Y la lista de cortes, que explica los saltos a cero. */
+router.get('/:eventoId/zonas/reporte', async (req, res) => {
+  const { eventoId } = req.params;
+  const intervalo = Math.min(180, Math.max(5, Math.floor(Number(req.query.intervalo) || 15)));
+  try {
+    await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes', 'ver_analytics']);
+    const zonas = await zonasDelEvento(eventoId);
+    const viva = await ocupacion(eventoId, zonas);
+
+    /* Los tres agregados viven en Postgres (migración 0079). Si la base
+       todavía no la tiene, se dice: un reporte en ceros se lee como "no pasó
+       nada" y eso es peor que un error, porque nadie lo va a dudar. */
+    const [rResumen, rSerie, rEstancia] = await Promise.all([
+      supabase.rpc('aforo_zonas_resumen', { p_evento: eventoId }),
+      supabase.rpc('aforo_zonas_serie', { p_evento: eventoId, p_minutos: intervalo }),
+      supabase.rpc('aforo_zonas_estancia', { p_evento: eventoId }),
+    ]);
+    if (rResumen.error || rSerie.error || rEstancia.error) {
+      return res.status(503).json({
+        error: 'El reporte de aforo necesita la migración 0079 aplicada en la base. La ocupación en vivo sigue funcionando.',
+        detalle: (rResumen.error || rSerie.error || rEstancia.error).message,
+      });
+    }
+    const resumen = rResumen.data || [], serie = rSerie.data || [], estancia = rEstancia.data || [];
+    const { data: cortes } = await supabase.from('zona_cortes')
+      .select('zona_id, zona, motivo, dentro_antes, created_at')
+      .eq('evento_id', eventoId).order('created_at', { ascending: false }).limit(200);
+
+    const filasDe = (arr, z) => arr.filter(f => f.clave === z.id || (z.nombre && f.clave === z.nombre));
+
+    const salida = zonas.map(z => {
+      const tot = juntar(resumen, z);
+      const est = filasDe(estancia, z);
+      const tramos = est.reduce((s, e) => s + Number(e.tramos || 0), 0);
+
+      /* La curva: se ordenan las franjas y se arrastra la ocupación. El pico
+         es el máximo de esa suma corrida, no el máximo de entradas por franja
+         —que es otra cosa y suele ser bastante más baja—. */
+      const franjas = {};
+      for (const f of filasDe(serie, z)) {
+        const k = new Date(f.bucket).toISOString();
+        franjas[k] = franjas[k] || { at: k, entradas: 0, salidas: 0 };
+        franjas[k].entradas += Number(f.entradas || 0);
+        franjas[k].salidas  += Number(f.salidas || 0);
+      }
+      let corrida = 0, pico = 0, pico_at = null;
+      const curva = Object.values(franjas).sort((a, b) => a.at.localeCompare(b.at)).map(f => {
+        corrida = Math.max(0, corrida + f.entradas - f.salidas);
+        if (corrida > pico) { pico = corrida; pico_at = f.at; }
+        return { ...f, dentro: corrida };
+      });
+
+      const actual = viva.find(v => v.id === z.id) || {};
+      return {
+        id: z.id, nombre: z.nombre, aforo_max: z.aforo_max,
+        dentro: actual.dentro || 0, excedido: actual.excedido || 0, corte_at: actual.corte_at || null,
+        entradas: tot.entradas, salidas: tot.salidas, personas: tot.personas, manuales: tot.manuales,
+        primera_at: tot.primera_at, ultima_at: tot.ultima_at,
+        pico, pico_at,
+        pico_pct: z.aforo_max ? Math.round((pico / z.aforo_max) * 100) : null,
+        estancia_min: tramos ? Number((est.reduce((s, e) => s + Number(e.minutos_prom || 0) * Number(e.tramos || 0), 0) / tramos).toFixed(1)) : null,
+        estancia_tramos: tramos,
+        curva,
+        cortes: (cortes || []).filter(c => c.zona_id === z.id || (z.nombre && c.zona === z.nombre)),
+      };
+    });
+
+    res.json({ intervalo, zonas: salida, generado_at: new Date().toISOString() });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

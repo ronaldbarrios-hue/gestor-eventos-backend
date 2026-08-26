@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const supabase = require('../lib/supabase.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
-const { ocupacion } = require('../lib/aforoZonas.js');
+const { ocupacion, zonasDelEvento, agendaPorZona } = require('../lib/aforoZonas.js');
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
@@ -426,16 +426,45 @@ router.get('/slug/:slug', async (req, res) => {
      encienda sabe lo que gana --"la Zona Gamer esta llena, ve a otra"-- y lo
      que cuesta. */
   try {
-    if (evento.page_json?.mapa?.mostrar_aforo) {
-      const zonas = await ocupacion(evento.id);
-      evento.mapa_aforo = zonas.map(z => ({
-        id: z.id, nombre: z.nombre, dentro: z.dentro, aforo_max: z.aforo_max,
-        lleno: Boolean(z.aforo_max && z.dentro >= z.aforo_max),
-      }));
-    } else {
+    const zonasDecl = await zonasDelEvento(evento.id);
+    const enElPlano = new Set(
+      (Array.isArray(evento.page_json?.mapa?.marcadores) ? evento.page_json.mapa.marcadores : [])
+        .filter(m => m?.tipo === 'zona' && m.zona_id).map(m => m.zona_id)
+    );
+    const puestas = zonasDecl.filter(z => enElPlano.has(z.id));
+
+    if (puestas.length === 0) {
+      evento.mapa_zonas = [];
       evento.mapa_aforo = null;
+    } else {
+      /* La AGENDA de cada zona sale siempre: saber que a las 3 hay torneo de
+         FIFA en la Zona Gamer es información de visitante, y es lo que hace
+         que valga la pena tocar el circulito.
+
+         La OCUPACIÓN sólo si el organizador la publicó. Es dato de operación y
+         se calcula por visitante, no por miembro del panel. */
+      const agenda = await agendaPorZona(evento.id, puestas).catch(() => ({}));
+      const conAforo = evento.page_json?.mapa?.mostrar_aforo ? await ocupacion(evento.id) : [];
+      const aforoPorId = new Map(conAforo.map(z => [z.id, z]));
+
+      evento.mapa_zonas = puestas.map(z => {
+        const viva = aforoPorId.get(z.id);
+        const a = agenda[z.id] || { agenda: [], ahora: [], siguiente: null };
+        return {
+          id: z.id, nombre: z.nombre, aforo_max: z.aforo_max,
+          agenda: a.agenda, ahora: a.ahora, siguiente: a.siguiente,
+          dentro: viva ? viva.dentro : null,
+          lleno : viva ? Boolean(z.aforo_max && viva.dentro >= z.aforo_max) : null,
+          excedido: viva ? viva.excedido : null,
+        };
+      });
+      /* Se conserva `mapa_aforo` con la forma de antes: hay páginas publicadas
+         que ya la leen y no tienen por qué enterarse de este cambio. */
+      evento.mapa_aforo = evento.page_json?.mapa?.mostrar_aforo
+        ? evento.mapa_zonas.map(z => ({ id: z.id, nombre: z.nombre, dentro: z.dentro, aforo_max: z.aforo_max, lleno: z.lleno }))
+        : null;
     }
-  } catch { evento.mapa_aforo = null; }
+  } catch { evento.mapa_zonas = []; evento.mapa_aforo = null; }
 
   supabase.from('event_views').insert({
     evento_id    : evento.id,

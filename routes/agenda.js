@@ -165,7 +165,7 @@ async function normalizarSubcategoria(eventoId, valor) {
 router.post('/:eventoId/sessions', async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, descripcion, inicio, fin, track, ubicacion, speaker_id, tipo, torneo_id,
-          requiere_inscripcion, cupo, formulario_modo, subcategoria } = req.body;
+          requiere_inscripcion, cupo, formulario_modo, subcategoria, zona_id } = req.body;
   if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido.' });
   if (!inicio) return res.status(400).json({ error: 'Hora de inicio requerida.' });
   if (formulario_modo && !MODOS_FORMULARIO.includes(formulario_modo)) {
@@ -182,6 +182,9 @@ router.post('/:eventoId/sessions', async (req, res) => {
         fin        : fin || null,
         track      : track || 'principal',
         ubicacion  : ubicacion || null,
+        /* En qué zona del plano ocurre (migración 0080). Es lo que hace que la
+           Zona Gamer pueda contestar qué hay dentro de ella ahora mismo. */
+        zona_id    : zona_id || null,
         speaker_id : speaker_id || null,
         tipo       : tipo || 'charla',
         /* Agrupacion libre DENTRO del tipo: competencia -> Deportes -> Futbol. */
@@ -212,7 +215,7 @@ router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
     await assertOwner(eventoId, req.user.id);
     const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id',
       'orden', 'tipo', 'torneo_id', 'moderacion', 'requiere_inscripcion', 'cupo', 'formulario_modo',
-      'subcategoria'];
+      'subcategoria', 'zona_id'];
     const updates = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });

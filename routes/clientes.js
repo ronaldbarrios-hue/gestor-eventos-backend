@@ -11,7 +11,7 @@ const { correrAutomatizaciones } = require('../lib/automatizaciones.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { COLUMNAS_CAMPO, validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
 const { auditar } = require('../lib/auditar.js');
-const { zonasDelEvento, ocupacion, juntar } = require('../lib/aforoZonas.js');
+const { zonasDelEvento, ocupacion, juntar, agendaPorZona } = require('../lib/aforoZonas.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -683,7 +683,13 @@ router.get('/:eventoId/mapa/vivo', async (req, res) => {
     const marcadores = Array.isArray(pj.mapa?.marcadores) ? pj.mapa.marcadores : [];
     const accesosCfg = Array.isArray(pj.accesos) ? pj.accesos : [];
 
-    const zonas = await ocupacion(eventoId);
+    const zonasBase = await ocupacion(eventoId);
+
+    /* Lo que pasa DENTRO de cada zona. Una zona es un punto del plano y dentro
+       hay un día entero de cosas: sin esto, el clic contesta "hay 40 personas"
+       y deja sin contestar "¿40 personas viendo qué?". */
+    const agenda = await agendaPorZona(eventoId, zonasBase).catch(() => ({}));
+    const zonas = zonasBase.map(z => ({ ...z, ...(agenda[z.id] || { agenda: [], ahora: [], siguiente: null }) }));
 
     /* Puertas: una cuenta por puerta y no una lectura de todas las boletas.
        Traerlas para sumarlas en JS volvería a chocar con el tope de mil filas

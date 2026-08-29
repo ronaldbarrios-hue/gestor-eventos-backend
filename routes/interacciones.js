@@ -262,13 +262,14 @@ function codigoCanje() {
   return c;
 }
 
-/* GET /eventos/:eventoId/canje/saldo?qr_token=|codigo=
-   Escanea la escarapela y devuelve saldo + qué puede llevarse. */
-router.get('/:eventoId/canje/saldo', async (req, res) => {
+/* POST /eventos/:eventoId/canje/saldo { qr_token | codigo }
+   Escanea la escarapela y devuelve saldo + qué puede llevarse. Por POST y no
+   por GET: el qr_token quedaría escrito en los logs de acceso del servidor. */
+router.post('/:eventoId/canje/saldo', async (req, res) => {
   const { eventoId } = req.params;
   try {
     const ev = await assertEscaneo(eventoId, req.user.id);
-    const ticket = await resolverTicket(eventoId, { qr_token: req.query.qr_token, codigo: req.query.codigo });
+    const ticket = await resolverTicket(eventoId, { qr_token: req.body?.qr_token, codigo: req.body?.codigo });
     if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.', sound: 'error' });
 
     const saldo = await saldoDeTicket(ticket, { organizadorId: ev.owner_id, eventoId });

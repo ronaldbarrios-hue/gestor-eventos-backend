@@ -213,6 +213,10 @@ router.patch('/:eventoId/tareas/:tareaId', async (req, res) => {
           otorgarPuntos({
             userId: empleadoId, organizadorId: ev.owner_id, audiencia: 'empleado',
             eventoId, accion: 'tarea_completada',
+            /* El título se guarda como texto: una tarea cerrada se borra a
+               menudo cuando se limpia el tablero, y los puntos que dio tienen
+               que seguir explicándose. */
+            origen: { tipo: 'tarea', id: data.id, detalle: data.titulo || null },
           }).then(async () => {
             const { count } = await supabase
               .from('points_log').select('id', { count: 'exact', head: true })

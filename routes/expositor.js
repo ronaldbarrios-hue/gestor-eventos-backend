@@ -242,11 +242,13 @@ router.put('/:codigo/recompensas', cargarExpositor, async (req, res) => {
   res.json({ recompensas: final || [] });
 });
 
-/* ───────────── Canje contra la cartera del expositor ───────────── */
-router.get('/:codigo/canje/saldo', cargarExpositor, async (req, res) => {
+/* ───────────── Canje contra la cartera del expositor ─────────────
+   POST y no GET: el qr_token es lo que valida una boleta, y en la query string
+   quedaría escrito en los logs de acceso del servidor. */
+router.post('/:codigo/canje/saldo', cargarExpositor, async (req, res) => {
   const { fichaId, eventoId, ownerId } = req.expositor;
   try {
-    const ticket = await resolverTicket(eventoId, { qr_token: req.query.qr_token, codigo: req.query.codigo });
+    const ticket = await resolverTicket(eventoId, { qr_token: req.body?.qr_token, codigo: req.body?.codigo });
     if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.', sound: 'error' });
     const saldo = await saldoDeTicket(ticket, { organizadorId: ownerId, eventoId, expositorId: fichaId });
     const recompensas = await recompensasDeExpositor(fichaId);

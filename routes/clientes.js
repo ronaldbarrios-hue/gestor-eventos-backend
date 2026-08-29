@@ -435,6 +435,10 @@ router.post('/:eventoId/checkin', async (req, res) => {
         otorgarPuntos({
           userId: updated.user_id, organizadorId, audiencia: 'cliente',
           eventoId, accion: 'asistencia',
+          /* El origen es la boleta con la que entró: así el historial dice
+             "Entrada al evento · ABC123" y no un 'asistencia' suelto que no
+             se puede rastrear hasta nada. */
+          origen: { tipo: 'ticket', id: updated.id, detalle: `Entrada al evento · ${updated.codigo || ''}`.trim() },
         }).then(async () => {
           /* Badge "fiel": 5+ asistencias al mismo organizador */
           const { count } = await supabase

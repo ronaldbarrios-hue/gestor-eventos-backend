@@ -405,3 +405,74 @@ test('sin boletas propias, el tope es el total de compartidas', () => {
   assert.equal(validarDefinicion(repetir(60, null)), null, '60 justas caben');
   assert.ok(validarDefinicion(repetir(61, null)), '61 ya no');
 });
+
+/* ── Preguntas condicionales (migración 0084) ─────────────────────────────
+
+   Lo que se protege aquí es un fallo concreto y clásico: que un campo oculto
+   por su condición siga siendo obligatorio. Eso deja el formulario imposible
+   de enviar y sin decir por qué — la persona ve un error sobre una pregunta
+   que no tiene delante. */
+
+const { camposVisibles, cumpleCondicion } = require('../lib/formularioCampos.js');
+
+const zona = { id: 'z', etiqueta: 'Zona', tipo: 'seleccion', opciones: ['rural', 'urbana'], requerido: true };
+const finca = { id: 'f', etiqueta: 'Nombre de la finca', tipo: 'texto', requerido: true,
+                visible_si: { campo: 'z', op: '=', valor: 'rural' } };
+
+test('un campo oculto por su condición NO se exige aunque sea obligatorio', () => {
+  /* Dice "urbana", así que la pregunta de la finca no se le enseñó. Exigirla
+     dejaría el formulario bloqueado sobre algo que no vio. */
+  assert.equal(validarFormulario([zona, finca], { z: 'urbana' }), null);
+});
+
+test('el mismo campo SÍ se exige cuando su condición se cumple', () => {
+  const err = validarFormulario([zona, finca], { z: 'rural' });
+  assert.ok(err, 'con zona rural, la finca es obligatoria');
+});
+
+test('las respuestas de campos ocultos no se guardan', () => {
+  /* Contestó rural, rellenó la finca, y luego cambió a urbana. La respuesta
+     vieja sigue viajando en el payload: guardarla contaría como rural a quien
+     dijo ser urbana. */
+  const out = normalizarRespuestas([zona, finca], { z: 'urbana', f: 'La Esperanza' });
+  assert.equal(out.z, 'urbana');
+  assert.ok(!('f' in out), 'la finca no puede quedar guardada');
+});
+
+test('la ocultación es en cascada: si A depende de B y B se oculta, A también', () => {
+  const vereda = { id: 'v', etiqueta: 'Vereda', tipo: 'texto', requerido: true,
+                   visible_si: { campo: 'f', op: '=', valor: 'La Esperanza' } };
+  const vis = camposVisibles([zona, finca, vereda], { z: 'urbana', f: 'La Esperanza' });
+  assert.deepEqual(vis.map(c => c.id), ['z'], 'oculta la finca y, con ella, la vereda');
+});
+
+test('un ciclo entre dos condiciones no cuelga la evaluación', () => {
+  /* A depende de B y B de A. Se corta al evaluar y no al guardar: una lista a
+     medio reordenar puede pasar por un estado circular legítimo. */
+  const a = { id: 'a', etiqueta: 'A', tipo: 'texto', visible_si: { campo: 'b', op: '=', valor: 'x' } };
+  const b = { id: 'b', etiqueta: 'B', tipo: 'texto', visible_si: { campo: 'a', op: '=', valor: 'x' } };
+  const vis = camposVisibles([a, b], {});
+  assert.deepEqual(vis.map(c => c.id), [], 'ninguno se ve, y sobre todo: termina');
+});
+
+test('el operador "incluye" mira dentro de una respuesta de opción múltiple', () => {
+  assert.equal(cumpleCondicion({ campo: 'm', op: 'incluye', valor: 'b' }, { m: ['a', 'b'] }), true);
+  assert.equal(cumpleCondicion({ campo: 'm', op: 'incluye', valor: 'c' }, { m: ['a', 'b'] }), false);
+});
+
+test('una condición sin campo no oculta nada', () => {
+  /* Media condición no puede dejar una pregunta invisible para siempre. */
+  const suelto = { id: 's', etiqueta: 'Suelto', tipo: 'texto', visible_si: { op: '=', valor: 'x' } };
+  assert.equal(camposVisibles([suelto], {}).length, 1);
+});
+
+test('filaCampo descarta una condición a medias en vez de guardarla rota', () => {
+  assert.equal(filaCampo({ ...campo({ visible_si: { op: '=' } }) }, 0).visible_si, null);
+  const buena = filaCampo({ ...campo({ visible_si: { campo: 'z', op: 'incluye', valor: 'rural' } }) }, 0);
+  assert.deepEqual(buena.visible_si, { campo: 'z', op: 'incluye', valor: 'rural' });
+});
+
+test('un operador inventado cae a "=" en vez de romper la evaluación', () => {
+  const f = filaCampo({ ...campo({ visible_si: { campo: 'z', op: 'MAYOR_QUE', valor: 'x' } }) }, 0);
+  assert.equal(f.visible_si.op, '=');
+});

@@ -51,6 +51,22 @@ app.get('/', (_req, res) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
+/* ── Identidad propia ──────────────────────────────────────────────────────
+   Detrás de un interruptor (`AUTH_PROPIA`) y montada antes que nada: son rutas
+   públicas por definición —quien va a entrar todavía no tiene sesión— y varios
+   de los routers de abajo se montan en '/' con un guardia global que las
+   interceptaría.
+
+   Con el interruptor apagado, el backend se comporta exactamente como hoy: ni
+   se carga el módulo, ni se abre conexión a MySQL. El mismo interruptor existe
+   en el frontend (`VITE_AUTH_PROPIA`) y los dos tienen que moverse a la vez.
+   Ver CONFIGURAR.md. */
+const configPropia = require('./core/config');
+if (configPropia.AUTH_PROPIA) {
+  app.use('/auth', require('./modules/auth').rutas);
+  console.log('[auth] identidad propia montada en /auth');
+}
+
 /* TEMPORAL — diagnóstico de red saliente hacia Hostinger, para depurar el
    ENETUNREACH/timeout que ve el envío de correo. Sin parámetros de entrada
    (no hay riesgo de SSRF: los destinos están fijos en el código), y no

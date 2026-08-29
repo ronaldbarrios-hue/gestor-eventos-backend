@@ -1,0 +1,208 @@
+# Encender la identidad propia
+
+Lo que falta de la fase 4 no es código: es configuración. Este documento son
+los pasos, en orden, y lo que hay que mirar después de cada uno.
+
+El código está escrito y probado (`modules/auth/`, 58 pruebas). Lo que hace este
+documento es ponerlo a funcionar sin cortarle la sesión a nadie.
+
+> **La regla que gobierna todo lo de abajo:** hasta el último paso, Supabase
+> sigue siendo quien manda. Cada paso se puede deshacer apagando una variable.
+> Si algo va mal, se apaga y se vuelve al estado de antes en un reinicio.
+
+---
+
+## 0 · Antes de tocar nada, dos comprobaciones que ahorran la tarde
+
+**La consola de Google.** Hace falta acceso a la cuenta que registró el
+`client_id` que usa Supabase hoy. No es difícil —es una pantalla— pero si se
+descubre en el paso 5 que nadie tiene esa cuenta, afecta a **22 de los 29
+usuarios**, que son los que entran con Google. Comprobarlo ahora.
+
+**El dominio definitivo.** Hoy la API responde en `api.gestekeventost.dpdns.org`,
+que parece de pruebas. La `redirect_uri` de Google conviene registrarla **una
+sola vez, con el dominio bueno**: cambiarla después obliga a volver a la consola
+y, entre medias, nadie entra con Google.
+
+---
+
+## 1 · La base de datos
+
+En cPanel → **MySQL® Databases**. La cuenta admite dos bases y no hay ninguna
+creada.
+
+1. Crear la base. cPanel le pone delante el prefijo de la cuenta: si se escribe
+   `gestek`, la base se llama `cuenta_gestek`. **El nombre completo, con
+   prefijo, es el que va en `MYSQL_DATABASE`.** Poner `gestek` a secas es el
+   error de configuración número uno y da «Access denied», que suena a
+   contraseña mala y no lo es.
+2. Crear el usuario, y darle **todos los permisos** sobre esa base.
+3. Arreglar el juego de caracteres. cPanel no lo pregunta y el servidor está en
+   `utf8mb3`, así que la base nace mal. En phpMyAdmin → SQL:
+
+   ```sql
+   ALTER DATABASE `cuenta_gestek` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   ```
+
+   Esto hay que hacerlo **antes** de crear las tablas. Después, con datos
+   dentro, es un `ALTER` por tabla y por columna con la aplicación parada.
+
+4. Crear las tablas: pegar `db/migraciones/001_identidad.sql` en phpMyAdmin, o
+
+   ```bash
+   mysql -u cuenta_usuario -p cuenta_gestek < db/migraciones/001_identidad.sql
+   ```
+
+**Comprobar:**
+
+```bash
+node scripts/comprobar-base.js
+```
+
+Tiene que decir `conexión en utf8mb4` y las cuatro tablas. Si dice utf8mb3, el
+paso 3 no se hizo o se hizo después de crear las tablas.
+
+---
+
+## 2 · Las variables
+
+En cPanel → **Setup Node.js App** → la aplicación → *Environment variables*.
+Passenger las lee al reiniciar la aplicación, no al guardarlas.
+
+| Variable | Valor | De dónde sale |
+|---|---|---|
+| `MYSQL_HOST` | `localhost` | En cPanel la base es local |
+| `MYSQL_SOCKET` | `/var/lib/mysql/mysql.sock` | Opcional. Si está, se usa el socket en vez de TCP: más rápido y no gasta puertos |
+| `MYSQL_USER` | `cuenta_usuario` | **Con prefijo** |
+| `MYSQL_PASSWORD` | — | La del paso 1.2 |
+| `MYSQL_DATABASE` | `cuenta_gestek` | **Con prefijo** |
+| `JWT_SECRET` | 64 caracteres al azar | Se genera, no se reutiliza ninguno |
+| `AUTH_PROPIA` | `false` **por ahora** | Se enciende en el paso 6 |
+| `GOOGLE_CLIENT_ID` | el de Supabase, **idéntico** | Consola de Google |
+| `GOOGLE_CLIENT_SECRET` | el de Supabase | Consola de Google |
+| `GOOGLE_AUTH_REDIRECT` | `https://<api>/auth/google/callback` | Paso 5 |
+| `FRONTEND_URL` | `https://<app>` | Ya debería estar |
+
+El secreto:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+```
+
+**No se reutiliza ningún secreto de Supabase.** Si el suyo se filtrara algún
+día, los nuestros seguirían valiendo, y al revés. El único que sí viaja idéntico
+es `QR_JWT_SECRET`, y por una razón concreta: los QR ya emitidos se firmaron con
+él y tienen que seguir validando.
+
+En producción, si `AUTH_PROPIA` está encendido y falta `JWT_SECRET`, **el
+proceso no arranca**. Es a propósito: un secreto de desarrollo en producción es
+lo mismo que no tener firma.
+
+---
+
+## 3 · Traer las 29 cuentas
+
+Los hashes de contraseña viven en `auth.users`, que la API de Supabase no
+expone. Sólo se llega por SQL. La consulta exacta está en la cabecera de
+`scripts/migrar-usuarios-a-mysql.js`; se corre en el editor SQL de Supabase y se
+guarda el resultado en un archivo.
+
+> Ese archivo son las llaves de las 29 cuentas. Ni al repositorio, ni a un
+> correo, ni a un chat. Se borra en cuanto termina la migración.
+
+```bash
+node scripts/migrar-usuarios-a-mysql.js --archivo volcado.json            # sólo mira
+node scripts/migrar-usuarios-a-mysql.js --archivo volcado.json --aplicar  # escribe
+node scripts/comprobar-base.js
+```
+
+La primera pasada no escribe nada: valida los UUID, comprueba que los hashes
+son bcrypt, busca correos repetidos y avisa de las cuentas que se quedarían sin
+forma de entrar. **Hay que leer lo que dice antes de aplicar.**
+
+Lo que tiene que salir: 29 usuarios, 10 con contraseña, 22 con Google. Y el
+descuadre conocido —10 con contraseña frente a 9 identidades de tipo `email`—
+señala a una cuenta descolocada: el script la nombra.
+
+Se puede repetir sin miedo: lo que ya existe se salta.
+
+---
+
+## 4 · Probar sin encender nada
+
+Con `AUTH_PROPIA=false`, el módulo ni se monta. Para probarlo, se enciende **en
+local**, no en el servidor:
+
+```bash
+AUTH_PROPIA=true MYSQL_HOST=... npm run dev
+curl -s localhost:3000/auth/login -H 'Content-Type: application/json' \
+     -d '{"email":"tu@correo","password":"la tuya"}'
+```
+
+Tiene que devolver `access_token`, `refresh_token` y `usuario`. Si devuelve
+`credenciales` con una contraseña que sabés que es buena, el hash no se migró
+bien: mirar `comprobar-base.js`.
+
+---
+
+## 5 · Google
+
+En la consola de Google → *Credenciales* → el cliente OAuth **que ya usa
+Supabase** → *URI de redirección autorizados* → **añadir** (no sustituir):
+
+```
+https://api.gestekeventost.dpdns.org/auth/google/callback
+```
+
+Se añade, no se cambia: mientras Supabase siga encendido, su URI tiene que
+seguir ahí o los usuarios que entren por el camino viejo se quedan fuera.
+
+**El `client_id` tiene que ser el mismo.** Google identifica a cada persona con
+un `sub` que es distinto para cada cliente. Con un cliente nuevo, los 22 `sub`
+que se migraron no coinciden con nada, y esas 22 personas entrarían a cuentas
+nuevas y vacías con sus eventos dentro de las viejas.
+
+---
+
+## 6 · Encender
+
+Dos interruptores, y el orden importa:
+
+1. **Backend** (`AUTH_PROPIA=true`) y reiniciar la aplicación. Ahora `/auth`
+   responde, pero nadie lo llama todavía: el frontend sigue hablando con
+   Supabase. Aquí ya se gana algo — el middleware verifica los tokens en local
+   y deja de preguntarle a Supabase en cada petición.
+2. **Frontend** (`VITE_AUTH_PROPIA=true` en Vercel) y volver a desplegar. A
+   partir de aquí las sesiones nuevas son nuestras.
+
+Las 21 sesiones que estén abiertas **no se cortan**: sus tokens son de Supabase
+y el middleware los sigue aceptando por el camino de siempre hasta que caduquen.
+
+**Para volver atrás:** apagar el del frontend. Las sesiones nuestras se pierden
+—la gente vuelve a entrar— pero todo lo demás sigue igual, porque las cuentas
+nunca se borraron de Supabase.
+
+---
+
+## 7 · Qué mirar los primeros días
+
+- **Que nadie se queda fuera.** Los 22 de Google son el grupo grande; basta con
+  que uno de ellos entre para saber que el `client_id` y los `sub` cuadran.
+- **`comprobar-base.js`** cada mañana la primera semana: dice cuántas sesiones
+  vivas hay, y si ese número no crece, algo no está entrando.
+- **La tabla `sesiones` crece.** Es normal: una fila por dispositivo y por
+  refresco. `repositorio.limpiarCaducados()` está escrita para el cron; conviene
+  engancharla cuando haya tráfico de verdad.
+
+## 8 · Lo que este documento NO cubre
+
+- **Apagar Supabase Auth.** No se toca hasta que pasen unos días con todo el
+  mundo entrando por lo nuestro. Mientras tanto, las cuentas están en los dos
+  sitios a propósito.
+- **La cookie `httpOnly`.** Hoy el token vive en `localStorage`, igual que lo
+  dejaba Supabase. La cookie es mejor —un XSS no la lee— pero necesita que el
+  frontend y la API estén bajo el mismo dominio, y hoy están en Vercel y en
+  cPanel. Cuando los dos vivan bajo `gestekeventost.dpdns.org`, se cambia
+  `src/lib/authPropia.js` y nada más.
+- **Las otras 71 tablas.** Esto migra la identidad. Todo lo demás sigue en
+  Supabase.

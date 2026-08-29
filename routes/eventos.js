@@ -16,6 +16,7 @@ const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
 const { hashDocumento, columnasSinPregunta, clave: clavePadron } = require('../lib/padronPrevio.js');
 const { exige } = require('../core/permisos');
+const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
 /* El padrón es parte de configurar el formulario del evento, así que pide lo
    mismo que editarlo. Se declara para el censo de la fase 7 en vez de dejarlo
@@ -351,6 +352,18 @@ router.patch('/:id', async (req, res) => {
      entera encima: si otra pantalla había guardado la marca entretanto, la
      borraba sin avisar. Ahora sólo puede tocar las claves que manda. */
   const updatesFinales = partirSitio(updates, actual.page_json);
+
+  /* La landing se valida contra el catálogo de bloques ANTES de guardarla.
+
+     Hasta ahora `paginas` se guardaba tal cual, y se sostenía porque el único
+     que escribía era el editor, que conoce el catálogo. Con Claude escribiendo
+     por MCP y con un modo desarrollador eso deja de ser cierto: una página con
+     bloques inventados se guardaría bien y reventaría al pintarla, delante del
+     público. Ver lib/bloquesLanding.js. */
+  if (updatesFinales.paginas !== undefined) {
+    const falloBloques = fallaPaginas(updatesFinales.paginas);
+    if (falloBloques) return res.status(400).json({ error: falloBloques });
+  }
 
   const { data, error } = await supabase
     .from('eventos')

@@ -4,7 +4,10 @@
  * del módulo que escribe SQL, igual que en `auth`.
  */
 
-const db = require('../../core/db/mysql.js');
+/* La ficha de un archivo es dato del evento, no identidad: va en `datos`.
+   Mientras no haya una segunda base creada, `datos` cae a la de `auth` y esto
+   funciona igual. */
+const db = require('../../core/db/mysql.js').bd('datos');
 
 function aArchivo(fila) {
   if (!fila) return null;

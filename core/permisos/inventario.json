@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 247,
   "censado_el": "2026-08-29",
-  "total": 279,
+  "total": 281,
   "rutas": {
     "GET /": {
       "estado": "pendiente"
@@ -358,6 +358,20 @@
     },
     "GET /eventos/:id/emails/envios": {
       "estado": "pendiente"
+    },
+    "GET /eventos/:id/emails/cola": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes",
+        "editar_evento"
+      ]
+    },
+    "POST /eventos/:id/emails/cola/reintentar": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:id/emails/prueba": {
       "estado": "pendiente"

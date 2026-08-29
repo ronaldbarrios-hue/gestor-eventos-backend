@@ -12,7 +12,7 @@
  * mañana la columna se llama distinto, se traduce aquí.
  */
 
-const db = require('../../core/db/mysql.js');
+const db = require('../../core/db/mysql.js').bd('auth');
 
 /* MySQL 8 devuelve las columnas JSON ya parseadas casi siempre, pero según
    cómo llegue la fila (a través de `execute` con `dateStrings`, o de un driver

@@ -26,32 +26,55 @@ y, entre medias, nadie entra con Google.
 
 ---
 
-## 1 · La base de datos
+## 1 · Las bases de datos
 
 En cPanel → **MySQL® Databases**. La cuenta admite dos bases y no hay ninguna
-creada.
+creada. **Se crean las dos**, y no es un capricho:
 
-1. Crear la base. cPanel le pone delante el prefijo de la cuenta: si se escribe
-   `gestek`, la base se llama `cuenta_gestek`. **El nombre completo, con
-   prefijo, es el que va en `MYSQL_DATABASE`.** Poner `gestek` a secas es el
-   error de configuración número uno y da «Access denied», que suena a
-   contraseña mala y no lo es.
-2. Crear el usuario, y darle **todos los permisos** sobre esa base.
+| Base | Qué guarda |
+|---|---|
+| `cuenta_gestek_auth` | Quién es cada persona: cuentas, identidades de Google, sesiones, tokens |
+| `cuenta_gestek` | Todo lo demás: eventos, boletas, asistentes, archivos |
+
+Separadas, un volcado de los datos del evento —una copia que se comparte, una
+depuración— no lleva dentro ni un hash de contraseña ni una sesión viva. Y las
+71 tablas se van a migrar módulo a módulo durante meses, mientras la identidad
+ya está hecha: compartiendo base, cada paso de aquélla tendría que esquivar a
+ésta.
+
+> **Se puede empezar con una sola.** Si `MYSQL_DATOS_DATABASE` no se pone, todo
+> usa la de identidad y funciona igual. `comprobar-base.js` lo dice en voz alta
+> cuando eso pasa, para que no se quede así por olvido.
+
+1. Crear las bases. cPanel les pone delante el prefijo de la cuenta: si se
+   escribe `gestek`, la base se llama `cuenta_gestek`. **El nombre completo, con
+   prefijo, es el que va en las variables.** Poner `gestek` a secas es el error
+   de configuración número uno y da «Access denied», que suena a contraseña mala
+   y no lo es.
+2. Crear el usuario, y darle **todos los permisos** sobre las dos bases. Puede
+   ser el mismo usuario para ambas: lo que se separa son los datos, no los
+   permisos.
 3. Arreglar el juego de caracteres. cPanel no lo pregunta y el servidor está en
    `utf8mb3`, así que la base nace mal. En phpMyAdmin → SQL:
 
    ```sql
-   ALTER DATABASE `cuenta_gestek` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   ALTER DATABASE `cuenta_gestek_auth` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   ALTER DATABASE `cuenta_gestek`      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
    ```
 
    Esto hay que hacerlo **antes** de crear las tablas. Después, con datos
    dentro, es un `ALTER` por tabla y por columna con la aplicación parada.
 
-4. Crear las tablas: pegar `db/migraciones/001_identidad.sql` en phpMyAdmin, o
+4. Crear las tablas, **cada una en su base**:
 
    ```bash
-   mysql -u cuenta_usuario -p cuenta_gestek < db/migraciones/001_identidad.sql
+   mysql -u cuenta_usuario -p cuenta_gestek_auth < db/migraciones/001_identidad.sql
+   mysql -u cuenta_usuario -p cuenta_gestek      < db/migraciones/002_archivos.sql
    ```
+
+   O pegando cada archivo en phpMyAdmin con la base correspondiente
+   seleccionada — que es donde se cuela el error: la 002 en la base de
+   identidad no da ningún aviso y deja el almacén sin sitio donde registrar.
 
 **Comprobar:**
 
@@ -75,7 +98,8 @@ Passenger las lee al reiniciar la aplicación, no al guardarlas.
 | `MYSQL_SOCKET` | `/var/lib/mysql/mysql.sock` | Opcional. Si está, se usa el socket en vez de TCP: más rápido y no gasta puertos |
 | `MYSQL_USER` | `cuenta_usuario` | **Con prefijo** |
 | `MYSQL_PASSWORD` | — | La del paso 1.2 |
-| `MYSQL_DATABASE` | `cuenta_gestek` | **Con prefijo** |
+| `MYSQL_DATABASE` | `cuenta_gestek_auth` | **Con prefijo.** La de identidad |
+| `MYSQL_DATOS_DATABASE` | `cuenta_gestek` | **Con prefijo.** La del evento. Si se deja vacía, todo va a la de identidad |
 | `JWT_SECRET` | 64 caracteres al azar | Se genera, no se reutiliza ninguno |
 | `AUTH_PROPIA` | `false` **por ahora** | Se enciende en el paso 6 |
 | `GOOGLE_CLIENT_ID` | el de Supabase, **idéntico** | Consola de Google |

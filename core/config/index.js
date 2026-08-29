@@ -62,6 +62,22 @@ const config = {
   MYSQL_SOCKET  : process.env.MYSQL_SOCKET   || null,
   MYSQL_POOL_MAX: parseInt(process.env.MYSQL_POOL_MAX, 10) || 10,
 
+  /* ── La segunda base ──────────────────────────────────────────────────
+     Una para la identidad y otra para todo lo demás. Van separadas para que
+     un volcado de los datos del evento —una copia que se comparte, una
+     depuración— no lleve dentro hashes de contraseña ni sesiones vivas. La
+     cuenta de cPanel admite dos bases, así que el reparto no cuesta nada.
+
+     Lo que no se ponga aquí cae a lo de arriba: en cPanel las dos viven en el
+     mismo servidor y con el mismo usuario, y lo único que suele cambiar es el
+     nombre. Y mientras haya una sola base creada, todo funciona igual. */
+  MYSQL_DATOS_HOST    : process.env.MYSQL_DATOS_HOST     || null,
+  MYSQL_DATOS_PORT    : parseInt(process.env.MYSQL_DATOS_PORT, 10) || null,
+  MYSQL_DATOS_USER    : process.env.MYSQL_DATOS_USER     || null,
+  MYSQL_DATOS_PASSWORD: process.env.MYSQL_DATOS_PASSWORD ?? null,
+  MYSQL_DATOS_DATABASE: process.env.MYSQL_DATOS_DATABASE || null,
+  MYSQL_DATOS_SOCKET  : process.env.MYSQL_DATOS_SOCKET   || null,
+
   /* ── Firma de tokens ──────────────────────────────────────────────────
      Ninguno se reutiliza de Supabase: si su secreto se filtrara algún día,
      nuestros tokens seguirían valiendo. Y al revés. */

@@ -17,10 +17,16 @@
  * No escribe nada. Se puede correr en producción.
  */
 
-const db = require('../core/db/mysql.js');
+const mysql = require('../core/db/mysql.js');
 const config = require('../core/config');
 
+const db = mysql.bd('auth');
+const datos = mysql.bd('datos');
+
+/* Cada base con lo suyo: la identidad en `auth`, las fichas de archivos —y con
+   el tiempo, las 71 tablas— en `datos`. */
 const TABLAS = ['usuarios', 'usuario_identidades', 'sesiones', 'tokens_un_uso'];
+const TABLAS_DATOS = ['archivos'];
 
 let fallos = 0;
 const ok    = (t) => console.log(`   ✓ ${t}`);
@@ -37,7 +43,20 @@ async function main() {
   }
 
   const estado = await db.estado();
-  ok(`MySQL ${estado.version}, base «${estado.base}»`);
+  ok(`MySQL ${estado.version}, base de identidad «${estado.base}»`);
+
+  /* Las dos bases o una sola. Que `datos` caiga a la de `auth` no es un fallo
+     —así arranca todo hasta que se cree la segunda— pero conviene decirlo en
+     voz alta: mientras compartan base, un volcado de los datos del evento
+     lleva dentro los hashes de contraseña. */
+  if (mysql.separadas()) {
+    const e2 = await datos.estado();
+    ok(`base de datos del evento «${e2.base}», separada de la identidad`);
+  } else {
+    aviso('`datos` y `auth` son la MISMA base: todavía no se creó la segunda.');
+    console.log('     Funciona igual, pero un volcado de los datos lleva dentro los hashes.');
+    console.log('     Se separan poniendo MYSQL_DATOS_DATABASE. Ver CONFIGURAR.md.');
+  }
 
   /* El error silencioso. La conexión tiene su propio juego de caracteres, y una
      conexión utf8mb3 escribe basura en columnas utf8mb4 sin quejarse. */
@@ -53,10 +72,14 @@ async function main() {
 
   console.log('\n── Tablas ────────────────────────────────────────────────');
 
+  /* Los `?` se arman según cuántas tablas haya: escribirlos a mano es lo que
+     hace que añadir una tabla a la lista rompa la consulta en silencio. */
+  const huecos = (lista) => lista.map(() => '?').join(', ');
+
   const presentes = (await db.consultar(
     `SELECT TABLE_NAME AS nombre, TABLE_COLLATION AS col
        FROM information_schema.TABLES
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?, ?, ?, ?)`,
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${huecos(TABLAS)})`,
     TABLAS
   ));
   const porNombre = new Map(presentes.map(t => [t.nombre, t]));
@@ -66,6 +89,28 @@ async function main() {
     if (!fila) { mal(`falta la tabla ${t} — aplicar db/migraciones/001_identidad.sql`); continue; }
     if (!String(fila.col).startsWith('utf8mb4')) mal(`${t} está en ${fila.col}, no en utf8mb4`);
     else ok(`${t}`);
+  }
+
+  /* Las de la otra base. Si `archivos` no está, el almacén propio no puede
+     registrar nada: se sube el archivo y se queda sin ficha, que es
+     exactamente el huérfano que este trabajo vino a eliminar. */
+  const enDatos = await datos.consultar(
+    `SELECT TABLE_NAME AS nombre, TABLE_COLLATION AS col
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${huecos(TABLAS_DATOS)})`,
+    TABLAS_DATOS,
+  ).catch(() => []);
+  const datosPorNombre = new Map(enDatos.map(t => [t.nombre, t]));
+
+  for (const t of TABLAS_DATOS) {
+    const fila = datosPorNombre.get(t);
+    if (!fila) {
+      if (config.ARCHIVOS_PROPIOS) mal(`falta la tabla ${t} — aplicar db/migraciones/002_archivos.sql`);
+      else aviso(`falta la tabla ${t}, pero ARCHIVOS_PROPIOS está apagado: por ahora da igual`);
+      continue;
+    }
+    if (!String(fila.col).startsWith('utf8mb4')) mal(`${t} está en ${fila.col}, no en utf8mb4`);
+    else ok(`${t} (en la base de datos del evento)`);
   }
 
   if (fallos) {
@@ -137,4 +182,4 @@ async function main() {
 
 main()
   .catch((e) => { console.error('\n✗', e.message, '\n'); process.exitCode = 1; })
-  .finally(() => db.cerrar().catch(() => {}));
+  .finally(() => mysql.cerrar().catch(() => {}));

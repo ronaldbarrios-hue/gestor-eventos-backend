@@ -9,6 +9,11 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
+/* Todo lo de aquí es la ficha de quien pregunta: la comprobación no es «qué
+   permisos tiene en este evento» sino «esto es suyo», y la hace cada handler
+   filtrando por `req.user.id`. */
+router.use(require('../core/permisos').sesion('El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id.'));
+
 /* GET /me — perfil del usuario logueado */
 router.get('/', async (req, res) => {
   const { data, error } = await supabase

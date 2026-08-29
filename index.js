@@ -5,6 +5,7 @@ const express = require('express');
 const Sentry  = require('@sentry/node');
 const env     = require('./config/env.js');
 const { applySecurity, authLimiter } = require('./config/security.js');
+const { publica } = require('./core/permisos');
 const { iniciarCronRecordatorios } = require('./lib/recordatorios.js');
 
 const app = express();
@@ -24,7 +25,7 @@ app.use((req, _res, next) => {
 
 /* ── Rutas públicas SIN auth — deben ir PRIMERO de todo,
    antes de cualquier router montado en '/' con auth global ── */
-app.get('/', (_req, res) => {
+app.get('/', publica('Portada de la API: dice qué es esto y qué endpoints hay. Sin datos de nadie.'), (_req, res) => {
   res.json({
     producto: 'GESTEK Event OS',
     version : '0.2.0-fase-a',
@@ -49,14 +50,48 @@ app.get('/', (_req, res) => {
   });
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/health', publica('Latido del servidor: lo consultan el panel de cPanel y cualquier vigilante externo.'), (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
+/* ── Identidad propia ──────────────────────────────────────────────────────
+   Detrás de un interruptor (`AUTH_PROPIA`) y montada antes que nada: son rutas
+   públicas por definición —quien va a entrar todavía no tiene sesión— y varios
+   de los routers de abajo se montan en '/' con un guardia global que las
+   interceptaría.
+
+   Con el interruptor apagado, el backend se comporta exactamente como hoy: ni
+   se carga el módulo, ni se abre conexión a MySQL. El mismo interruptor existe
+   en el frontend (`VITE_AUTH_PROPIA`) y los dos tienen que moverse a la vez.
+   Ver CONFIGURAR.md. */
+const configPropia = require('./core/config');
+if (configPropia.AUTH_PROPIA) {
+  app.use('/auth', require('./modules/auth').rutas);
+  console.log('[auth] identidad propia montada en /auth');
+}
+
+/* ── Almacén propio ────────────────────────────────────────────────────────
+   Interruptor aparte del de la identidad: se encienden en días distintos y se
+   vuelve atrás por separado. Apagado, el navegador sigue subiendo directo a
+   Supabase como hasta hoy.
+
+   Necesita la identidad encendida: quien sube tiene que poder ser reconocido, y
+   eso lo resuelve `modules/auth`. */
+if (configPropia.ARCHIVOS_PROPIOS) {
+  const archivos = require('./modules/archivos');
+  app.use('/archivos', archivos.rutas);
+  /* Comprobar que el almacén se puede escribir AHORA y no cuando el primer
+     usuario suba una foto: un permiso mal puesto se ve en el log del arranque
+     o no se ve hasta que alguien se queja. */
+  archivos.comprobarAlmacen()
+    .then((raiz) => console.log(`[archivos] almacén propio montado en /archivos → ${raiz}`))
+    .catch((e) => console.error(`[archivos] NO se puede escribir en el almacén: ${e.message}`));
+}
 
 /* TEMPORAL — diagnóstico de red saliente hacia Hostinger, para depurar el
    ENETUNREACH/timeout que ve el envío de correo. Sin parámetros de entrada
    (no hay riesgo de SSRF: los destinos están fijos en el código), y no
    expone nada sensible — solo si la conexión abre o no. Borrar este bloque
    una vez resuelto. */
-app.get('/debug-red', async (_req, res) => {
+app.get('/debug-red', publica('Diagnóstico de red saliente, sin parámetros de entrada y sin datos sensibles. Temporal.'), async (_req, res) => {
   const net = require('net');
   const probar = (host, port) => new Promise((resolve) => {
     const inicio = Date.now();
@@ -161,30 +196,18 @@ app.use((req, res) => {
   res.status(404).json({ error: `Ruta no encontrada: ${req.method} ${req.path}` });
 });
 
-/* Introspección real de las rutas registradas en Express */
-function listarRutas() {
-  const rutas = [];
-  function walk(stack, prefix = '') {
-    stack.forEach(layer => {
-      if (layer.route) {
-        const methods = Object.keys(layer.route.methods).map(m => m.toUpperCase()).join('|');
-        rutas.push(`${methods.padEnd(7)} ${prefix}${layer.route.path}`);
-      } else if (layer.name === 'router' && layer.handle?.stack) {
-        const src = layer.regexp?.source || '';
-        const match = src.match(/^\^\\\/([^\\]+(?:\\\/[^\\]+)*)/);
-        const mountPrefix = match ? '/' + match[1].replace(/\\\//g, '/') : '';
-        walk(layer.handle.stack, prefix + mountPrefix);
-      }
-    });
-  }
-  walk(app._router?.stack || app.router?.stack || []);
-  return rutas;
-}
+/* El censo de rutas vive en core/rutas.js: lo necesita también la prueba de
+   permisos, y una copia a mano se queda vieja a la semana. */
+const { comoTexto } = require('./core/rutas.js');
 
-iniciarCronRecordatorios();
+/* Arrancar sólo si a este archivo se le llama directamente. Al requerirlo
+   desde una prueba —que es lo que hace la de permisos, para poder preguntarle
+   a Express qué rutas tiene— no debe abrir un puerto ni encender el cron. */
+if (require.main === module) {
+  iniciarCronRecordatorios();
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
   console.log(`\n┌──────────────────────────────────────────────────────────┐`);
   console.log(`│  GESTEK API  v0.10.0-mp                                  │`);
   console.log(`│  http://localhost:${PORT}                                    │`);
@@ -203,8 +226,11 @@ app.listen(PORT, () => {
   console.log(`│    CHAT   /eventos/:id/chat/channels(/messages)          │`);
   console.log(`└──────────────────────────────────────────────────────────┘\n`);
 
-  console.log('[DEBUG] Rutas REALES registradas en Express:');
-  const rutas = listarRutas();
-  rutas.forEach(r => console.log('  ' + r));
-  console.log(`  Total: ${rutas.length}\n`);
-});
+    console.log('[DEBUG] Rutas REALES registradas en Express:');
+    const rutas = comoTexto(app);
+    rutas.forEach(r => console.log('  ' + r));
+    console.log(`  Total: ${rutas.length}\n`);
+  });
+}
+
+module.exports = app;

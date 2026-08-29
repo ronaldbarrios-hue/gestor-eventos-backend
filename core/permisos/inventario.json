@@ -1,0 +1,907 @@
+{
+  "pendientes_maximo": 230,
+  "censado_el": "2026-08-29",
+  "total": 281,
+  "rutas": {
+    "GET /": {
+      "estado": "publica",
+      "motivo": "Portada de la API: dice qué es esto y qué endpoints hay. Sin datos de nadie."
+    },
+    "GET /health": {
+      "estado": "publica",
+      "motivo": "Latido del servidor: lo consultan el panel de cPanel y cualquier vigilante externo."
+    },
+    "GET /debug-red": {
+      "estado": "publica",
+      "motivo": "Diagnóstico de red saliente, sin parámetros de entrada y sin datos sensibles. Temporal."
+    },
+    "GET /api/v1/eventos": {
+      "estado": "pendiente"
+    },
+    "GET /api/v1/eventos/:id": {
+      "estado": "pendiente"
+    },
+    "GET /api/v1/eventos/:id/asistentes": {
+      "estado": "pendiente"
+    },
+    "GET /api/v1/eventos/:id/resumen": {
+      "estado": "pendiente"
+    },
+    "GET /.well-known/oauth-protected-resource": {
+      "estado": "pendiente"
+    },
+    "GET /.well-known/oauth-protected-resource/mcp": {
+      "estado": "pendiente"
+    },
+    "GET /.well-known/oauth-authorization-server": {
+      "estado": "pendiente"
+    },
+    "GET /.well-known/openid-configuration": {
+      "estado": "pendiente"
+    },
+    "POST /oauth/register": {
+      "estado": "pendiente"
+    },
+    "GET /oauth/authorize": {
+      "estado": "pendiente"
+    },
+    "POST /oauth/aprobar": {
+      "estado": "pendiente"
+    },
+    "POST /oauth/token": {
+      "estado": "pendiente"
+    },
+    "POST /oauth/revoke": {
+      "estado": "pendiente"
+    },
+    "GET /me/conexiones/mcp": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/conexiones/mcp/:id": {
+      "estado": "pendiente"
+    },
+    "POST /mcp": {
+      "estado": "pendiente"
+    },
+    "GET /mcp": {
+      "estado": "pendiente"
+    },
+    "GET /mcp/estado": {
+      "estado": "pendiente"
+    },
+    "GET /me/conexiones/ia": {
+      "estado": "pendiente"
+    },
+    "PUT /me/conexiones/ia": {
+      "estado": "pendiente"
+    },
+    "POST /me/conexiones/ia/probar": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/conexiones/ia": {
+      "estado": "pendiente"
+    },
+    "GET /categorias/": {
+      "estado": "publica",
+      "motivo": "Catálogo de categorías: lo lee la página pública del evento sin sesión."
+    },
+    "GET /eventos/publicos/expositor/:codigo/panel": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "PUT /eventos/publicos/expositor/:codigo/motivos": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "POST /eventos/publicos/expositor/:codigo/interacciones": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "GET /eventos/publicos/expositor/:codigo/interacciones": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "GET /eventos/publicos/expositor/:codigo/recompensas": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "PUT /eventos/publicos/expositor/:codigo/recompensas": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "GET /eventos/publicos/expositor/:codigo/canje/saldo": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "POST /eventos/publicos/expositor/:codigo/canje": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "GET /eventos/publicos/expositor/:codigo/franjas": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "POST /eventos/publicos/expositor/:codigo/franjas": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "PATCH /eventos/publicos/expositor/:codigo/franjas/:id": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "DELETE /eventos/publicos/expositor/:codigo/franjas/:id": {
+      "estado": "publica",
+      "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
+    },
+    "GET /eventos/publicos/slug/:slug/sesiones": {
+      "estado": "publica",
+      "motivo": "Inscripción a sub-eventos desde la página pública, identificada por el código de la boleta."
+    },
+    "POST /eventos/publicos/slug/:slug/sesiones/:sesionId/inscribir": {
+      "estado": "publica",
+      "motivo": "Inscripción a sub-eventos desde la página pública, identificada por el código de la boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/legal": {
+      "estado": "publica",
+      "motivo": "Términos y privacidad: legalmente tienen que poder leerse sin cuenta."
+    },
+    "GET /eventos/publicos/": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/ticket/:codigo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "POST /eventos/publicos/ticket/:codigo/formulario": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/expositor/:codigo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "PUT /eventos/publicos/expositor/:codigo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/torneos": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/torneos/:torneoId": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/torneo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/torneos-resumen": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/ranking": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/cupo/:token": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/agenda": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/invitacion-pendiente": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "POST /eventos/publicos/slug/:slug/reservar": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "POST /eventos/publicos/slug/:slug/waitlist": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /me/": {
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
+    },
+    "PATCH /me/": {
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
+    },
+    "GET /me/boletas": {
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
+    },
+    "POST /me/boletas/:id/transferir": {
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
+    },
+    "GET /me/expositor": {
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
+    },
+    "GET /me/integraciones/tokens": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "POST /me/integraciones/tokens": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "DELETE /me/integraciones/tokens/:id": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "GET /me/integraciones/webhooks": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "POST /me/integraciones/webhooks": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "PATCH /me/integraciones/webhooks/:id": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "DELETE /me/integraciones/webhooks/:id": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "GET /me/integraciones/webhooks/:id/deliveries": {
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
+    },
+    "POST /me/sugerencias/dinamica": {
+      "estado": "pendiente"
+    },
+    "GET /me/sugerencias/dinamica": {
+      "estado": "pendiente"
+    },
+    "GET /me/mercadopago/test": {
+      "estado": "pendiente"
+    },
+    "POST /me/mercadopago/conectar": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/mercadopago": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/publicos/slug/:slug/comprar": {
+      "estado": "pendiente"
+    },
+    "POST /webhooks/mercadopago": {
+      "estado": "pendiente"
+    },
+    "POST /me/wompi/conectar": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/wompi": {
+      "estado": "pendiente"
+    },
+    "GET /me/wompi": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/publicos/slug/:slug/comprar-wompi": {
+      "estado": "pendiente"
+    },
+    "POST /webhooks/wompi": {
+      "estado": "pendiente"
+    },
+    "GET /me/google/conectar": {
+      "estado": "pendiente"
+    },
+    "GET /me/google": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/google": {
+      "estado": "pendiente"
+    },
+    "GET /integraciones/google/callback": {
+      "estado": "pendiente"
+    },
+    "POST /webhooks/truora": {
+      "estado": "publica",
+      "motivo": "Webhook entrante de un proveedor: se autentica por firma, no por sesión."
+    },
+    "GET /push/vapid-key": {
+      "estado": "pendiente"
+    },
+    "POST /me/push/subscribe": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/push/unsubscribe": {
+      "estado": "pendiente"
+    },
+    "POST /me/push/test": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/push/broadcast": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/anuncios": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id/promociones": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:id/promociones": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:id/promociones/:pid": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:id/promociones/:pid": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/publicos/slug/:slug/promocion/validar": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id/emails": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:id/emails/:tipo": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:id/emails/:tipo": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:id/emails/previsualizar": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id/emails/diagnostico": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id/emails/smtp": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:id/emails/smtp": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:id/emails/smtp/probar": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:id/emails/smtp": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id/emails/envios": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id/emails/cola": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes",
+        "editar_evento"
+      ]
+    },
+    "POST /eventos/:id/emails/cola/reintentar": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes",
+        "editar_evento"
+      ]
+    },
+    "POST /eventos/:id/emails/prueba": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:id/emails/enviar": {
+      "estado": "pendiente"
+    },
+    "GET /me/agente/estado": {
+      "estado": "pendiente"
+    },
+    "POST /me/agente/chat": {
+      "estado": "pendiente"
+    },
+    "POST /me/agente/generar-evento": {
+      "estado": "pendiente"
+    },
+    "GET /me/notificaciones": {
+      "estado": "pendiente"
+    },
+    "PATCH /me/notificaciones/:id/leer": {
+      "estado": "pendiente"
+    },
+    "POST /me/notificaciones/leer-todas": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/notificaciones/:id": {
+      "estado": "pendiente"
+    },
+    "POST /me/notificaciones/generar-recordatorios": {
+      "estado": "pendiente"
+    },
+    "GET /me/equipo/eventos": {
+      "estado": "pendiente"
+    },
+    "GET /me/solicitudes": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/solicitudes": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/solicitudes": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/solicitudes/:id": {
+      "estado": "pendiente"
+    },
+    "GET /me/recompensas": {
+      "estado": "pendiente"
+    },
+    "POST /me/recompensas": {
+      "estado": "pendiente"
+    },
+    "PATCH /me/recompensas/:id": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/recompensas/:id": {
+      "estado": "pendiente"
+    },
+    "GET /me/canjes": {
+      "estado": "pendiente"
+    },
+    "PATCH /me/canjes/:id": {
+      "estado": "pendiente"
+    },
+    "GET /me/loyalty/cliente": {
+      "estado": "pendiente"
+    },
+    "GET /me/loyalty/empleado": {
+      "estado": "pendiente"
+    },
+    "POST /me/loyalty/canjear": {
+      "estado": "pendiente"
+    },
+    "GET /me/loyalty/badges": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/ranking-equipo": {
+      "estado": "pendiente"
+    },
+    "GET /vacantes/roles": {
+      "estado": "pendiente"
+    },
+    "GET /vacantes": {
+      "estado": "pendiente"
+    },
+    "GET /vacantes/:id": {
+      "estado": "pendiente"
+    },
+    "GET /me/talento": {
+      "estado": "pendiente"
+    },
+    "PUT /me/talento": {
+      "estado": "pendiente"
+    },
+    "POST /me/talento/publicar": {
+      "estado": "pendiente"
+    },
+    "POST /me/talento/verificacion": {
+      "estado": "pendiente"
+    },
+    "POST /vacantes/roles": {
+      "estado": "pendiente"
+    },
+    "POST /vacantes/:id/postular": {
+      "estado": "pendiente"
+    },
+    "GET /me/postulaciones": {
+      "estado": "pendiente"
+    },
+    "DELETE /me/postulaciones/:id": {
+      "estado": "pendiente"
+    },
+    "POST /me/postulaciones/:id/resena": {
+      "estado": "pendiente"
+    },
+    "GET /perfil-talento/:userId": {
+      "estado": "pendiente"
+    },
+    "GET /me/organizador/reputacion": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/vacantes": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/vacantes": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/vacantes/:id": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/vacantes/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/vacantes/:vid/postulaciones": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/vacantes/:vid/postulaciones/:pid": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/talento": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/vacantes/:id/destacar": {
+      "estado": "pendiente"
+    },
+    "POST /sugerencias/dinamica": {
+      "estado": "pendiente"
+    },
+    "GET /sugerencias/dinamica": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/equipo": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/equipo": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/equipo/:miembroId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/equipo/:miembroId": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/vincular-invitaciones": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/roles": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/roles": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/roles/:rolId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/roles/:rolId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/tickets": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/tickets": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/tickets/:ticketId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/tickets/:ticketId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/clientes": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/clientes/:ticketId": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/clientes/importar": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/checkin": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/reingreso": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/zonas/aforo": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/zonas/movimiento": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/zonas/limpiar": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/mapa/vivo": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/zonas/reporte": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/alertas": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/alertas": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/alertas/:id/resolver": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/clientes/exportar": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/chat/channels": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/chat/channels": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/chat/channels/:channelId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/chat/channels/:channelId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/chat/channels/:channelId/messages": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/chat/channels/:channelId/messages": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/chat/channels/:channelId/messages/:messageId": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/chat/dm": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/chat/channels/:channelId/prefs": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/speakers": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/speakers": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/speakers/:speakerId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/speakers/:speakerId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/sessions": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/sessions": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/sessions/:sessionId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/sessions/:sessionId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/agenda/mis-favoritos": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/agenda/favoritos/:sessionId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/agenda/favoritos/:sessionId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/sesiones/participacion": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/sesiones/:sesionId/formulario": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:eventoId/sesiones/:sesionId/formulario": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/sesiones/:sesionId/inscripciones": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/sesiones/:sesionId/asistencia": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/sesiones/:sesionId/inscripciones/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/legal": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:eventoId/legal": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/tareas": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/tareas": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/tareas/:tareaId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/tareas/:tareaId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/tareas/:tareaId/log": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/tareas/:tareaId/comentar": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/waitlist": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/waitlist/:waitlistId": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/waitlist/:waitlistId/notify": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/waitlist/:waitlistId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/auditoria": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/analytics": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/networking/expositores": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/networking/mis-citas": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/networking/horarios/:horarioId/reservar": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/networking/citas/:citaId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/expositores": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/expositores/bolsa": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:eventoId/expositores/bolsa": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:eventoId/expositores/cuotas": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/expositores": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/expositores/:id": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/expositores/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/networking/admin": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/networking/expositores": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/networking/expositores/:id": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/networking/expositores/:id/horarios": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/networking/horarios/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/torneos": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/torneos/:torneoId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/torneo-categorias": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/torneo-categorias": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/torneo-categorias/:id": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/torneo-categorias/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/torneo": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/torneo": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/torneo/:torneoId": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/torneo/:torneoId": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/torneo/:torneoId/campos-disponibles": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/torneo/:torneoId/importar-equipos": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/torneo/:torneoId/equipos": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/torneo/:torneoId/equipos/:id": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/torneo/:torneoId/generar": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/torneo/:torneoId/cerrar-grupos": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:eventoId/torneo/:torneoId/partidos/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/torneo/:torneoId/posiciones": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/motivos": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:eventoId/motivos": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/interacciones": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/interacciones": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/expositores/ranking": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:eventoId/interacciones/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:eventoId/canje/saldo": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:eventoId/canje": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:id/duplicar": {
+      "estado": "pendiente"
+    },
+    "PATCH /eventos/:id": {
+      "estado": "pendiente"
+    },
+    "GET /eventos/:id/formulario": {
+      "estado": "pendiente"
+    },
+    "PUT /eventos/:id/formulario": {
+      "estado": "pendiente"
+    },
+    "DELETE /eventos/:id": {
+      "estado": "pendiente"
+    },
+    "POST /eventos/:id/estado": {
+      "estado": "pendiente"
+    },
+    "GET /debug-sentry": {
+      "estado": "pendiente"
+    }
+  }
+}

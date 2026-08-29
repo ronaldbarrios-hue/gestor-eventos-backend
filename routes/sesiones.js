@@ -38,6 +38,10 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
 
 const publico = express.Router();
+
+/* Inscripción a sub-eventos desde la página pública, con el código de la
+   boleta. El router `panel`, que es el del organizador, NO lleva esta marca. */
+publico.use(require('../core/permisos').publica('Inscripción a sub-eventos desde la página pública, identificada por el código de la boleta.'));
 const panel = express.Router();
 
 publico.use(verifySupabaseJWTOptional);

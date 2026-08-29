@@ -21,6 +21,7 @@
 const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
+const { exige } = require('../core/permisos');
 const { assertPermiso } = require('../lib/acceso.js');
 const {
   TIPOS, IDS_TIPOS, VARIABLES,
@@ -355,6 +356,32 @@ router.get('/eventos/:id/emails/envios', async (req, res) => {
       .limit(limit);
     if (error) return res.json({ envios: [], almacenamiento_listo: false });
     res.json({ envios: data || [], almacenamiento_listo: true });
+  } catch (e) { fallo(res, e); }
+});
+
+/* Estado de la cola y el botón de reintentar.
+
+   La cola marca `fallido` lo que no salió después de tres intentos, y también
+   lo que se quedó a medias porque el proceso murió (Passenger recicla la
+   aplicación cuando nadie la usa). Ninguna de las dos cosas se reenvía sola:
+   una dirección que rebota no mejora insistiendo, y reenviar lo interrumpido
+   duplicaría la boleta. Pero tienen que poder verse y poder reintentarse a
+   propósito, o el correo que no llegó no se entera nadie hasta que el asistente
+   se planta en la puerta sin QR. */
+router.get('/eventos/:id/emails/cola', exige(PERMS_ENVIAR), async (req, res) => {
+  try {
+    const evento = await cargarEvento(req.params.id, req.user.id, PERMS_ENVIAR);
+    const r = await cola.resumen(evento.id);
+    res.json({ ...r, activa: cola.activa(), por_hora: cola.porHora() });
+  } catch (e) { fallo(res, e); }
+});
+
+router.post('/eventos/:id/emails/cola/reintentar', exige(PERMS_ENVIAR), async (req, res) => {
+  try {
+    const evento = await cargarEvento(req.params.id, req.user.id, PERMS_ENVIAR);
+    const r = await cola.reintentarFallidos(evento.id);
+    if (!r.ok) return res.status(500).json({ error: r.error });
+    res.json({ ok: true, reencolados: r.reencolados });
   } catch (e) { fallo(res, e); }
 });
 

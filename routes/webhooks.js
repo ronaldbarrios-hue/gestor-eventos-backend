@@ -6,6 +6,11 @@ const { estadoDesde } = require('../lib/truora.js');
 
 const router = express.Router();
 
+/* Los webhooks entrantes llegan sin sesión por definición: los manda otro
+   servidor. Lo que los autentica es la firma del proveedor, dentro del
+   handler, no un token de usuario. */
+router.use(require('../core/permisos').publica('Webhook entrante de un proveedor: se autentica por firma, no por sesión.'));
+
 /* POST /webhooks/truora — resultado de una verificación KYC. Actualiza el
    perfil de talento cuyo `verificacion_ref` coincide con la validación.
    (El validation_id es no-adivinable; al integrar con la cuenta real se

@@ -166,8 +166,24 @@ El ascenso de cuenta ya está: tarjeta en Ajustes → Espacio de Trabajo, visibl
 solo a quien está en modo asistente, con la vuelta atrás aparte. `cambiarModo`
 llevaba en el contexto de auth desde el principio sin que nadie la llamara.
 
-- [ ] Queda el **#36** del documento de equipo: «cambiar propósito» se pierde en el
-      registro y la casilla del teléfono va apretada.
+- [x] ~~Queda el **#36** del documento de equipo: «cambiar propósito» se pierde en el
+      registro y la casilla del teléfono va apretada.~~ **Ya estaba hecho; esta
+      línea era la que estaba vieja** (este documento es del 12 de agosto y el
+      arreglo llegó después). Comprobado en el código, no en otro documento:
+      «cambiar propósito» es una pastilla con filo que además dice qué elegiste
+      —antes era un enlace de 12px en gris al lado de un titular de 36px, y se
+      perdía por eso—, y el indicativo del teléfono pasó de 90px a 128, que es
+      donde «+57 CO» más la flecha dejaban de salir cortados. La cadena de
+      vuelta está entera: paso 2 → paso 1 → paso 0.
+
+      **Lo que sí apareció al comprobarlo:** la columna `ciudad` guarda un
+      **país**, no una ciudad. Las dos pantallas que la escriben (registro y
+      completar perfil) usan un desplegable de `PAISES` etiquetado «País».
+      El campo que se añadió a Ajustes en el commit anterior era de texto
+      libre y habría metido ciudades en una columna que en todas las demás
+      filas tiene países; ahora usa la misma lista. El nombre de la columna
+      se deja como está: renombrarla es una migración que toca el snapshot
+      congelado de las postulaciones, y no es de esta tanda.
 
 ### 3.3 · Lista de espera de verdad — HECHO
 

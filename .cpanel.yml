@@ -1,0 +1,23 @@
+---
+# Despliegue en cPanel (Git Version Control → "Deploy HEAD Commit").
+#
+# El backend no se construye: se instala y se reinicia. Los pasos son tres y el
+# tercero es el que se olvida.
+#
+# ⚠️ REVISA ESTO ANTES DE DESPLEGAR:
+#   DEPLOYPATH = carpeta de la aplicación en "Setup Node.js App"
+#   (Application root). Aquí se asume `api`; $HOME ya apunta a /home/TU_USUARIO.
+#
+#   Si el repositorio ya está clonado EN esa carpeta, las tareas de copia
+#   sobran y basta con el npm ci y el restart: dejá sólo las dos últimas.
+deployment:
+  tasks:
+    - export DEPLOYPATH=$HOME/api
+    # 1 · El código
+    - /bin/bash -lc 'mkdir -p "$DEPLOYPATH" && rsync -a --delete --exclude ".git" --exclude "node_modules" --exclude ".env" ./ "$DEPLOYPATH"/'
+    # 2 · Las dependencias, con el node del entorno virtual (login shell)
+    - /bin/bash -lc 'cd "$DEPLOYPATH" && npm ci --omit=dev --no-audit --no-fund'
+    # 3 · El reinicio. Passenger recarga cuando cambia este archivo; sin esta
+    #     línea el código nuevo está en el disco y el proceso viejo sigue
+    #     corriendo, y se pierde media hora buscando por qué "no subió".
+    - /bin/bash -lc 'mkdir -p "$DEPLOYPATH/tmp" && touch "$DEPLOYPATH/tmp/restart.txt"'

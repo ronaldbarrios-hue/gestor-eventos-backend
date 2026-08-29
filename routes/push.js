@@ -12,6 +12,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificarVarios } = require('../lib/notificar.js');
 
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY;
@@ -27,7 +28,7 @@ router.get('/push/vapid-key', (_req, res) => {
   res.json({ key: VAPID_PUBLIC });
 });
 
-router.post('/me/push/subscribe', verifySupabaseJWT, async (req, res) => {
+router.post('/me/push/subscribe', verifySupabaseJWT, sesion("La suscripción de push de SU navegador, identificada por su endpoint."), async (req, res) => {
   const { endpoint, keys, user_agent } = req.body || {};
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'Subscription incompleta.' });
@@ -49,14 +50,14 @@ router.post('/me/push/subscribe', verifySupabaseJWT, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete('/me/push/unsubscribe', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/push/unsubscribe', verifySupabaseJWT, sesion("La suscripción de push de SU navegador, identificada por su endpoint."), async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'endpoint requerido.' });
   await supabase.from('push_subscriptions').delete().eq('user_id', req.user.id).eq('endpoint', endpoint);
   res.json({ ok: true });
 });
 
-router.post('/me/push/test', verifySupabaseJWT, async (req, res) => {
+router.post('/me/push/test', verifySupabaseJWT, sesion("La suscripción de push de SU navegador, identificada por su endpoint."), async (req, res) => {
   if (!VAPID_PUBLIC) return res.status(503).json({ error: 'Web push no configurado.' });
 
   const { data: subs } = await supabase

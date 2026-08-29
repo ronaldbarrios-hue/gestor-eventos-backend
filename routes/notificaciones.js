@@ -9,10 +9,11 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-router.get('/me/notificaciones', async (req, res) => {
+router.get('/me/notificaciones', sesion("Sus avisos: nadie más los ve ni los marca como leídos."), async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 30, 100);
 
   const { data, error } = await supabase
@@ -33,7 +34,7 @@ router.get('/me/notificaciones', async (req, res) => {
   res.json({ notificaciones: data || [], no_leidas: count ?? 0 });
 });
 
-router.patch('/me/notificaciones/:id/leer', async (req, res) => {
+router.patch('/me/notificaciones/:id/leer', sesion("Sus avisos: nadie más los ve ni los marca como leídos."), async (req, res) => {
   const { error } = await supabase
     .from('notificaciones')
     .update({ leida: true })
@@ -43,7 +44,7 @@ router.patch('/me/notificaciones/:id/leer', async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post('/me/notificaciones/leer-todas', async (req, res) => {
+router.post('/me/notificaciones/leer-todas', sesion("Sus avisos: nadie más los ve ni los marca como leídos."), async (req, res) => {
   const { error } = await supabase
     .from('notificaciones')
     .update({ leida: true })
@@ -53,7 +54,7 @@ router.post('/me/notificaciones/leer-todas', async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete('/me/notificaciones/:id', async (req, res) => {
+router.delete('/me/notificaciones/:id', sesion("Sus avisos: nadie más los ve ni los marca como leídos."), async (req, res) => {
   const { error } = await supabase
     .from('notificaciones')
     .delete()
@@ -66,7 +67,7 @@ router.delete('/me/notificaciones/:id', async (req, res) => {
 /* POST /me/notificaciones/generar-recordatorios — dispara manualmente la
    función SQL de recordatorios in-app. Útil para testear sin esperar el cron.
    Cualquier usuario autenticado puede llamarlo (la función es global e idempotente). */
-router.post('/me/notificaciones/generar-recordatorios', async (req, res) => {
+router.post('/me/notificaciones/generar-recordatorios', sesion("Sus avisos: nadie más los ve ni los marca como leídos."), async (req, res) => {
   const { data, error } = await supabase.rpc('generar_recordatorios_inapp');
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true, creadas: data ?? 0 });

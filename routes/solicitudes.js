@@ -12,6 +12,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar } = require('../lib/notificar.js');
 
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -32,7 +33,7 @@ async function assertAccess(eventoId, userId) {
 }
 
 /* ── GET /me/equipo/eventos ───────────────────────────────── */
-router.get('/me/equipo/eventos', async (req, res) => {
+router.get('/me/equipo/eventos', sesion("Los eventos donde ESTA persona es miembro del equipo."), async (req, res) => {
   /* Eventos donde soy miembro activo */
   const { data: miembros, error } = await supabase
     .from('event_members')
@@ -77,7 +78,7 @@ router.get('/me/equipo/eventos', async (req, res) => {
 });
 
 /* ── GET /me/solicitudes — agregado de TODOS mis eventos (dashboard) ── */
-router.get('/me/solicitudes', async (req, res) => {
+router.get('/me/solicitudes', sesion("Las sugerencias que ha enviado esta persona."), async (req, res) => {
   const { data: evs } = await supabase
     .from('eventos').select('id, titulo')
     .eq('owner_id', req.user.id).is('deleted_at', null);

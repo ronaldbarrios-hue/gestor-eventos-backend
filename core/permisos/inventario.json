@@ -1,5 +1,5 @@
 {
-  "pendientes_maximo": 230,
+  "pendientes_maximo": 184,
   "censado_el": "2026-08-29",
   "total": 285,
   "rutas": {
@@ -55,10 +55,12 @@
       "estado": "pendiente"
     },
     "GET /me/conexiones/mcp": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los conectores MCP de su cuenta: cada token es de una persona."
     },
     "DELETE /me/conexiones/mcp/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los conectores MCP de su cuenta: cada token es de una persona."
     },
     "POST /mcp": {
       "estado": "pendiente"
@@ -70,16 +72,20 @@
       "estado": "pendiente"
     },
     "GET /me/conexiones/ia": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La llave de IA que el usuario conecta a su cuenta. Sólo él la ve y sólo él la borra."
     },
     "PUT /me/conexiones/ia": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La llave de IA que el usuario conecta a su cuenta. Sólo él la ve y sólo él la borra."
     },
     "POST /me/conexiones/ia/probar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La llave de IA que el usuario conecta a su cuenta. Sólo él la ve y sólo él la borra."
     },
     "DELETE /me/conexiones/ia": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La llave de IA que el usuario conecta a su cuenta. Sólo él la ve y sólo él la borra."
     },
     "GET /categorias/": {
       "estado": "publica",
@@ -272,13 +278,16 @@
       "estado": "pendiente"
     },
     "GET /me/mercadopago/test": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "POST /me/mercadopago/conectar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "DELETE /me/mercadopago": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "POST /eventos/publicos/slug/:slug/comprar": {
       "estado": "pendiente"
@@ -287,13 +296,16 @@
       "estado": "pendiente"
     },
     "POST /me/wompi/conectar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "DELETE /me/wompi": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "GET /me/wompi": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "POST /eventos/publicos/slug/:slug/comprar-wompi": {
       "estado": "pendiente"
@@ -302,13 +314,16 @@
       "estado": "pendiente"
     },
     "GET /me/google/conectar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La conexión con Google de su propia cuenta."
     },
     "GET /me/google": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La conexión con Google de su propia cuenta."
     },
     "DELETE /me/google": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La conexión con Google de su propia cuenta."
     },
     "GET /integraciones/google/callback": {
       "estado": "pendiente"
@@ -321,13 +336,16 @@
       "estado": "pendiente"
     },
     "POST /me/push/subscribe": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La suscripción de push de SU navegador, identificada por su endpoint."
     },
     "DELETE /me/push/unsubscribe": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La suscripción de push de SU navegador, identificada por su endpoint."
     },
     "POST /me/push/test": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La suscripción de push de SU navegador, identificada por su endpoint."
     },
     "POST /eventos/:eventoId/push/broadcast": {
       "estado": "pendiente"
@@ -401,34 +419,44 @@
       "estado": "pendiente"
     },
     "GET /me/agente/estado": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El asistente de IA del propio usuario: su historial y su cuota son suyos."
     },
     "POST /me/agente/chat": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El asistente de IA del propio usuario: su historial y su cuota son suyos."
     },
     "POST /me/agente/generar-evento": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El asistente de IA del propio usuario: su historial y su cuota son suyos."
     },
     "GET /me/notificaciones": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus avisos: nadie más los ve ni los marca como leídos."
     },
     "PATCH /me/notificaciones/:id/leer": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus avisos: nadie más los ve ni los marca como leídos."
     },
     "POST /me/notificaciones/leer-todas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus avisos: nadie más los ve ni los marca como leídos."
     },
     "DELETE /me/notificaciones/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus avisos: nadie más los ve ni los marca como leídos."
     },
     "POST /me/notificaciones/generar-recordatorios": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus avisos: nadie más los ve ni los marca como leídos."
     },
     "GET /me/equipo/eventos": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los eventos donde ESTA persona es miembro del equipo."
     },
     "GET /me/solicitudes": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Las sugerencias que ha enviado esta persona."
     },
     "GET /eventos/:eventoId/solicitudes": {
       "estado": "pendiente"
@@ -440,34 +468,44 @@
       "estado": "pendiente"
     },
     "GET /me/recompensas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El catálogo de premios del propio organizador."
     },
     "POST /me/recompensas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El catálogo de premios del propio organizador."
     },
     "PATCH /me/recompensas/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El catálogo de premios del propio organizador."
     },
     "DELETE /me/recompensas/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El catálogo de premios del propio organizador."
     },
     "GET /me/canjes": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo que ha canjeado esta persona."
     },
     "PATCH /me/canjes/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo que ha canjeado esta persona."
     },
     "GET /me/loyalty/cliente": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."
     },
     "GET /me/loyalty/empleado": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."
     },
     "POST /me/loyalty/canjear": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."
     },
     "GET /me/loyalty/badges": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."
     },
     "GET /eventos/:eventoId/ranking-equipo": {
       "estado": "pendiente"
@@ -482,16 +520,20 @@
       "estado": "pendiente"
     },
     "GET /me/talento": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Su perfil de talento: lo edita sólo su dueño."
     },
     "PUT /me/talento": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Su perfil de talento: lo edita sólo su dueño."
     },
     "POST /me/talento/publicar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Su perfil de talento: lo edita sólo su dueño."
     },
     "POST /me/talento/verificacion": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Su perfil de talento: lo edita sólo su dueño."
     },
     "POST /vacantes/roles": {
       "estado": "pendiente"
@@ -500,19 +542,23 @@
       "estado": "pendiente"
     },
     "GET /me/postulaciones": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "A qué vacantes se presentó esta persona."
     },
     "DELETE /me/postulaciones/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "A qué vacantes se presentó esta persona."
     },
     "POST /me/postulaciones/:id/resena": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "A qué vacantes se presentó esta persona."
     },
     "GET /perfil-talento/:userId": {
       "estado": "pendiente"
     },
     "GET /me/organizador/reputacion": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "La reputación del propio organizador, hecha de reseñas que le dejaron."
     },
     "GET /eventos/:eventoId/vacantes": {
       "estado": "pendiente"

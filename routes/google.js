@@ -6,22 +6,23 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const gc = require('../lib/googleCalendar.js');
 
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 function front() { return (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0]; }
 
 /* Inicia el flujo: devuelve la URL de consentimiento de Google. */
-router.get('/me/google/conectar', verifySupabaseJWT, async (req, res) => {
+router.get('/me/google/conectar', verifySupabaseJWT, sesion("La conexión con Google de su propia cuenta."), async (req, res) => {
   if (!gc.configurado()) return res.status(503).json({ error: 'Google Calendar aún no está configurado en la plataforma.' });
   res.json({ url: gc.authUrl(req.user.id) });
 });
 
 /* Estado de conexión. */
-router.get('/me/google', verifySupabaseJWT, async (req, res) => {
+router.get('/me/google', verifySupabaseJWT, sesion("La conexión con Google de su propia cuenta."), async (req, res) => {
   const { data } = await supabase.from('profiles').select('google_email, google_connected_at, google_refresh_token').eq('id', req.user.id).maybeSingle();
   res.json({ disponible: gc.configurado(), conectado: Boolean(data?.google_refresh_token), email: data?.google_email || null, connected_at: data?.google_connected_at || null });
 });
 
-router.delete('/me/google', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/google', verifySupabaseJWT, sesion("La conexión con Google de su propia cuenta."), async (req, res) => {
   const { error } = await supabase.from('profiles').update({ google_refresh_token: null, google_email: null, google_connected_at: null }).eq('id', req.user.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });

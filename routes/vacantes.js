@@ -17,6 +17,7 @@ const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/
 const { assertPermiso } = require('../lib/acceso.js');
 const { notificar } = require('../lib/notificar.js');
 
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 
 /* ══════════════════════════════════════════════════════════════════
@@ -120,7 +121,7 @@ const slugify = (s) => {
 
 /* ═══════════════════════ PERFIL DE TALENTO (candidato) ═══════════════════════ */
 
-router.get('/me/talento', async (req, res) => {
+router.get('/me/talento', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const { data, error } = await supabase
     .from('perfil_talento').select('*').eq('user_id', req.user.id).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
@@ -133,7 +134,7 @@ router.get('/me/talento', async (req, res) => {
 const CAMPOS_PERFIL = ['titular', 'bio', 'habilidades', 'experiencia', 'disponibilidad',
   'pais', 'portfolio_url', 'redes', 'cv_url', 'cv_nombre'];
 
-router.put('/me/talento', async (req, res) => {
+router.put('/me/talento', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const fila = { user_id: req.user.id, updated_at: new Date().toISOString() };
   for (const k of CAMPOS_PERFIL) if (req.body?.[k] !== undefined) fila[k] = req.body[k];
   const { data, error } = await supabase
@@ -142,7 +143,7 @@ router.put('/me/talento', async (req, res) => {
   res.json({ perfil: data });
 });
 
-router.post('/me/talento/publicar', async (req, res) => {
+router.post('/me/talento/publicar', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const publicado = req.body?.publicado !== false;
   const { data, error } = await supabase
     .from('perfil_talento').update({ publicado, updated_at: new Date().toISOString() })
@@ -155,7 +156,7 @@ router.post('/me/talento/publicar', async (req, res) => {
 /* Verificación de identidad (identidad + rostro). STUB v1: marca 'pendiente'.
    La integración con el proveedor KYC (p.ej. Truora) llega en un paso posterior;
    el webhook /webhooks/kyc confirmará 'verificado'. */
-router.post('/me/talento/verificacion', async (req, res) => {
+router.post('/me/talento/verificacion', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const { data: existe } = await supabase.from('perfil_talento').select('user_id').eq('user_id', req.user.id).maybeSingle();
   if (!existe) return res.status(400).json({ error: 'Primero crea tu perfil de talento.' });
 
@@ -229,7 +230,7 @@ router.post('/vacantes/:id/postular', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.get('/me/postulaciones', async (req, res) => {
+router.get('/me/postulaciones', sesion("A qué vacantes se presentó esta persona."), async (req, res) => {
   const { data, error } = await supabase.from('postulaciones')
     .select(`id, etapa, mensaje, entrevista, monto_contrato, created_at,
       vacante:vacantes!vacante_id(id, titulo, pago_monto, pago_moneda, estado,
@@ -239,7 +240,7 @@ router.get('/me/postulaciones', async (req, res) => {
   res.json({ postulaciones: data || [] });
 });
 
-router.delete('/me/postulaciones/:id', async (req, res) => {
+router.delete('/me/postulaciones/:id', sesion("A qué vacantes se presentó esta persona."), async (req, res) => {
   const { data: p } = await supabase.from('postulaciones').select('id, etapa, user_id').eq('id', req.params.id).maybeSingle();
   if (!p || p.user_id !== req.user.id) return res.status(404).json({ error: 'Postulación no encontrada.' });
   if (p.etapa === 'aceptado') return res.status(400).json({ error: 'No puedes retirar una postulación ya aceptada.' });
@@ -249,7 +250,7 @@ router.delete('/me/postulaciones/:id', async (req, res) => {
 });
 
 /* Reseña del candidato hacia el organizador (pública en la cuenta organizadora). */
-router.post('/me/postulaciones/:id/resena', async (req, res) => {
+router.post('/me/postulaciones/:id/resena', sesion("A qué vacantes se presentó esta persona."), async (req, res) => {
   const estrellas = Number(req.body?.estrellas);
   if (!(estrellas >= 1 && estrellas <= 5)) return res.status(400).json({ error: 'Estrellas entre 1 y 5.' });
   const { data: p } = await supabase.from('postulaciones')
@@ -290,7 +291,7 @@ router.get('/perfil-talento/:userId', async (req, res) => {
 });
 
 /* Reputación pública del organizador (reseñas que le dejaron los trabajadores). */
-router.get('/me/organizador/reputacion', async (req, res) => {
+router.get('/me/organizador/reputacion', sesion("La reputación del propio organizador, hecha de reseñas que le dejaron."), async (req, res) => {
   const { data: resenas } = await supabase.from('talento_resenas')
     .select('estrellas, comentario, created_at, evento:eventos!evento_id(titulo), de:profiles!de_user_id(nombre, avatar_url)')
     .eq('para_user_id', req.user.id).eq('rol_de', 'trabajador')

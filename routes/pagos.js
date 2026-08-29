@@ -17,6 +17,7 @@ const { webhookLimiter } = require('../config/security.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { sesion } = require('../core/permisos');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 
 /* Sin el secreto el webhook sigue aceptándose, y es a propósito: rechazarlo
@@ -70,7 +71,7 @@ function apiBaseUrl() {
   return process.env.API_PUBLIC_URL || process.env.BACKEND_URL || 'http://localhost:3000';
 }
 /* ────────────── Settings del organizador ────────────── */
-router.get('/me/mercadopago/test', verifySupabaseJWT, async (req, res) => {
+router.get('/me/mercadopago/test', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { data: profile, error } = await supabase
     .from('profiles')
     .select('mp_access_token')
@@ -85,7 +86,7 @@ router.get('/me/mercadopago/test', verifySupabaseJWT, async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
-router.post('/me/mercadopago/conectar', verifySupabaseJWT, async (req, res) => {
+router.post('/me/mercadopago/conectar', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { mp_access_token, mp_public_key } = req.body;
   if (!mp_access_token) return res.status(400).json({ error: 'access_token requerido.' });
   let info;
@@ -108,7 +109,7 @@ router.post('/me/mercadopago/conectar', verifySupabaseJWT, async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json({ profile: data, mp_user: { id: info.id, nickname: info.nickname } });
 });
-router.delete('/me/mercadopago', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/mercadopago', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { error } = await supabase
     .from('profiles')
     .update({

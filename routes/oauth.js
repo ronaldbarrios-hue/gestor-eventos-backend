@@ -19,6 +19,7 @@
    Claude lee sin estar autenticado — y el conector no se podría ni descubrir. */
 
 const express = require('express');
+const { sesion } = require('../core/permisos');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const oauth = require('../lib/oauth.js');
 
@@ -183,11 +184,11 @@ router.post('/oauth/revoke', async (req, res) => {
 
 /* ── Panel: ver y cortar conexiones ───────────────────────────────────── */
 
-router.get('/me/conexiones/mcp', verifySupabaseJWT, async (req, res) => {
+router.get('/me/conexiones/mcp', verifySupabaseJWT, sesion("Los conectores MCP de su cuenta: cada token es de una persona."), async (req, res) => {
   res.json(await oauth.conexionesDe(req.user.id));
 });
 
-router.delete('/me/conexiones/mcp/:id', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/conexiones/mcp/:id', verifySupabaseJWT, sesion("Los conectores MCP de su cuenta: cada token es de una persona."), async (req, res) => {
   const r = await oauth.revocarPorId(req.user.id, req.params.id);
   if (!r.ok) return res.status(400).json({ error: r.error });
   res.json({ ok: true, aviso: 'Conexión cortada. Claude tendrá que volver a pedir permiso.' });

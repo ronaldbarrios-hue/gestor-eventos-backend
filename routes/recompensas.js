@@ -11,12 +11,13 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
 const AUDIENCIAS = ['cliente', 'empleado'];
 
-router.get('/me/recompensas', async (req, res) => {
+router.get('/me/recompensas', sesion("El catálogo de premios del propio organizador."), async (req, res) => {
   let q = supabase.from('recompensas')
     .select('*')
     .eq('organizador_id', req.user.id)
@@ -28,7 +29,7 @@ router.get('/me/recompensas', async (req, res) => {
   res.json({ recompensas: data || [] });
 });
 
-router.post('/me/recompensas', async (req, res) => {
+router.post('/me/recompensas', sesion("El catálogo de premios del propio organizador."), async (req, res) => {
   const { audiencia, titulo, descripcion, costo_puntos, stock } = req.body;
   if (!AUDIENCIAS.includes(audiencia)) return res.status(400).json({ error: 'audiencia inválida (cliente|empleado).' });
   if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido.' });
@@ -47,7 +48,7 @@ router.post('/me/recompensas', async (req, res) => {
   res.status(201).json({ recompensa: data });
 });
 
-router.patch('/me/recompensas/:id', async (req, res) => {
+router.patch('/me/recompensas/:id', sesion("El catálogo de premios del propio organizador."), async (req, res) => {
   const allowed = ['titulo', 'descripcion', 'costo_puntos', 'stock', 'activo'];
   const updates = {};
   for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
@@ -69,7 +70,7 @@ router.patch('/me/recompensas/:id', async (req, res) => {
   res.json({ recompensa: data });
 });
 
-router.delete('/me/recompensas/:id', async (req, res) => {
+router.delete('/me/recompensas/:id', sesion("El catálogo de premios del propio organizador."), async (req, res) => {
   const { error } = await supabase.from('recompensas')
     .delete().eq('id', req.params.id).eq('organizador_id', req.user.id);
   if (error) return res.status(500).json({ error: error.message });
@@ -77,7 +78,7 @@ router.delete('/me/recompensas/:id', async (req, res) => {
 });
 
 /* Canjes recibidos en mi comunidad (como organizador) */
-router.get('/me/canjes', async (req, res) => {
+router.get('/me/canjes', sesion("Lo que ha canjeado esta persona."), async (req, res) => {
   const { data, error } = await supabase.from('canjes')
     .select(`id, titulo, costo_puntos, codigo, estado, audiencia, created_at,
              usuario:profiles!user_id(id, nombre, email, avatar_url)`)
@@ -88,7 +89,7 @@ router.get('/me/canjes', async (req, res) => {
   res.json({ canjes: data || [] });
 });
 
-router.patch('/me/canjes/:id', async (req, res) => {
+router.patch('/me/canjes/:id', sesion("Lo que ha canjeado esta persona."), async (req, res) => {
   const { estado } = req.body;
   if (!['entregado', 'usado', 'cancelado'].includes(estado))
     return res.status(400).json({ error: 'Estado inválido.' });

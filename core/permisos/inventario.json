@@ -1,5 +1,5 @@
 {
-  "pendientes_maximo": 155,
+  "pendientes_maximo": 124,
   "censado_el": "2026-08-29",
   "total": 285,
   "rutas": {
@@ -678,31 +678,40 @@
       "estado": "pendiente"
     },
     "GET /eventos/:eventoId/chat/channels": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "POST /eventos/:eventoId/chat/channels": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "PATCH /eventos/:eventoId/chat/channels/:channelId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "DELETE /eventos/:eventoId/chat/channels/:channelId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "GET /eventos/:eventoId/chat/channels/:channelId/messages": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "POST /eventos/:eventoId/chat/channels/:channelId/messages": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "DELETE /eventos/:eventoId/chat/channels/:channelId/messages/:messageId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "POST /eventos/:eventoId/chat/dm": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "PATCH /eventos/:eventoId/chat/channels/:channelId/prefs": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "GET /eventos/:eventoId/speakers": {
       "estado": "exige",
@@ -798,22 +807,28 @@
       "estado": "pendiente"
     },
     "GET /eventos/:eventoId/tareas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "POST /eventos/:eventoId/tareas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "PATCH /eventos/:eventoId/tareas/:tareaId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "DELETE /eventos/:eventoId/tareas/:tareaId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "GET /eventos/:eventoId/tareas/:tareaId/log": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "POST /eventos/:eventoId/tareas/:tareaId/comentar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "GET /eventos/:eventoId/waitlist": {
       "estado": "pendiente"
@@ -834,52 +849,104 @@
       "estado": "pendiente"
     },
     "GET /eventos/:eventoId/networking/expositores": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento»."
     },
     "GET /eventos/:eventoId/networking/mis-citas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento»."
     },
     "POST /eventos/:eventoId/networking/horarios/:horarioId/reservar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento»."
     },
     "DELETE /eventos/:eventoId/networking/citas/:citaId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Su propia cita: el borrado filtra por user_id, así que nadie puede tocar la de otro."
     },
     "GET /eventos/:eventoId/expositores": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/expositores/bolsa": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "PUT /eventos/:eventoId/expositores/bolsa": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "PUT /eventos/:eventoId/expositores/cuotas": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/expositores": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/expositores/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/expositores/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/networking/admin": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/networking/expositores": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/networking/expositores/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/networking/expositores/:id/horarios": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/networking/horarios/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/torneos": {
       "estado": "sesion",

@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 
@@ -27,7 +28,7 @@ function tienePermiso(ctx, permiso) {
 }
 
 /* GET /eventos/:eventoId/chat/channels — filtrado por rol del usuario */
-router.get('/:eventoId/chat/channels', async (req, res) => {
+router.get('/:eventoId/chat/channels', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId } = req.params;
   try {
     const ctx = await assertAcceso(eventoId, req.user.id);
@@ -91,7 +92,7 @@ router.get('/:eventoId/chat/channels', async (req, res) => {
 
 /* POST /eventos/:eventoId/chat/channels — owner o quien tenga 'crear_canales'.
    Acepta parent_id para crear subgrupo + rol_ids[] para restringir visibilidad. */
-router.post('/:eventoId/chat/channels', async (req, res) => {
+router.post('/:eventoId/chat/channels', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId } = req.params;
   const { nombre, tipo = 'general', parent_id = null, rol_ids = [] } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'Nombre del canal requerido.' });
@@ -138,7 +139,7 @@ router.post('/:eventoId/chat/channels', async (req, res) => {
 });
 
 /* PATCH /eventos/:eventoId/chat/channels/:channelId — actualizar rol_ids o nombre */
-router.patch('/:eventoId/chat/channels/:channelId', async (req, res) => {
+router.patch('/:eventoId/chat/channels/:channelId', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, channelId } = req.params;
   const { rol_ids, nombre } = req.body;
   try {
@@ -163,7 +164,7 @@ router.patch('/:eventoId/chat/channels/:channelId', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/chat/channels/:channelId */
-router.delete('/:eventoId/chat/channels/:channelId', async (req, res) => {
+router.delete('/:eventoId/chat/channels/:channelId', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, channelId } = req.params;
   try {
     const ctx = await assertAcceso(eventoId, req.user.id);
@@ -181,7 +182,7 @@ router.delete('/:eventoId/chat/channels/:channelId', async (req, res) => {
 });
 
 /* GET /eventos/:eventoId/chat/channels/:channelId/messages */
-router.get('/:eventoId/chat/channels/:channelId/messages', async (req, res) => {
+router.get('/:eventoId/chat/channels/:channelId/messages', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, channelId } = req.params;
   const { before, limit = 50 } = req.query;
   try {
@@ -220,7 +221,7 @@ router.get('/:eventoId/chat/channels/:channelId/messages', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/chat/channels/:channelId/messages */
-router.post('/:eventoId/chat/channels/:channelId/messages', async (req, res) => {
+router.post('/:eventoId/chat/channels/:channelId/messages', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, channelId } = req.params;
   const { contenido, file_url } = req.body;
   if (!contenido?.trim() && !file_url) return res.status(400).json({ error: 'Mensaje vacío.' });
@@ -255,7 +256,7 @@ router.post('/:eventoId/chat/channels/:channelId/messages', async (req, res) => 
    conceder a un rol, pero no había ruta que borrara nada: era un interruptor
    sin cable. Se borra el propio mensaje siempre, y los de otros solo con el
    permiso. En un DM no manda nadie: solo el autor. */
-router.delete('/:eventoId/chat/channels/:channelId/messages/:messageId', async (req, res) => {
+router.delete('/:eventoId/chat/channels/:channelId/messages/:messageId', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, channelId, messageId } = req.params;
   try {
     const ctx = await assertAcceso(eventoId, req.user.id);
@@ -293,7 +294,7 @@ router.delete('/:eventoId/chat/channels/:channelId/messages/:messageId', async (
 
 /* POST /eventos/:eventoId/chat/dm { user_id } — abre (o crea) el chat 1:1
    entre el usuario y otro miembro del evento. Idempotente por par de usuarios. */
-router.post('/:eventoId/chat/dm', async (req, res) => {
+router.post('/:eventoId/chat/dm', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId } = req.params;
   const otro = req.body?.user_id;
   if (!otro || otro === req.user.id) return res.status(400).json({ error: 'Elige con quién chatear.' });
@@ -331,7 +332,7 @@ router.post('/:eventoId/chat/dm', async (req, res) => {
    Son por persona a propósito: si fueran del canal, anclar una conversación se
    la anclaría a todo el equipo y archivarla la esconderría a los demás sin que
    nadie lo hubiera pedido. */
-router.patch('/:eventoId/chat/channels/:channelId/prefs', async (req, res) => {
+router.patch('/:eventoId/chat/channels/:channelId/prefs', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, channelId } = req.params;
   try {
     await assertAcceso(eventoId, req.user.id);

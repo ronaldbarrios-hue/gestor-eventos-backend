@@ -36,6 +36,7 @@ const {
 } = require('../lib/formularioCampos.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
+const { otorgarPuntos, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
 
 const publico = express.Router();
 
@@ -493,7 +494,7 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
   const inscripcionId = req.body?.inscripcion_id || null;
 
   try {
-    await assertPermiso(eventoId, req.user.id, PERMS_MARCAR, 'id, owner_id');
+    const evento = await assertPermiso(eventoId, req.user.id, PERMS_MARCAR, 'id, owner_id');
     if (!codigo && !qrToken && !inscripcionId) {
       return res.status(400).json({ error: 'Manda el QR o el código de la boleta, o el id de la inscripción.' });
     }
@@ -543,6 +544,42 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
       .select('id, estado, asistio_at, nombre, email')
       .single();
     if (error) return res.status(500).json({ error: error.message });
+
+    /* Puntos por ir de verdad al sub-evento, y con su procedencia escrita.
+
+       Va DESPUÉS del update y sólo cuando `ya_marcada` era falso —el camino de
+       arriba devuelve antes—, así que volver a escanear la misma escarapela no
+       paga dos veces el mismo taller.
+
+       Sólo cobra quien tiene cuenta: los puntos cuelgan de un `user_id`, y el
+       inscrito sin boleta (que existe a propósito, ver la cabecera) no lo
+       tiene. Se resuelve desde la boleta, no desde la inscripción, porque la
+       inscripción guarda nombre y correo pero no a quién pertenecen.
+
+       Todo esto es best-effort: si falla, la asistencia ya quedó marcada, que
+       es lo que la puerta del taller necesita. */
+    try {
+      const { data: sesion } = await supabase
+        .from('agenda_sessions').select('titulo').eq('id', sesionId).maybeSingle();
+      const organizadorId = evento?.owner_id;
+      let asistenteId = ticket?.user_id || null;
+      if (!asistenteId && insc.ticket_id) {
+        const { data: t } = await supabase
+          .from('tickets').select('user_id').eq('id', insc.ticket_id).maybeSingle();
+        asistenteId = t?.user_id || null;
+      }
+      if (organizadorId && asistenteId) {
+        const reglas = await reglasPuntosDeEvento(eventoId);
+        if (reglas.activo && reglas.participacion_sesion > 0) {
+          otorgarPuntos({
+            userId: asistenteId, organizadorId, audiencia: 'cliente',
+            eventoId, accion: 'participacion_sesion',
+            puntos: reglas.participacion_sesion,
+            origen: { tipo: 'sesion', id: sesionId, detalle: sesion?.titulo || null },
+          });
+        }
+      }
+    } catch { /* los puntos no pueden tumbar un escaneo en la puerta */ }
 
     /* Cuántos van dentro de ESTE sub-evento, para que la puerta del taller vea
        su propio número sin salir de la pantalla del escáner. */

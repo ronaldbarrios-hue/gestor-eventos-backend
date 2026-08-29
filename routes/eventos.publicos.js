@@ -115,7 +115,7 @@ router.get('/ticket/:codigo', async (req, res) => {
     .from('tickets')
     .select(`
       id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
-      guest_nombre, guest_email,
+      guest_nombre, guest_email, user_id,
       tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor),
       evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json)
     `)
@@ -144,6 +144,38 @@ router.get('/ticket/:codigo', async (req, res) => {
     .order('created_at', { ascending: false })
     .limit(50);
   data.interacciones = inter || [];
+
+  /* Y lo que NO viene de un stand: la entrada al evento y cada sub-evento al
+     que fue. Vive en `points_log` porque cuelga de la cuenta y no de la
+     boleta, así que hay que pedirlo aparte — pero para quien lo mira es el
+     mismo historial, y verlo partido en dos sitios era justamente lo que
+     hacía imposible responder "¿de dónde salieron mis puntos?".
+
+     Sólo para quien tiene cuenta: sin `user_id` no hay nada que buscar. */
+  data.actividad = [];
+  if (data.user_id && data.evento?.id) {
+    const { data: log, error: eLog } = await supabase
+      .from('points_log')
+      .select('id, accion, puntos, origen_tipo, detalle, created_at')
+      .eq('user_id', data.user_id).eq('evento_id', data.evento.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    /* Si la 0082 no está aplicada, las columnas nuevas no existen y Postgres
+       responde 42703. Se reintenta con lo que sí hay: el historial se ve, sin
+       el detalle. Es preferible a esconderlo entero por una migración que
+       todavía no ha corrido. */
+    if (eLog && (eLog.code === '42703' || /column .* does not exist/i.test(eLog.message || ''))) {
+      const { data: basico } = await supabase
+        .from('points_log')
+        .select('id, accion, puntos, created_at')
+        .eq('user_id', data.user_id).eq('evento_id', data.evento.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      data.actividad = basico || [];
+    } else {
+      data.actividad = log || [];
+    }
+  }
 
   if (data.evento?.id) {
     const { data: ev } = await supabase
@@ -187,6 +219,12 @@ router.get('/ticket/:codigo', async (req, res) => {
     }
   }
   if (data.puntos == null) data.puntos = (inter || []).reduce((s, r) => s + (r.puntos || 0), 0);
+
+  /* `user_id` se pidió para poder buscar su actividad, pero NO sale de aquí:
+     esta ruta es pública —basta el código de la boleta— y devolverlo
+     entregaría el identificador de cuenta de esa persona a cualquiera que
+     tenga el código. Se usa dentro y se descarta antes de responder. */
+  delete data.user_id;
 
   res.json({ ticket: data });
 });

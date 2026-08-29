@@ -249,4 +249,30 @@ datos personales y **no puede quedarse fuera**.
    forma visible**. Ahora cada conexión del pool hace `SET time_zone = '+00:00'`
    y la zona sale en la comprobación de vida, junto al juego de caracteres, por
    la misma razón: los dos fallan en silencio y con datos ya escritos.
-5. ⏸ Una prueba que compare fila a fila las dos bases antes del corte.
+5. ✅ **La comparación entre las dos bases** → `scripts/comparar-bases.js`.
+   Es lo único que decide si el corte se hace.
+
+   Contar filas NO basta, y es la comprobación que todo el mundo hace: una
+   carga que trunca un texto a 255, que pierde los microsegundos de una fecha o
+   que convierte un `null` en cadena vacía deja EXACTAMENTE el mismo número de
+   filas. Se compara con una huella del contenido entero por fila, ordenada por
+   id, y sólo si difiere se buscan las columnas concretas (`--detalle`).
+
+   La parte difícil es la normalización, y tiene dos formas de salir mal:
+   normalizar de menos hace que cada fila salga distinta —los dos motores
+   escriben fechas y JSON de otra forma— y el informe no dice nada; normalizar
+   de más se come diferencias reales. Se igualan fechas, booleanos, el orden de
+   claves de un JSON y los arreglos. **No** se igualan los espacios al final,
+   las mayúsculas, ni `null` contra cadena vacía: distinguir «no contestó» de
+   «contestó vacío» es parte de lo que se vigila. Quince pruebas cubren las dos
+   direcciones.
+
+   Lee de los dos lados y no arregla nada. Si algo no cuadra, lo dice y para:
+   corregirlo es volver a correr la carga, porque una fila parcheada a mano
+   deja la duda de cuántas más habrá.
+
+## Lo que queda del paso 3
+
+El **script de carga de datos** es lo único de la fase 6 que sigue pendiente, y
+va después de que exista la base: mover los 829 campos con `timestamptz` a UTC
+y los 8 arreglos a JSON se escribe contra un esquema ya creado, no antes.

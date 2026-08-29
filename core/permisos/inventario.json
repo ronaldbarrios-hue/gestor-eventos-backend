@@ -109,7 +109,7 @@
       "estado": "publica",
       "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
     },
-    "GET /eventos/publicos/expositor/:codigo/canje/saldo": {
+    "POST /eventos/publicos/expositor/:codigo/canje/saldo": {
       "estado": "publica",
       "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
     },
@@ -197,7 +197,7 @@
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
-    "GET /eventos/publicos/invitacion-pendiente": {
+    "POST /eventos/publicos/invitacion-pendiente": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
@@ -867,7 +867,7 @@
     "DELETE /eventos/:eventoId/interacciones/:id": {
       "estado": "pendiente"
     },
-    "GET /eventos/:eventoId/canje/saldo": {
+    "POST /eventos/:eventoId/canje/saldo": {
       "estado": "pendiente"
     },
     "POST /eventos/:eventoId/canje": {

@@ -18,6 +18,7 @@ const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { conSitio } = require('../lib/eventoSitio.js');
+const { authLimiter } = require('../config/security.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -778,9 +779,12 @@ router.get('/slug/:slug/agenda', async (req, res) => {
   res.json({ evento_id: evento.id, evento, sessions: lista, preguntas, inscripcion_lista: true });
 });
 
-/* GET /eventos/publicos/invitacion-pendiente?email=... */
-router.get('/invitacion-pendiente', async (req, res) => {
-  const email = (req.query.email || '').toLowerCase().trim();
+/* POST /eventos/publicos/invitacion-pendiente { email }
+   Por POST y no por GET: el correo iba en la query string y quedaba escrito en
+   los logs de acceso del servidor. Lleva authLimiter porque contesta sobre
+   datos de otra persona (si un correo está invitado) y se puede enumerar. */
+router.post('/invitacion-pendiente', authLimiter, async (req, res) => {
+  const email = (req.body?.email || '').toLowerCase().trim();
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Email inválido.' });
 
   const { data, error } = await supabase

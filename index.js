@@ -5,6 +5,7 @@ const express = require('express');
 const Sentry  = require('@sentry/node');
 const env     = require('./config/env.js');
 const { applySecurity, authLimiter } = require('./config/security.js');
+const { publica } = require('./core/permisos');
 const { iniciarCronRecordatorios } = require('./lib/recordatorios.js');
 
 const app = express();
@@ -24,7 +25,7 @@ app.use((req, _res, next) => {
 
 /* ── Rutas públicas SIN auth — deben ir PRIMERO de todo,
    antes de cualquier router montado en '/' con auth global ── */
-app.get('/', (_req, res) => {
+app.get('/', publica('Portada de la API: dice qué es esto y qué endpoints hay. Sin datos de nadie.'), (_req, res) => {
   res.json({
     producto: 'GESTEK Event OS',
     version : '0.2.0-fase-a',
@@ -49,7 +50,7 @@ app.get('/', (_req, res) => {
   });
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/health', publica('Latido del servidor: lo consultan el panel de cPanel y cualquier vigilante externo.'), (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 /* ── Identidad propia ──────────────────────────────────────────────────────
    Detrás de un interruptor (`AUTH_PROPIA`) y montada antes que nada: son rutas
@@ -90,7 +91,7 @@ if (configPropia.ARCHIVOS_PROPIOS) {
    (no hay riesgo de SSRF: los destinos están fijos en el código), y no
    expone nada sensible — solo si la conexión abre o no. Borrar este bloque
    una vez resuelto. */
-app.get('/debug-red', async (_req, res) => {
+app.get('/debug-red', publica('Diagnóstico de red saliente, sin parámetros de entrada y sin datos sensibles. Temporal.'), async (_req, res) => {
   const net = require('net');
   const probar = (host, port) => new Promise((resolve) => {
     const inicio = Date.now();

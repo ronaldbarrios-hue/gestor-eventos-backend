@@ -26,15 +26,17 @@ function censar(app) {
   return listarRutas(app).map(r => {
     const exige = r.marcas.find(m => m.tipo === 'exige');
     const publica = r.marcas.find(m => m.tipo === 'publica');
+    const sesion = r.marcas.find(m => m.tipo === 'sesion');
     return {
       metodo  : r.metodo,
       ruta    : r.ruta,
       id      : r.id,
-      /* `exige` gana a `publica`: si una ruta concreta pide un permiso dentro
-         de un router declarado público, manda la de la ruta. */
-      estado  : exige ? 'exige' : (publica ? 'publica' : 'pendiente'),
+      /* El orden manda: `exige` gana a todo —si una ruta concreta pide un
+         permiso dentro de un router declarado de otra forma, manda la de la
+         ruta—, y `sesion` gana a `publica` por lo mismo. */
+      estado  : exige ? 'exige' : (sesion ? 'sesion' : (publica ? 'publica' : 'pendiente')),
       acciones: exige?.acciones || null,
-      motivo  : publica?.motivo || null,
+      motivo  : sesion?.motivo || publica?.motivo || null,
     };
   });
 }

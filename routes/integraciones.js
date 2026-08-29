@@ -10,6 +10,10 @@ const { generarToken } = require('../lib/apitoken.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
+/* Las integraciones son de la cuenta, no de un evento: Google, webhooks
+   salientes, claves de API. Se comprueban contra `req.user.id`. */
+router.use(require('../core/permisos').sesion('Integraciones de la propia cuenta, comprobadas contra req.user.id.'));
+
 const TIPOS_WEBHOOK = ['ticket.pagado', 'checkin.realizado', 'evento.publicado'];
 
 /* ── API TOKENS ── */

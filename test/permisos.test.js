@@ -18,7 +18,7 @@ process.env.JWT_SECRET = 'secreto-de-prueba-que-no-es-el-de-produccion';
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { puede, exige, publica, marcaDe } = require('../core/permisos');
+const { puede, exige, publica, sesion, marcaDe } = require('../core/permisos');
 const { comparar, leerInventario } = require('../core/permisos/censo.js');
 
 const ANA  = { id: 'ana' };
@@ -162,6 +162,15 @@ test('exige() y publica() dejan marca legible para el censo', () => {
   assert.equal(marcaDe(() => {}), null);
 });
 
+test('sesion() marca lo que es «tuyo» y también pide motivo', () => {
+  /* La tercera forma de declarar: ni pública ni colgada de un permiso de
+     evento. Sin ella, las rutas de /me no se podrían declarar nunca y el censo
+     las contaría como olvidadas para siempre — que es como un contador deja de
+     significar algo y nadie vuelve a mirarlo. */
+  assert.equal(marcaDe(sesion('el perfil propio')).tipo, 'sesion');
+  assert.throws(() => sesion());
+});
+
 test('publica() sin motivo no se puede escribir', () => {
   /* El motivo es lo que se lee dentro de un año, cuando nadie recuerde por qué
      la página de compra no pide sesión. */
@@ -210,6 +219,11 @@ test('el censo ve de verdad las rutas públicas ya declaradas', () => {
 
   assert.ok(publicas.length >= 20, `el censo sólo reconoce ${publicas.length} rutas públicas`);
   assert.ok(publicas.every(x => x.motivo), 'hay rutas públicas sin motivo escrito');
+
+  /* Y las de sesión, que son las de la propia cuenta. */
+  const propias = r.actuales.filter(x => x.estado === 'sesion');
+  assert.ok(propias.length >= 10, `el censo sólo reconoce ${propias.length} rutas de cuenta propia`);
+  assert.ok(propias.every(x => x.motivo), 'hay rutas de cuenta propia sin motivo escrito');
   assert.ok(
     r.actuales.some(x => x.ruta.startsWith('/categorias')),
     'el censo ya no encuentra /categorias: revisá cómo lee los prefijos de montaje'

@@ -47,9 +47,9 @@ const rutas = {};
 for (const x of r.actuales) {
   rutas[x.id] = x.estado === 'exige'
     ? { estado: 'exige', acciones: x.acciones }
-    : x.estado === 'publica'
-      ? { estado: 'publica', motivo: x.motivo }
-      : { estado: 'pendiente' };
+    : x.estado === 'pendiente'
+      ? { estado: 'pendiente' }
+      : { estado: x.estado, motivo: x.motivo };
 }
 
 guardarInventario({

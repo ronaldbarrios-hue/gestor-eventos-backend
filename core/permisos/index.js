@@ -112,6 +112,26 @@ function exige(acciones, { eventoDe, cargador } = {}) {
   return guardia;
 }
 
+/* ── La declaración de «esto es tuyo» ──────────────────────────────────────
+ *
+ * Hay rutas que no son públicas y tampoco cuelgan de un permiso de evento: el
+ * perfil propio, las integraciones de la cuenta, las conexiones del conector.
+ * Ahí la comprobación no es «¿qué permisos tiene en este evento?» sino «¿esta
+ * fila es suya?», y eso lo hace el handler filtrando por `req.user.id`.
+ *
+ * Sin esta tercera forma, esas rutas no se podrían declarar nunca y el censo
+ * las contaría como olvidadas para siempre — que es la manera más rápida de
+ * que un contador deje de significar algo y nadie lo mire.
+ *
+ * No hace nada en tiempo de ejecución: la sesión ya la exige el middleware del
+ * router. Es una declaración, y por eso pide el motivo. */
+function sesion(motivo) {
+  if (!motivo) throw new Error('sesion() necesita un motivo: se lee dentro de un año.');
+  const paso = function rutaDeSesion(_req, _res, next) { next(); };
+  paso[MARCA] = { tipo: 'sesion', motivo };
+  return paso;
+}
+
 /* ── La declaración de que algo es público ─────────────────────────────────
  *
  * No hace nada en tiempo de ejecución, y ése es el punto: existe para que el
@@ -162,4 +182,4 @@ async function cargarEvento(eventoId, usuarioId) {
 /* Lee la marca de un middleware. La usa el censo. */
 const marcaDe = (fn) => (typeof fn === 'function' ? fn[MARCA] || null : null);
 
-module.exports = { puede, exige, publica, cargarEvento, marcaDe, MARCA };
+module.exports = { puede, exige, publica, sesion, cargarEvento, marcaDe, MARCA };

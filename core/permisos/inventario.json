@@ -1,16 +1,19 @@
 {
-  "pendientes_maximo": 247,
+  "pendientes_maximo": 230,
   "censado_el": "2026-08-29",
   "total": 281,
   "rutas": {
     "GET /": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Portada de la API: dice qué es esto y qué endpoints hay. Sin datos de nadie."
     },
     "GET /health": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Latido del servidor: lo consultan el panel de cPanel y cualquier vigilante externo."
     },
     "GET /debug-red": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Diagnóstico de red saliente, sin parámetros de entrada y sin datos sensibles. Temporal."
     },
     "GET /api/v1/eventos": {
       "estado": "pendiente"
@@ -207,43 +210,56 @@
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
     "GET /me/": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
     },
     "PATCH /me/": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
     },
     "GET /me/boletas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
     },
     "POST /me/boletas/:id/transferir": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
     },
     "GET /me/expositor": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El perfil y los datos de la propia cuenta: cada handler filtra por req.user.id."
     },
     "GET /me/integraciones/tokens": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "POST /me/integraciones/tokens": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "DELETE /me/integraciones/tokens/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "GET /me/integraciones/webhooks": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "POST /me/integraciones/webhooks": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "PATCH /me/integraciones/webhooks/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "DELETE /me/integraciones/webhooks/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "GET /me/integraciones/webhooks/:id/deliveries": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "POST /me/sugerencias/dinamica": {
       "estado": "pendiente"
@@ -294,7 +310,8 @@
       "estado": "pendiente"
     },
     "POST /webhooks/truora": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Webhook entrante de un proveedor: se autentica por firma, no por sesión."
     },
     "GET /push/vapid-key": {
       "estado": "pendiente"

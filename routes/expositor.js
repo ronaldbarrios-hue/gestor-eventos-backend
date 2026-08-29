@@ -15,6 +15,11 @@ const { saldoDeTicket, recompensasDeExpositor } = require('../lib/saldoTicket.js
 
 const router = express.Router();
 
+/* Público en el sentido de que no hay sesión de usuario: la empresa se
+   identifica con el CÓDIGO de su boleta-Stand, y todo va forzado a SU ficha.
+   Es autenticación, sólo que no con un token de cuenta. */
+router.use(require('../core/permisos').publica('El expositor se identifica con el código de su boleta-Stand, no con una cuenta.'));
+
 /* Middleware: resuelve :codigo → ficha del expositor. */
 async function cargarExpositor(req, res, next) {
   const cod = String(req.params.codigo || '').toUpperCase().trim();

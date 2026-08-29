@@ -195,30 +195,18 @@ app.use((req, res) => {
   res.status(404).json({ error: `Ruta no encontrada: ${req.method} ${req.path}` });
 });
 
-/* Introspección real de las rutas registradas en Express */
-function listarRutas() {
-  const rutas = [];
-  function walk(stack, prefix = '') {
-    stack.forEach(layer => {
-      if (layer.route) {
-        const methods = Object.keys(layer.route.methods).map(m => m.toUpperCase()).join('|');
-        rutas.push(`${methods.padEnd(7)} ${prefix}${layer.route.path}`);
-      } else if (layer.name === 'router' && layer.handle?.stack) {
-        const src = layer.regexp?.source || '';
-        const match = src.match(/^\^\\\/([^\\]+(?:\\\/[^\\]+)*)/);
-        const mountPrefix = match ? '/' + match[1].replace(/\\\//g, '/') : '';
-        walk(layer.handle.stack, prefix + mountPrefix);
-      }
-    });
-  }
-  walk(app._router?.stack || app.router?.stack || []);
-  return rutas;
-}
+/* El censo de rutas vive en core/rutas.js: lo necesita también la prueba de
+   permisos, y una copia a mano se queda vieja a la semana. */
+const { comoTexto } = require('./core/rutas.js');
 
-iniciarCronRecordatorios();
+/* Arrancar sólo si a este archivo se le llama directamente. Al requerirlo
+   desde una prueba —que es lo que hace la de permisos, para poder preguntarle
+   a Express qué rutas tiene— no debe abrir un puerto ni encender el cron. */
+if (require.main === module) {
+  iniciarCronRecordatorios();
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
   console.log(`\n┌──────────────────────────────────────────────────────────┐`);
   console.log(`│  GESTEK API  v0.10.0-mp                                  │`);
   console.log(`│  http://localhost:${PORT}                                    │`);
@@ -237,8 +225,11 @@ app.listen(PORT, () => {
   console.log(`│    CHAT   /eventos/:id/chat/channels(/messages)          │`);
   console.log(`└──────────────────────────────────────────────────────────┘\n`);
 
-  console.log('[DEBUG] Rutas REALES registradas en Express:');
-  const rutas = listarRutas();
-  rutas.forEach(r => console.log('  ' + r));
-  console.log(`  Total: ${rutas.length}\n`);
-});
+    console.log('[DEBUG] Rutas REALES registradas en Express:');
+    const rutas = comoTexto(app);
+    rutas.forEach(r => console.log('  ' + r));
+    console.log(`  Total: ${rutas.length}\n`);
+  });
+}
+
+module.exports = app;

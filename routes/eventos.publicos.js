@@ -40,6 +40,12 @@ function classifySource(referrer) {
 }
 
 const router = express.Router();
+
+/* La página pública del evento: se abre sin cuenta, que es el punto de un
+   evento. Las rutas de aquí que sí tocan datos de una persona se autentican
+   por el código de su boleta, no por sesión. Declarado en bloque porque el
+   motivo es el mismo para todas. */
+router.use(require('../core/permisos').publica('Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta.'));
 router.use(verifySupabaseJWTOptional);
 
 /* GET /eventos/publicos — listado de eventos publicados vigentes (para /explorar) */

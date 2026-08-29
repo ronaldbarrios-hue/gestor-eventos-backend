@@ -30,6 +30,10 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 
 const publico = express.Router();
+
+/* Los términos y la política de privacidad tienen que poder leerse antes de
+   comprar y sin cuenta: es lo que exige la ley que los pide. */
+publico.use(require('../core/permisos').publica('Términos y privacidad: legalmente tienen que poder leerse sin cuenta.'));
 const panel = express.Router();
 panel.use(verifySupabaseJWT);
 

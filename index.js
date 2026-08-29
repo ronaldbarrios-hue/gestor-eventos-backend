@@ -67,6 +67,24 @@ if (configPropia.AUTH_PROPIA) {
   console.log('[auth] identidad propia montada en /auth');
 }
 
+/* ── Almacén propio ────────────────────────────────────────────────────────
+   Interruptor aparte del de la identidad: se encienden en días distintos y se
+   vuelve atrás por separado. Apagado, el navegador sigue subiendo directo a
+   Supabase como hasta hoy.
+
+   Necesita la identidad encendida: quien sube tiene que poder ser reconocido, y
+   eso lo resuelve `modules/auth`. */
+if (configPropia.ARCHIVOS_PROPIOS) {
+  const archivos = require('./modules/archivos');
+  app.use('/archivos', archivos.rutas);
+  /* Comprobar que el almacén se puede escribir AHORA y no cuando el primer
+     usuario suba una foto: un permiso mal puesto se ve en el log del arranque
+     o no se ve hasta que alguien se queja. */
+  archivos.comprobarAlmacen()
+    .then((raiz) => console.log(`[archivos] almacén propio montado en /archivos → ${raiz}`))
+    .catch((e) => console.error(`[archivos] NO se puede escribir en el almacén: ${e.message}`));
+}
+
 /* TEMPORAL — diagnóstico de red saliente hacia Hostinger, para depurar el
    ENETUNREACH/timeout que ve el envío de correo. Sin parámetros de entrada
    (no hay riesgo de SSRF: los destinos están fijos en el código), y no

@@ -194,6 +194,95 @@ nunca se borraron de Supabase.
   refresco. `repositorio.limpiarCaducados()` está escrita para el cron; conviene
   engancharla cuando haya tráfico de verdad.
 
+---
+
+# Encender el almacén propio
+
+Va aparte de la identidad y con su propio interruptor (`ARCHIVOS_PROPIOS`): se
+encienden en días distintos y se vuelve atrás por separado. Necesita la
+identidad encendida, porque quien sube tiene que poder ser reconocido.
+
+## A · El disco
+
+```
+ARCHIVOS_RAIZ=/home/cuenta/gestek-archivos
+ARCHIVOS_URL_BASE=https://api.gestekeventost.dpdns.org/archivos
+ARCHIVOS_CUOTA_BYTES=52428800
+ARCHIVOS_X_ACCEL=            # sólo si hay Nginx delante; en cPanel, vacío
+```
+
+**`ARCHIVOS_RAIZ` fuera de la carpeta del código.** Si estuviera dentro, un
+despliegue que reemplace el directorio se lleva por delante las fotos de todos
+los eventos, y no hay copia. Y las tablas:
+
+```bash
+mysql -u cuenta_usuario -p cuenta_gestek < db/migraciones/002_archivos.sql
+```
+
+`ARCHIVOS_URL_BASE` es el prefijo que va a sustituir al de Supabase dentro de
+las filas. Elegirlo bien **ahora**: cambiarlo después obliga a repetir la
+reescritura de las 13 columnas. Sin comillas, sin barras invertidas y sin
+espacios — cinco de esas columnas son JSON.
+
+## B · Traer los archivos
+
+```bash
+node scripts/copiar-storage.js              # lista y cuenta, no baja nada
+node scripts/copiar-storage.js --aplicar    # baja los referenciados
+```
+
+La primera pasada no baja nada: enseña cuántos objetos hay, cuántos referencia
+alguna fila y cuántos no. De los 107, **40 son huérfanos y suman 28 MB** —más
+de un tercio— y por defecto se quedan fuera: copiarlos es pagar dos veces un
+trabajo que sólo mueve basura.
+
+La ruta de destino es idéntica a la de origen (`bucket/carpeta/archivo`). Eso
+es lo que convierte el paso siguiente en un cambio de prefijo.
+
+## C · Servir las dos copias a la vez
+
+Antes de reescribir nada, comprobar que una URL nueva responde:
+
+```bash
+curl -I https://api.gestekeventost.dpdns.org/archivos/avatars/<uid>/<archivo>
+```
+
+Y que las viejas **siguen respondiendo**. Las dos copias en paralelo durante
+toda la ventana: si se apaga el origen antes de tiempo, cada portada sin migrar
+es un hueco en una página pública de un evento publicado.
+
+## D · Reescribir las URL
+
+`db/migraciones/postgres/001_reescribir_urls.sql`, en el editor SQL de Supabase,
+**entero y de una vez**. Termina en `ROLLBACK`: la primera pasada enseña los
+conteos sin cambiar nada. Tienen que dar exactamente 16, 13, 5, 5, 4, 4, 3, 2,
+1, 1, 1, 1, 1 — 57 filas, vueltas a medir el 29 de agosto. Si no cuadran,
+parar: o alguien subió cosas desde entonces, o hay filas que la reescritura no
+está alcanzando.
+
+Cuando cuadren, cambiar `ROLLBACK` por `COMMIT` y repetir.
+
+## E · Lo que cambia para quien usa la aplicación
+
+Nada, si todo va bien. Por dentro sí cambian cuatro cosas, y las cuatro son
+arreglos de problemas medidos:
+
+- **La foto anterior se borra.** Hoy no la borra nadie, y por eso el
+  almacenamiento pasó de 24 a 80 MB sin que se subiera más.
+- **`form-uploads` deja de aceptar escritura de cualquiera.** La política de
+  Supabase permitía escribir con la llave anónima, que va en el bundle del
+  navegador. Ahora hace falta sesión o el código del expositor.
+- **Las hojas de vida salen del bucket público** a una carpeta privada, servida
+  con enlace firmado que caduca en quince minutos.
+- **La subida de CV empieza a funcionar.** Nunca funcionó: el código mandaba
+  PDF de 8 MB a un bucket que sólo admitía imágenes de 4 MB.
+
+Lo último obliga a tocar los cinco uploaders del frontend, que hoy suben
+directos a Supabase con `getPublicUrl()`. Ese cambio va con el interruptor del
+frontend, no con éste.
+
+---
+
 ## 8 · Lo que este documento NO cubre
 
 - **Apagar Supabase Auth.** No se toca hasta que pasen unos días con todo el

@@ -85,6 +85,35 @@ const config = {
   INTENTOS_MAX  : parseInt(process.env.AUTH_INTENTOS_MAX, 10) || 8,
   BLOQUEO_MIN   : parseInt(process.env.AUTH_BLOQUEO_MIN, 10)  || 15,
 
+  /* ── Archivos ─────────────────────────────────────────────────────────
+     Su propio interruptor, separado del de la identidad: se pueden encender en
+     días distintos y volver atrás por separado. Mientras esté apagado, el
+     navegador sigue subiendo directo a Supabase como hoy. */
+  ARCHIVOS_PROPIOS: process.env.ARCHIVOS_PROPIOS === 'true' || process.env.ARCHIVOS_PROPIOS === '1',
+
+  /* La raíz va FUERA de la carpeta del código: si estuviera dentro, un
+     despliegue que reemplace el directorio se lleva por delante las fotos de
+     todos los eventos, y no hay copia. En cPanel algo como
+     `/home/cuenta/gestek-archivos`. */
+  ARCHIVOS_RAIZ: process.env.ARCHIVOS_RAIZ || (IS_PROD ? '/var/gestek/archivos' : './.archivos'),
+
+  /* El prefijo público de las URL. Tiene que ser EXACTAMENTE el que sustituye
+     al de Supabase en las 13 columnas que llevan la URL dentro de la fila, o
+     la reescritura deja de ser un cambio de prefijo. Y sin caracteres que haya
+     que escapar en JSON: cinco de esas columnas son JSON. */
+  ARCHIVOS_URL_BASE: (process.env.ARCHIVOS_URL_BASE || '/archivos').replace(/\/$/, ''),
+
+  /* Cuota por cuenta. 50 MB es holgado para fotos de perfil y galería —hoy los
+     tres buckets enteros suman 80 MB entre 29 usuarios— y evita que una sola
+     cuenta llene los 9,81 GB del disco compartido y tumbe la aplicación para
+     todos. */
+  ARCHIVOS_CUOTA_BYTES: parseInt(process.env.ARCHIVOS_CUOTA_BYTES, 10) || 50 * 1024 * 1024,
+
+  /* La ubicación interna de Nginx para servir los privados sin que los bytes
+     pasen por Node. Vacío = se sirven desde el proceso, que vale en desarrollo
+     y no en un evento con gente descargando a la vez. */
+  ARCHIVOS_X_ACCEL: process.env.ARCHIVOS_X_ACCEL || null,
+
   /* ── Google ───────────────────────────────────────────────────────────
      El `client_id` TIENE que ser el mismo que usa Supabase hoy, o los 22
      usuarios que entran con Google dejan de entrar aunque sus filas estén

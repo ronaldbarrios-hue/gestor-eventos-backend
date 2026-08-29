@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 230,
   "censado_el": "2026-08-29",
-  "total": 281,
+  "total": 285,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -150,6 +150,10 @@
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
     "GET /eventos/publicos/ticket/:codigo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "POST /eventos/publicos/slug/:slug/prellenar": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
@@ -899,6 +903,24 @@
     },
     "POST /eventos/:id/estado": {
       "estado": "pendiente"
+    },
+    "POST /eventos/:id/padron": {
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
+    },
+    "DELETE /eventos/:id/padron": {
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:id/padron/estado": {
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "GET /debug-sentry": {
       "estado": "pendiente"

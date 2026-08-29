@@ -188,9 +188,37 @@ datos personales y **no puede quedarse fuera**.
 
 ## Lo que falta para que esto sea aplicable
 
-1. Correr el generador y guardar la salida como `003_esquema.sql`.
-2. Traducir las 4 vistas.
-3. El script de carga de datos (los 829 campos, con `timestamptz` → UTC y los
-   8 arreglos → JSON).
-4. Reescribir en código los 9 disparadores y las 7 funciones RPC.
-5. Una prueba que compare fila a fila las dos bases antes del corte.
+1. ⏸ Correr el generador y guardar la salida como `003_esquema.sql`. Se corre
+   contra Postgres y su salida cambia con el esquema, así que se hace lo más
+   tarde posible, no ahora.
+2. ✅ **Traducir las 4 vistas** → `004_vistas.sql`. Lo que no era mecánico:
+   `FILTER (WHERE …)` no existe en MySQL y se hace con `CASE WHEN`, con
+   `ELSE 0` en las sumas para que un grupo vacío dé 0 y no NULL. Comprobado
+   contra Postgres con datos que ejercitan los tres casos —positivos y
+   negativos mezclados, sólo negativos, y grupo sin filas—: los mismos números.
+   Y `v_bolsa_evento` va DESPUÉS de `v_consumo_puntos_stand`, porque la lee.
+3. ⏸ El script de carga de datos.
+4. ✅ **Los contadores** → `modules/contadores/`. Los tres sitios donde la base
+   cuenta por nosotros (cuota del stand, inscritos de un sub-evento, canje),
+   con transacción y `SELECT … FOR UPDATE`. Sin el bloqueo la transacción sola
+   no basta: MySQL en REPEATABLE READ deja que dos escaneos lean lo mismo, y el
+   stand reparte 520 de una cuota de 500.
+
+   Dos cosas que **mejoran** sobre el original y conviene no deshacer:
+   · `canjear_recompensa` sólo bloqueaba la recompensa, así que dos canjes de
+     recompensas DISTINTAS por la misma persona podían descontar los dos del
+     mismo saldo. Ahora el saldo también va bloqueado.
+   · El cupo del sub-evento se comprobaba en el código y fuera de transacción:
+     dos personas veían el mismo «queda 1» y las dos entraban.
+
+   Doce pruebas, que se corren **sin base**: comprueban qué SQL se emite y en
+   qué orden. Una prueba que necesitara MySQL no se correría nunca y esto se
+   quedaría sin red justo donde más falta hace.
+
+   ⚠️ No se llama desde ninguna ruta todavía, a propósito: los datos siguen en
+   Supabase y allí los disparadores hacen su trabajo.
+
+   Falta reescribir los **seed_\*** de `eventos` (canales de chat, roles,
+   page_json) y las cuatro funciones de aforo, que son de lectura y no tienen
+   trampa de concurrencia.
+5. ⏸ Una prueba que compare fila a fila las dos bases antes del corte.

@@ -14,6 +14,14 @@ const {
 } = require('../lib/formularioCampos.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
+const { hashDocumento, columnasSinPregunta, clave: clavePadron } = require('../lib/padronPrevio.js');
+const { exige } = require('../core/permisos');
+const { fallaPaginas } = require('../lib/bloquesLanding.js');
+
+/* El padrón es parte de configurar el formulario del evento, así que pide lo
+   mismo que editarlo. Se declara para el censo de la fase 7 en vez de dejarlo
+   pendiente: son rutas nuevas y arreglarlo hoy es barato. */
+const PERMS_PADRON = ['editar_evento'];
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -345,6 +353,18 @@ router.patch('/:id', async (req, res) => {
      borraba sin avisar. Ahora sólo puede tocar las claves que manda. */
   const updatesFinales = partirSitio(updates, actual.page_json);
 
+  /* La landing se valida contra el catálogo de bloques ANTES de guardarla.
+
+     Hasta ahora `paginas` se guardaba tal cual, y se sostenía porque el único
+     que escribía era el editor, que conoce el catálogo. Con Claude escribiendo
+     por MCP y con un modo desarrollador eso deja de ser cierto: una página con
+     bloques inventados se guardaría bien y reventaría al pintarla, delante del
+     público. Ver lib/bloquesLanding.js. */
+  if (updatesFinales.paginas !== undefined) {
+    const falloBloques = fallaPaginas(updatesFinales.paginas);
+    if (falloBloques) return res.status(400).json({ error: falloBloques });
+  }
+
   const { data, error } = await supabase
     .from('eventos')
     .update(updatesFinales)
@@ -557,6 +577,107 @@ router.post('/:id/estado', async (req, res) => {
     dispatch(req.user.id, 'evento.publicado', { evento_id: data.id, titulo: data.titulo, slug: data.slug });
   }
   res.json({ evento: data });
+});
+
+/* ══════════════════ Padrón de eventos anteriores ══════════════════
+
+   Subir la base de asistentes de ediciones pasadas para que el formulario se
+   rellene solo al escribir la cédula. Ver la migración 0085 para por qué es
+   una tabla aparte y por qué se guarda el hash y no el documento.
+
+   Esta ruta es PRIVADA (pide permiso de edición). La que consulta es pública y
+   vive en eventos.publicos.js, con limitador. */
+
+/* POST /eventos/:id/padron
+   Body: { filas: [ { documento, ...datos } ], origen? }
+   Devuelve cuántas entraron y qué columnas del archivo no pregunta nadie. */
+router.post('/:id/padron', exige(PERMS_PADRON), async (req, res) => {
+  const permiso = await puedeEditarEvento(req, req.params.id);
+  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
+
+  const filas = Array.isArray(req.body?.filas) ? req.body.filas : [];
+  if (!filas.length) return res.status(400).json({ error: 'No llegó ninguna fila.' });
+  if (filas.length > 20000) return res.status(400).json({ error: 'Máximo 20.000 filas por carga.' });
+
+  const eventoId = req.params.id;
+  const columnas = new Set();
+  const preparadas = [];
+  let sinDocumento = 0;
+
+  for (const f of filas) {
+    if (!f || typeof f !== 'object') continue;
+    /* La columna del documento se acepta con varios nombres porque el archivo
+       viene de fuera y cada organizador la llama distinto. */
+    const doc = f.documento ?? f.cedula ?? f.cédula ?? f.identificacion ?? f.identificación ?? f.nit ?? f.dni;
+    const hash = hashDocumento(eventoId, doc);
+    if (!hash) { sinDocumento++; continue; }
+
+    /* El documento NO se guarda, ni siquiera dentro de `datos`: si quedara ahí
+       se habría hecho el hash para nada. */
+    const datos = {};
+    for (const [k, v] of Object.entries(f)) {
+      const ck = clavePadron(k);
+      if (['documento', 'cedula', 'identificacion', 'nit', 'dni'].includes(ck)) continue;
+      if (v === undefined || v === null || v === '') continue;
+      datos[k] = typeof v === 'string' ? v.trim() : v;
+      columnas.add(k);
+    }
+    preparadas.push({ evento_id: eventoId, documento_hash: hash, datos, origen: req.body?.origen || null });
+  }
+
+  if (!preparadas.length) {
+    return res.status(400).json({ error: 'Ninguna fila traía un documento reconocible. La columna puede llamarse documento, cédula, identificación, NIT o DNI.' });
+  }
+
+  /* En tandas: 20.000 filas en un solo upsert revienta el límite del cliente.
+     `onConflict` para que volver a subir el padrón actualice en vez de
+     duplicar — subirlo dos veces es lo normal, no la excepción. */
+  const TANDA = 500;
+  let guardadas = 0;
+  for (let i = 0; i < preparadas.length; i += TANDA) {
+    const { error } = await supabase
+      .from('padron_previo')
+      .upsert(preparadas.slice(i, i + TANDA), { onConflict: 'evento_id,documento_hash' });
+    if (error) {
+      if (/relation .*padron_previo.* does not exist/i.test(error.message || '')) {
+        return res.status(503).json({ error: 'Falta aplicar la migración 0085 para poder guardar el padrón.' });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+    guardadas += Math.min(TANDA, preparadas.length - i);
+  }
+
+  /* Qué trae el archivo que ninguna pregunta recoge. Es la mitad útil del
+     aviso: «para aprovechar esta columna, te falta esta pregunta». */
+  const { data: campos } = await supabase
+    .from('event_form_fields').select('id, etiqueta')
+    .eq('evento_id', eventoId).is('session_id', null);
+
+  res.json({
+    guardadas,
+    sin_documento: sinDocumento,
+    columnas_sin_pregunta: columnasSinPregunta([...columnas], campos || []),
+  });
+});
+
+/* DELETE /eventos/:id/padron — borra el padrón de este evento. */
+router.delete('/:id/padron', exige(PERMS_PADRON), async (req, res) => {
+  const permiso = await puedeEditarEvento(req, req.params.id);
+  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
+  const { error } = await supabase.from('padron_previo').delete().eq('evento_id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+/* GET /eventos/:id/padron/estado — cuántas filas hay, para la pantalla. */
+router.get('/:id/padron/estado', exige(PERMS_PADRON), async (req, res) => {
+  const permiso = await puedeEditarEvento(req, req.params.id);
+  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
+  const { count, error } = await supabase
+    .from('padron_previo').select('id', { count: 'exact', head: true })
+    .eq('evento_id', req.params.id);
+  if (error) return res.json({ filas: 0, disponible: false });
+  res.json({ filas: count || 0, disponible: true });
 });
 
 module.exports = router;

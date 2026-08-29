@@ -61,9 +61,31 @@ cupo liberado de la lista de espera cuando se construya.
 ### 1.2 · Seguridad — dos huecos abiertos
 
 - [ ] `MP_WEBHOOK_SECRET` — se saca del panel de Mercado Pago.
-      **Sin ella los webhooks se aceptan sin verificar firma:** cualquiera que
-      conozca la URL podría marcar una boleta como pagada. Es lo más urgente
-      después del correo.
+
+      ⚠️ **Esta línea decía que sin la llave «cualquiera que conozca la URL
+      podría marcar una boleta como pagada», y NO es cierto.** Comprobado en el
+      código y contra el endpoint desplegado, que es como se vio:
+
+      El webhook **no se cree el cuerpo de la petición**. Saca el `payment_id`
+      y va a preguntarle el estado a Mercado Pago con el token del organizador
+      (`mp.getPayment`). Un aviso falso con un id inventado recibe un 404 de
+      Mercado Pago y no marca nada. El único dato que el atacante controla es
+      *qué id se consulta*, no *qué contesta*.
+
+      Y el amplificador que sí había —mandar ids inventados para provocar una
+      llamada saliente por cada organizador conectado— **ya está cerrado**: ese
+      recorrido exige firma verificada desde hace tiempo (`routes/pagos.js`,
+      el bloque `if (!MP_WEBHOOK_SECRET) return`).
+
+      Lo que se pierde de verdad sin la llave: **la recuperación de pagos
+      huérfanos**. La fila de `payment_transactions` nace con el
+      `preference_id` y sin `payment_id`, así que el primer aviso de cada pago
+      no encuentra su fila y necesita ese recorrido. Sin llave, ese pago no se
+      concilia solo — el organizador lo marca a mano y nadie se queda sin su
+      boleta.
+
+      Sigue haciendo falta, pero es conciliación, no un agujero abierto. La
+      urgencia real está en el correo.
 - [ ] `TURNSTILE_SECRET_KEY` — Cloudflare Turnstile, gratis.
       Sin ella no se exige captcha y la reserva pública queda abierta a bots.
 

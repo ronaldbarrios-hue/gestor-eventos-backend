@@ -127,9 +127,11 @@ router.get('/me/talento', async (req, res) => {
   res.json({ perfil: data || null });
 });
 
+/* Sin ciudad/telefono/foto_url a propósito: son de la PERSONA, no de esta
+   faceta, y viven en `profiles` (0081_perfil_talento_sin_datos_de_persona).
+   Se editan en Ajustes → Mi Perfil; aquí sólo se leen, heredados. */
 const CAMPOS_PERFIL = ['titular', 'bio', 'habilidades', 'experiencia', 'disponibilidad',
-  'ciudad', 'pais', 'telefono', 'foto_url', 'portfolio_url', 'redes',
-  'cv_url', 'cv_nombre'];
+  'pais', 'portfolio_url', 'redes', 'cv_url', 'cv_nombre'];
 
 router.put('/me/talento', async (req, res) => {
   const fila = { user_id: req.user.id, updated_at: new Date().toISOString() };
@@ -203,10 +205,13 @@ router.post('/vacantes/:id/postular', async (req, res) => {
     if (!vac) return res.status(404).json({ error: 'Vacante no encontrada.' });
     if (vac.estado !== 'abierta') return res.status(400).json({ error: 'Esta vacante ya no recibe postulaciones.' });
 
+    /* ciudad y foto_url ya no viven en perfil_talento (son de la persona,
+       no de esta faceta): se congelan desde profiles, que es donde se editan. */
+    const { data: prof } = await supabase.from('profiles').select('ciudad, avatar_url').eq('id', req.user.id).maybeSingle();
     const snapshot = {
       titular: perfil.titular, bio: perfil.bio, habilidades: perfil.habilidades,
       experiencia: perfil.experiencia, disponibilidad: perfil.disponibilidad,
-      ciudad: perfil.ciudad, foto_url: perfil.foto_url, portfolio_url: perfil.portfolio_url,
+      ciudad: prof?.ciudad || null, foto_url: prof?.avatar_url || null, portfolio_url: perfil.portfolio_url,
       cv_url: perfil.cv_url, cv_nombre: perfil.cv_nombre,
       verificacion_estado: perfil.verificacion_estado,
     };
@@ -267,16 +272,21 @@ router.post('/me/postulaciones/:id/resena', async (req, res) => {
 router.get('/perfil-talento/:userId', async (req, res) => {
   const { userId } = req.params;
   const { data: perfil } = await supabase.from('perfil_talento')
-    .select('user_id, titular, bio, habilidades, experiencia, disponibilidad, ciudad, pais, foto_url, portfolio_url, cv_url, cv_nombre, publicado, verificacion_estado')
+    .select('user_id, titular, bio, habilidades, experiencia, disponibilidad, pais, portfolio_url, cv_url, cv_nombre, publicado, verificacion_estado')
     .eq('user_id', userId).maybeSingle();
   if (!perfil) return res.status(404).json({ error: 'Perfil no encontrado.' });
-  const { data: prof } = await supabase.from('profiles').select('nombre, avatar_url').eq('id', userId).maybeSingle();
+  /* ciudad y foto (avatar_url) son de la persona, no de esta faceta: se leen
+     de profiles, no de perfil_talento. */
+  const { data: prof } = await supabase.from('profiles').select('nombre, avatar_url, ciudad').eq('id', userId).maybeSingle();
   const { data: resenas } = await supabase.from('talento_resenas')
     .select('estrellas, comentario, rol_de, created_at').eq('para_user_id', userId).eq('rol_de', 'organizador')
     .order('created_at', { ascending: false }).limit(50);
   const lista = resenas || [];
   const prom = lista.length ? lista.reduce((a, r) => a + r.estrellas, 0) / lista.length : null;
-  res.json({ perfil: { ...perfil, nombre: prof?.nombre, avatar_url: prof?.avatar_url }, resenas: lista, promedio: prom, total_resenas: lista.length });
+  res.json({
+    perfil: { ...perfil, nombre: prof?.nombre, avatar_url: prof?.avatar_url, foto_url: prof?.avatar_url, ciudad: prof?.ciudad },
+    resenas: lista, promedio: prom, total_resenas: lista.length,
+  });
 });
 
 /* Reputación pública del organizador (reseñas que le dejaron los trabajadores). */
@@ -511,14 +521,21 @@ router.get('/eventos/:eventoId/talento', async (req, res) => {
   const { q, ciudad } = req.query;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    /* ciudad y foto ya no viven en perfil_talento: se leen del profile
+       incrustado. `!inner` para que filtrar por ciudad filtre estas filas y
+       no sólo el contenido del join (si no, el filtro de PostgREST se
+       aplicaría al embed y devolvería igual todas las filas de talento). */
     let query = supabase.from('perfil_talento')
-      .select('user_id, titular, habilidades, ciudad, foto_url, verificacion_estado, profile:profiles!user_id(nombre, avatar_url)')
+      .select('user_id, titular, habilidades, verificacion_estado, profile:profiles!user_id!inner(nombre, avatar_url, ciudad)')
       .eq('publicado', true).limit(60);
-    if (ciudad) query = query.ilike('ciudad', `%${ciudad}%`);
+    if (ciudad) query = query.ilike('profile.ciudad', `%${ciudad}%`);
     if (q)      query = query.or(`titular.ilike.%${q}%,bio.ilike.%${q}%`);
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ talento: data || [] });
+    const talento = (data || []).map(({ profile, ...t }) => ({
+      ...t, ciudad: profile?.ciudad || null, foto_url: profile?.avatar_url || null,
+    }));
+    res.json({ talento });
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 

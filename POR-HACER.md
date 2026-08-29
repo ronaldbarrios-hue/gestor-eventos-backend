@@ -327,15 +327,31 @@ identidades sueltas.
 
 ### Por dónde empezar
 
-- [ ] Migración: decidir si `perfil_talento` deja de tener `foto`, `telefono` y
-      `ciudad`, o si se sincronizan. Yo quitaría las columnas y leería del
-      perfil: dos fuentes para el mismo dato siempre acaban discrepando.
-- [ ] `PerfilTalentoEditor`: quitar esos tres campos y mostrarlos heredados.
-- [ ] `MiEspacioPage`: que las pestañas aparezcan por uso, como ya hace «Mis
-      stands».
-- [ ] Revisar que nada dependa de `perfil_talento.foto` antes de tocarla —el
-      snapshot que se congela al postularse la copia, y ahí sí tiene que
-      quedarse como estaba.
+- [x] ~~Migración: decidir si `perfil_talento` deja de tener `foto`, `telefono` y
+      `ciudad`.~~ **Decidido y escrito: se quitan.** `0081_perfil_talento_sin_datos_de_persona.sql`,
+      **pendiente de aplicar** — la corre quien monte la base, no se ejecutó
+      contra producción. Comprobado antes de escribirla: `perfil_talento` tiene
+      **0 filas**, así que no hay ningún dato real que reconciliar ni que perder.
+- [x] ~~`PerfilTalentoEditor`: quitar esos tres campos y mostrarlos heredados.~~
+      **Hecho.** Foto, teléfono y ciudad se muestran con un «vienen de tu perfil
+      · cambiar» que lleva a `/ajustes?a=perfil`. Y como esos tres campos no se
+      podían escribir en Ajustes (sólo nombre y contraseña), se añadieron ahí:
+      si no, quitarlos de talento los habría dejado sin ningún sitio donde
+      editarse.
+- [x] ~~`MiEspacioPage`: que las pestañas aparezcan por uso.~~ **Hecho.**
+      Colaborador aparece con eventos de equipo, Perfil de talento con perfil
+      creado, Mis postulaciones con alguna. La pestaña pedida por `?tab=` se
+      muestra siempre, para que un enlace guardado no caiga en el panel sin
+      explicación. Y como la pestaña de talento se oculta hasta tener perfil,
+      `DetalleVacante` ahora lleva a `/mi-espacio?tab=talento` cuando el backend
+      responde «primero crea tu perfil»: antes ese mensaje no tenía camino.
+- [x] ~~Revisar que nada dependa de `perfil_talento.foto` antes de tocarla.~~
+      **Revisado.** Tres sitios en `routes/vacantes.js`, los tres ahora leen de
+      `profiles`: el snapshot de la postulación (que se sigue congelando, como
+      debe), el perfil público y la búsqueda de talento. Ojo con esta última:
+      el filtro por ciudad necesitó `!inner` en el join, porque un filtro de
+      PostgREST sobre una tabla incrustada sin `!inner` no descarta las filas
+      de la tabla principal — habría devuelto todo el talento igual.
 
 ---
 

@@ -1,5 +1,5 @@
 {
-  "pendientes_maximo": 57,
+  "pendientes_maximo": 49,
   "censado_el": "2026-08-29",
   "total": 285,
   "rutas": {
@@ -28,16 +28,20 @@
       "estado": "pendiente"
     },
     "GET /.well-known/oauth-protected-resource": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token."
     },
     "GET /.well-known/oauth-protected-resource/mcp": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token."
     },
     "GET /.well-known/oauth-authorization-server": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token."
     },
     "GET /.well-known/openid-configuration": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token."
     },
     "POST /oauth/register": {
       "estado": "pendiente"
@@ -46,7 +50,8 @@
       "estado": "pendiente"
     },
     "POST /oauth/aprobar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Aprobar SÍ pide sesión: es lo que ata el permiso a una cuenta concreta."
     },
     "POST /oauth/token": {
       "estado": "pendiente"
@@ -63,13 +68,16 @@
       "motivo": "Los conectores MCP de su cuenta: cada token es de una persona."
     },
     "POST /mcp": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El servidor MCP se autentica con su propio token gtk_live_, no con la sesión del navegador. Cada token es de una cuenta y Claude actúa siempre sobre los eventos de su dueño."
     },
     "GET /mcp": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Descubrimiento del servidor MCP: el cliente lo consulta antes de tener token."
     },
     "GET /mcp/estado": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El servidor MCP se autentica con su propio token gtk_live_, no con la sesión del navegador. Cada token es de una cuenta y Claude actúa siempre sobre los eventos de su dueño."
     },
     "GET /me/conexiones/ia": {
       "estado": "sesion",

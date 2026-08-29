@@ -23,6 +23,7 @@
 */
 
 const express = require('express');
+const { sesion, publica } = require('../core/permisos');
 const { hashToken } = require('../lib/apitoken.js');
 const supabase = require('../lib/supabase.js');
 const oauth = require('../lib/oauth.js');
@@ -187,7 +188,7 @@ async function autenticar(req, res, next) {
    arriba, exigiria un token a la API publica entera: paginas de evento,
    categorias, todo. Cuesta repetir el middleware en tres lineas y evita
    tumbar el sitio. */
-router.post('/mcp', autenticar, async (req, res) => {
+router.post('/mcp', autenticar, sesion('El servidor MCP se autentica con su propio token gtk_live_, no con la sesión del navegador. Cada token es de una cuenta y Claude actúa siempre sobre los eventos de su dueño.'), async (req, res) => {
   const cuerpo = req.body;
 
   /* JSON-RPC admite lotes. Los conectores los usan poco, pero rechazarlos
@@ -213,13 +214,13 @@ router.post('/mcp', autenticar, async (req, res) => {
 /* Algunos clientes abren un GET para escuchar eventos del servidor. No
    emitimos ninguno, así que se dice claramente en vez de dejar la conexión
    colgada. */
-router.get('/mcp', (_req, res) => {
+router.get('/mcp', publica('Descubrimiento del servidor MCP: el cliente lo consulta antes de tener token.'), (_req, res) => {
   res.status(405).json({ error: 'Este servidor MCP no emite eventos; usa POST.' });
 });
 
 /* Para que el organizador confirme que su token sirve antes de pelearse con la
    configuración del cliente. */
-router.get('/mcp/estado', autenticar, (req, res) => {
+router.get('/mcp/estado', autenticar, sesion('El servidor MCP se autentica con su propio token gtk_live_, no con la sesión del navegador. Cada token es de una cuenta y Claude actúa siempre sobre los eventos de su dueño.'), (req, res) => {
   res.json({
     ok: true,
     servidor: SERVIDOR,

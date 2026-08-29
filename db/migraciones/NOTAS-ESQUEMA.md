@@ -218,7 +218,35 @@ datos personales y **no puede quedarse fuera**.
    ⚠️ No se llama desde ninguna ruta todavía, a propósito: los datos siguen en
    Supabase y allí los disparadores hacen su trabajo.
 
-   Falta reescribir los **seed_\*** de `eventos` (canales de chat, roles,
-   page_json) y las cuatro funciones de aforo, que son de lectura y no tienen
-   trampa de concurrencia.
+   ✅ **Los seed_\*** → `modules/eventos/semillas.js`. Los cuatro canales, los
+   diez roles con sus permisos exactos y los siete bloques de la página. Aquí
+   no había trampa de concurrencia —crear canales no compite con nadie—; lo que
+   se gana es que la decisión de producto se pueda leer, cambiar sin migración
+   y probar sin base. Los ids de los bloques son fijos (`sys_*`) y no
+   aleatorios: un embed exportado «de esta sección exacta» apunta a uno.
+
+   ✅ **Las cuatro de aforo** → `modules/aforo/consultas.js`. Siguen siendo SQL
+   y no JavaScript a propósito: sólo leen, y la razón por la que se hicieron en
+   la base sigue en pie —traerse las filas y sumarlas en el backend es lo que
+   hacía que a partir del movimiento 1.001 el aforo mintiera por lo bajo—. Lo
+   único que cambia es que el SQL vive donde se lee y se prueba.
+
+   Tres traducciones que no eran mecánicas, y las tres comprobadas contra
+   Postgres antes de darlas por buenas:
+   · `FILTER (WHERE …)` → `CASE WHEN`, igual que en las vistas.
+   · `array_agg(x ORDER BY y DESC)[1]` → `ROW_NUMBER()`. Es «el nombre más
+     reciente de la zona», y se probó con una zona renombrada, que es el caso
+     por el que existe.
+   · `to_timestamp(floor(epoch/n)*n)` → `FROM_UNIXTIME`. Comprobados los cuatro
+     bordes de la franja: caen al mismo lado.
+
+   ⚠️ **Y una trampa que apareció al traducir la última**: `UNIX_TIMESTAMP` usa
+   la zona de la SESIÓN de MySQL, no la del driver. `core/db/mysql.js` ponía
+   `timezone: 'Z'`, que es una opción de mysql2 y no toca la sesión. Como el
+   esquema guarda todo en UTC, una sesión con la zona del servidor —en cPanel
+   suele ser la del país— habría leído esas fechas como locales: el pico de
+   aforo de las 8 de la noche saldría a las 3 de la tarde y **nada fallaría de
+   forma visible**. Ahora cada conexión del pool hace `SET time_zone = '+00:00'`
+   y la zona sale en la comprobación de vida, junto al juego de caracteres, por
+   la misma razón: los dos fallan en silencio y con datos ya escritos.
 5. ⏸ Una prueba que compare fila a fila las dos bases antes del corte.

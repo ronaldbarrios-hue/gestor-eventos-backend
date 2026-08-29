@@ -109,6 +109,17 @@ function poolDe(nombre) {
     socketPath: a.socket || undefined,
 
     charset       : 'utf8mb4_unicode_ci',
+    /* `timezone: 'Z'` es del DRIVER: le dice a mysql2 cómo convertir entre
+       Date de JavaScript y DATETIME. No toca la zona de la SESIÓN de MySQL, que
+       es otra cosa y la que usan las funciones de fecha del propio motor
+       —`UNIX_TIMESTAMP`, `NOW`, `CONVERT_TZ`—.
+
+       Hacen falta las dos. El esquema guarda todo en UTC (ver la decisión de
+       `DATETIME(6)` en NOTAS-ESQUEMA), así que si la sesión heredara la zona
+       del servidor —en cPanel suele ser la del país— `UNIX_TIMESTAMP` leería
+       esas fechas como si fueran locales. Las franjas del aforo se calculan
+       con eso: el pico de las 8 de la noche saldría a las 3 de la tarde, y
+       nada fallaría de forma visible. */
     timezone      : 'Z',
     /* Hosting compartido: el límite de conexiones simultáneas de la cuenta es
        bajo y se comparte con phpMyAdmin y con los cron. El tope se reparte
@@ -123,6 +134,16 @@ function poolDe(nombre) {
        Con `dateStrings` en false, mysql2 crea objetos Date en la zona del
        proceso y las horas de los eventos se desplazan al pasar por JSON. */
     dateStrings: true,
+  });
+
+  /* La zona de la SESIÓN, en cada conexión nueva del pool. Va aquí y no en una
+     consulta suelta porque el pool abre conexiones cuando le hace falta: una
+     puesta a mano al arrancar dejaría en UTC sólo la primera, y el resto
+     heredaría la del servidor sin que nadie lo note. */
+  pool.on('connection', (cx) => {
+    cx.query("SET time_zone = '+00:00'", (e) => {
+      if (e) console.warn(`[mysql:${nombre}] no se pudo fijar la zona de la sesión:`, e.message);
+    });
   });
 
   _pools.set(nombre, pool);
@@ -200,7 +221,9 @@ function crearBd(nombre) {
      caro de los que se pueden cometer aquí. */
   async function estado() {
     return unaFila(
-      'SELECT VERSION() AS version, @@character_set_connection AS charset, DATABASE() AS base'
+      /* La zona va en la comprobación de vida por lo mismo que el juego de
+         caracteres: los dos fallan en silencio y con datos ya escritos. */
+      'SELECT VERSION() AS version, @@character_set_connection AS charset, DATABASE() AS base, @@session.time_zone AS zona'
     );
   }
 

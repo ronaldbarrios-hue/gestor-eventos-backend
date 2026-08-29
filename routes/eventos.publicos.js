@@ -19,6 +19,7 @@ const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { conSitio } = require('../lib/eventoSitio.js');
 const { authLimiter } = require('../config/security.js');
+const { hashDocumento, emparejar } = require('../lib/padronPrevio.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -227,6 +228,59 @@ router.get('/ticket/:codigo', async (req, res) => {
   delete data.user_id;
 
   res.json({ ticket: data });
+});
+
+/* POST /eventos/publicos/slug/:slug/prellenar  { documento }
+   Si esa persona ya estaba en el padrón de eventos anteriores, devuelve lo que
+   se sabía de ella para rellenar el formulario, y qué preguntas quedan.
+
+   ── Por qué esto es delicado y qué lo sujeta ──────────────────────────────
+
+   Responde con datos personales a partir de un número de cédula. Sin cuidado
+   es un extractor: se prueban documentos en serie y se cosecha. Lo que lo
+   evita, y las cuatro cosas hacen falta juntas:
+
+     · `authLimiter`, el mismo que protege la consulta de invitaciones — que
+       tuvo exactamente este problema y por eso lo lleva.
+     · Va POR POST y no por GET: una cédula en la query string queda escrita en
+       los logs de acceso del servidor y en el historial del navegador.
+     · Se busca por HASH con la sal del evento, así que el padrón sólo responde
+       contra el evento que lo subió.
+     · Y devuelve SÓLO los campos que ESTE formulario pregunta. Lo que el
+       organizador subió de más no sale nunca.
+
+   Cuando no hay coincidencia contesta lo mismo que si el padrón estuviera
+   vacío: `encontrado: false` y la lista de preguntas. No se distingue «no está»
+   de «no hay padrón», que es lo que haría útil probar cédulas. */
+router.post('/slug/:slug/prellenar', authLimiter, async (req, res) => {
+  const doc = req.body?.documento;
+  if (!doc) return res.status(400).json({ error: 'Falta el documento.' });
+
+  const { data: ev } = await supabase
+    .from('eventos').select('id').eq('slug', req.params.slug).maybeSingle();
+  if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
+
+  const { data: campos } = await supabase
+    .from('event_form_fields').select('id, etiqueta')
+    .eq('evento_id', ev.id).is('session_id', null).order('orden', { ascending: true });
+  const listaCampos = campos || [];
+
+  const hash = hashDocumento(ev.id, doc);
+  if (!hash) return res.json({ encontrado: false, respuestas: {}, faltan: listaCampos.map(c => ({ id: c.id, etiqueta: c.etiqueta })) });
+
+  const { data: fila, error } = await supabase
+    .from('padron_previo').select('datos')
+    .eq('evento_id', ev.id).eq('documento_hash', hash).maybeSingle();
+
+  /* Si la 0085 no está aplicada, esto responde que no hay nada — que es la
+     verdad desde fuera— en vez de un error que no le dice nada a quien está
+     llenando un formulario. */
+  if (error || !fila) {
+    return res.json({ encontrado: false, respuestas: {}, faltan: listaCampos.map(c => ({ id: c.id, etiqueta: c.etiqueta })) });
+  }
+
+  const { respuestas, faltan } = emparejar(fila.datos, listaCampos);
+  res.json({ encontrado: Object.keys(respuestas).length > 0, respuestas, faltan });
 });
 
 /* POST /eventos/publicos/ticket/:codigo/formulario — completa las respuestas

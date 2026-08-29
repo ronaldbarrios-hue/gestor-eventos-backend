@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
@@ -30,7 +31,9 @@ router.use(verifySupabaseJWT);
 
 /* Owner o miembro con permiso. Por defecto 'gestionar_clientes'
    (editar/importar); el listado acepta también 'ver_clientes'. */
-function assertOwner(eventoId, userId, perms = ['gestionar_clientes']) {
+const PERMS_CLIENTES = ['gestionar_clientes'];
+
+function assertOwner(eventoId, userId, perms = PERMS_CLIENTES) {
   return assertPermiso(eventoId, userId, perms, 'id, owner_id');
 }
 
@@ -52,7 +55,7 @@ async function assertCheckinAccess(eventoId, userId) {
 }
 
 /* GET /eventos/:eventoId/clientes — listar tickets emitidos del evento */
-router.get('/:eventoId/clientes', async (req, res) => {
+router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const { q, estado, ticket_type_id, limit = 100, page = 1 } = req.query;
   const desde = (Number(page) - 1) * Number(limit);
@@ -129,7 +132,7 @@ const ESTADOS_QUE_OCUPAN = new Set(['emitido', 'pagado', 'usado']);
    `aforo_vendido` seguían igual, así que el evento se quedaba "agotado" con
    sitios vacíos y la lista de espera no se enteraba de nada. El reembolso por
    la pasarela sí lo hacía; este camino no. Ahora los dos hacen lo mismo. */
-router.patch('/:eventoId/clientes/:ticketId', async (req, res) => {
+router.patch('/:eventoId/clientes/:ticketId', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId, ticketId } = req.params;
   const ESTADOS = ['emitido', 'pagado', 'usado', 'reembolsado', 'invalido'];
   const { estado } = req.body;
@@ -195,7 +198,7 @@ async function ajustarAforo(eventoId, ticketTypeId, delta) {
    Body: { ticket_type_id, marcar_pagado, rows: [{ nombre, email, telefono? }] }
    Crea N tickets en estado 'pagado' (si marcar_pagado=true) o 'emitido'.
    Genera codigo + qr_token para cada uno. Reporta éxitos y errores fila por fila. */
-router.post('/:eventoId/clientes/importar', async (req, res) => {
+router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const { ticket_type_id, marcar_pagado, rows } = req.body;
 
@@ -355,7 +358,7 @@ router.post('/:eventoId/clientes/importar', async (req, res) => {
 /* POST /eventos/:eventoId/checkin — validar QR o código y marcar 'usado'.
    Body: { qr_token } o { codigo }
    Owner siempre puede. Miembros del equipo necesitan permiso 'checkin'. */
-router.post('/:eventoId/checkin', async (req, res) => {
+router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento.'), async (req, res) => {
   const { eventoId } = req.params;
   const { qr_token, codigo, acceso_id, at } = req.body;
   if (!qr_token && !codigo) return res.status(400).json({ error: 'qr_token o codigo requerido.' });
@@ -482,7 +485,7 @@ router.post('/:eventoId/checkin', async (req, res) => {
    body: { qr_token | codigo, tipo?: 'entrada'|'salida', acceso_id?, zona_id? }
    Con `zona_id`, el vaivén se lleva POR ZONA (para el aforo por zonas).
    Sin `tipo`, alterna según el último estado (global o de esa zona). */
-router.post('/:eventoId/reingreso', async (req, res) => {
+router.post('/:eventoId/reingreso', sesion('Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento.'), async (req, res) => {
   const { eventoId } = req.params;
   const { qr_token, codigo, tipo, acceso_id, zona_id } = req.body || {};
   try {
@@ -579,7 +582,7 @@ async function alertarAforo(eventoId, ev, z) {
 }
 
 /* GET /eventos/:eventoId/zonas/aforo — ocupación en vivo por zona. */
-router.get('/:eventoId/zonas/aforo', async (req, res) => {
+router.get('/:eventoId/zonas/aforo', sesion('Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento.'), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertCheckinAccess(eventoId, req.user.id);
@@ -604,7 +607,7 @@ router.get('/:eventoId/zonas/aforo', async (req, res) => {
    El contador de mano del staff de la puerta de una zona: no toda la gente
    que cruza una zona pasa por un QR, y obligar a escanear para tener el número
    significaba no tener el número. */
-router.post('/:eventoId/zonas/movimiento', async (req, res) => {
+router.post('/:eventoId/zonas/movimiento', sesion('Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento.'), async (req, res) => {
   const { eventoId } = req.params;
   const { zona_id, tipo, nota } = req.body || {};
   const cantidad = Math.min(500, Math.max(1, Math.floor(Number(req.body?.cantidad) || 1)));
@@ -633,7 +636,7 @@ router.post('/:eventoId/zonas/movimiento', async (req, res) => {
    body: { zona_id?, motivo? } · sin zona_id, se limpian todas.
    No borra nada: escribe un corte y la ocupación se cuenta desde ahí. El
    reporte del día sigue viendo todos los movimientos. */
-router.post('/:eventoId/zonas/limpiar', async (req, res) => {
+router.post('/:eventoId/zonas/limpiar', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const { zona_id, motivo } = req.body || {};
   try {
@@ -678,7 +681,7 @@ router.post('/:eventoId/zonas/limpiar', async (req, res) => {
    mantiene barata una petición que se repite cada pocos segundos: si el
    organizador colocó tres zonas y dos puertas, se cuentan tres zonas y dos
    puertas, no las cuarenta sesiones de la agenda. */
-router.get('/:eventoId/mapa/vivo', async (req, res) => {
+router.get('/:eventoId/mapa/vivo', sesion('Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento.'), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertCheckinAccess(eventoId, req.user.id);
@@ -763,7 +766,7 @@ router.get('/:eventoId/mapa/vivo', async (req, res) => {
    Devuelve, por zona: totales del histórico completo (el corte no lo esconde),
    ocupación actual, pico simultáneo con su hora, estancia media y la curva del
    día para dibujarla. Y la lista de cortes, que explica los saltos a cero. */
-router.get('/:eventoId/zonas/reporte', async (req, res) => {
+router.get('/:eventoId/zonas/reporte', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const intervalo = Math.min(180, Math.max(5, Math.floor(Number(req.query.intervalo) || 15)));
   try {
@@ -838,7 +841,7 @@ router.get('/:eventoId/zonas/reporte', async (req, res) => {
 /* ───────────── Alertas en vivo del evento ───────────── */
 
 /* GET /eventos/:eventoId/alertas?activas=1 */
-router.get('/:eventoId/alertas', async (req, res) => {
+router.get('/:eventoId/alertas', sesion('Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento.'), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertCheckinAccess(eventoId, req.user.id);
@@ -853,7 +856,7 @@ router.get('/:eventoId/alertas', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/alertas { tipo, nivel, mensaje, zona } — el staff reporta */
-router.post('/:eventoId/alertas', async (req, res) => {
+router.post('/:eventoId/alertas', sesion('Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento.'), async (req, res) => {
   const { eventoId } = req.params;
   const mensaje = String(req.body?.mensaje || '').trim();
   if (!mensaje) return res.status(400).json({ error: 'Escribe qué está pasando.' });

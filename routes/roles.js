@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { auditar } = require('../lib/auditar.js');
@@ -8,14 +9,16 @@ const router = express.Router();
 router.use(verifySupabaseJWT);
 
 /* Owner o miembro con permiso 'gestionar_roles'. */
+const PERMS_ROLES = ['gestionar_roles'];
+
 function assertOwner(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['gestionar_roles'], 'id, owner_id');
+  return assertPermiso(eventoId, userId, PERMS_ROLES, 'id, owner_id');
 }
 
 const CAMPOS_EDITABLES = ['nombre', 'descripcion', 'permissions', 'orden'];
 
 /* GET /eventos/:eventoId/roles */
-router.get('/:eventoId/roles', async (req, res) => {
+router.get('/:eventoId/roles', exige(PERMS_ROLES), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -32,7 +35,7 @@ router.get('/:eventoId/roles', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/roles */
-router.post('/:eventoId/roles', async (req, res) => {
+router.post('/:eventoId/roles', exige(PERMS_ROLES), async (req, res) => {
   const { eventoId } = req.params;
   const { nombre, descripcion, permissions = [] } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'Nombre del rol requerido.' });
@@ -71,7 +74,7 @@ router.post('/:eventoId/roles', async (req, res) => {
 });
 
 /* PATCH /eventos/:eventoId/roles/:rolId */
-router.patch('/:eventoId/roles/:rolId', async (req, res) => {
+router.patch('/:eventoId/roles/:rolId', exige(PERMS_ROLES), async (req, res) => {
   const { eventoId, rolId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -97,7 +100,7 @@ router.patch('/:eventoId/roles/:rolId', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/roles/:rolId */
-router.delete('/:eventoId/roles/:rolId', async (req, res) => {
+router.delete('/:eventoId/roles/:rolId', exige(PERMS_ROLES), async (req, res) => {
   const { eventoId, rolId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);

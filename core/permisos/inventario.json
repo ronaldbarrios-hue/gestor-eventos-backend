@@ -1,5 +1,5 @@
 {
-  "pendientes_maximo": 124,
+  "pendientes_maximo": 95,
   "censado_el": "2026-08-29",
   "total": 285,
   "rutas": {
@@ -612,64 +612,110 @@
       "estado": "pendiente"
     },
     "GET /eventos/:eventoId/roles": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_roles"
+      ]
     },
     "POST /eventos/:eventoId/roles": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_roles"
+      ]
     },
     "PATCH /eventos/:eventoId/roles/:rolId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_roles"
+      ]
     },
     "DELETE /eventos/:eventoId/roles/:rolId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_roles"
+      ]
     },
     "GET /eventos/:eventoId/tickets": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
     },
     "POST /eventos/:eventoId/tickets": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
     },
     "PATCH /eventos/:eventoId/tickets/:ticketId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
     },
     "DELETE /eventos/:eventoId/tickets/:ticketId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
     },
     "GET /eventos/:eventoId/clientes": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes"
+      ]
     },
     "PATCH /eventos/:eventoId/clientes/:ticketId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes"
+      ]
     },
     "POST /eventos/:eventoId/clientes/importar": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes"
+      ]
     },
     "POST /eventos/:eventoId/checkin": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "POST /eventos/:eventoId/reingreso": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "GET /eventos/:eventoId/zonas/aforo": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "POST /eventos/:eventoId/zonas/movimiento": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "POST /eventos/:eventoId/zonas/limpiar": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes"
+      ]
     },
     "GET /eventos/:eventoId/mapa/vivo": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "GET /eventos/:eventoId/zonas/reporte": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes"
+      ]
     },
     "GET /eventos/:eventoId/alertas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "POST /eventos/:eventoId/alertas": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "PATCH /eventos/:eventoId/alertas/:id/resolver": {
       "estado": "pendiente"
@@ -846,7 +892,10 @@
       "estado": "pendiente"
     },
     "GET /eventos/:eventoId/analytics": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "ver_analytics"
+      ]
     },
     "GET /eventos/:eventoId/networking/expositores": {
       "estado": "sesion",
@@ -1060,28 +1109,64 @@
       "motivo": "Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel."
     },
     "GET /eventos/:eventoId/motivos": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "checkin",
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "PUT /eventos/:eventoId/motivos": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/interacciones": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "checkin",
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/interacciones": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "checkin",
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/expositores/ranking": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "checkin",
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/interacciones/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/canje/saldo": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "checkin",
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/canje": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "checkin",
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "GET /eventos/": {
       "estado": "pendiente"

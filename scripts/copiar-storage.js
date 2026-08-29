@@ -5,10 +5,10 @@
  *
  * ── El orden, que es lo que tiene filo ───────────────────────────────────
  *
- * 1. **Barrer antes de copiar.** De los 107 objetos, 40 no los referencia
- *    ninguna fila: 28 MB, más de un tercio. Copiarlos es pagar el trabajo dos
- *    veces. Con `--solo-referenciados` (que es como viene por defecto) sólo se
- *    traen los que alguien usa.
+ * 1. **Barrer antes de copiar.** De los 107 objetos, 36 no los referencia
+ *    ninguna fila: 28,1 MB, más de un tercio (medido el 29 de agosto). Copiarlos
+ *    es pagar el trabajo dos veces. Por defecto sólo se traen los que alguien
+ *    usa; `scripts/barrer-huerfanos.js` se lleva el resto.
  * 2. **Copiar conservando la ruta**, `carpeta/archivo` tal cual. Es lo que
  *    convierte la reescritura de las 13 columnas en un cambio de prefijo.
  * 3. **Servir las dos copias en paralelo** mientras dure la ventana. Las URLs
@@ -40,90 +40,16 @@ const args = process.argv.slice(2);
 const APLICAR = args.includes('--aplicar');
 const TODOS   = args.includes('--todos');
 
-const BUCKETS = ['avatars', 'event-media', 'form-uploads'];
-
-/* Las 13 columnas de 9 tablas donde la URL vive dentro de la fila. Salen de
-   SUPABASE.md §3.3, medidas contra las 71 tablas, no supuestas. Las cinco
-   marcadas son JSON, y ahí la URL está a profundidad variable: por eso se
-   busca sobre el texto de la columna y no por clave. */
-const COLUMNAS_CON_URL = [
-  ['eventos', 'cover_url'], ['eventos', 'gallery'], ['eventos', 'page_json'],
-  ['eventos', 'paginas'], ['eventos', 'branding'], ['eventos', 'pago_qr_url'],
-  ['torneo_equipos', 'foto_url'], ['tickets', 'respuestas'],
-  ['profiles', 'empresa_logo_url'], ['profiles', 'avatar_url'],
-  ['chat_messages', 'file_url'], ['speakers', 'foto_url'],
-  ['networking_expositores', 'logo_url'],
-];
-
-/* Recorre un bucket entero. `list` pagina de 100 en 100 y no baja a las
-   subcarpetas solo, así que hay que recorrerlas. */
-async function listarBucket(bucket, prefijo = '') {
-  const encontrados = [];
-  let desde = 0;
-
-  for (;;) {
-    const { data, error } = await supabase.storage.from(bucket)
-      .list(prefijo, { limit: 100, offset: desde });
-    if (error) throw new Error(`No se pudo listar ${bucket}/${prefijo}: ${error.message}`);
-    if (!data || data.length === 0) break;
-
-    for (const objeto of data) {
-      /* Sin `id` es una carpeta, no un archivo. */
-      if (!objeto.id) {
-        encontrados.push(...await listarBucket(bucket, prefijo ? `${prefijo}/${objeto.name}` : objeto.name));
-        continue;
-      }
-      encontrados.push({
-        bucket,
-        ruta : prefijo ? `${prefijo}/${objeto.name}` : objeto.name,
-        bytes: objeto.metadata?.size || 0,
-        mime : objeto.metadata?.mimetype || null,
-      });
-    }
-
-    if (data.length < 100) break;
-    desde += data.length;
-  }
-  return encontrados;
-}
-
-/* Qué rutas menciona alguna fila. Se busca el nombre del archivo dentro del
-   texto de cada columna, que es lo único que funciona con las cinco JSON. */
-async function rutasReferenciadas() {
-  const usadas = new Set();
-
-  for (const [tabla, columna] of COLUMNAS_CON_URL) {
-    const { data, error } = await supabase
-      .from(tabla).select(columna)
-      .not(columna, 'is', null);
-    if (error) {
-      console.warn(`   ⚠ no se pudo leer ${tabla}.${columna}: ${error.message}`);
-      continue;
-    }
-    for (const fila of data || []) {
-      const texto = typeof fila[columna] === 'string' ? fila[columna] : JSON.stringify(fila[columna]);
-      /* `/object/public/<bucket>/<ruta>` hasta la comilla, el paréntesis o el
-         final. Sirve igual dentro de un JSON serializado. */
-      for (const m of String(texto).matchAll(/\/storage\/v1\/object\/(?:public|sign)\/([^"'\\)\s?]+)/g)) {
-        usadas.add(decodeURIComponent(m[1]));
-      }
-    }
-  }
-  return usadas;
-}
+/* Listar el origen y saber qué usa alguien es la misma pregunta que se hace
+   el barrido de huérfanos, así que vive en un solo sitio: si las dos copias se
+   separaran, una copiaría basura o la otra borraría algo que sí se usa. */
+const origen = require('./_origen-supabase.js');
 
 async function main() {
   console.log('\n── Inventario ────────────────────────────────────────────');
 
-  const objetos = [];
-  for (const b of BUCKETS) objetos.push(...await listarBucket(b));
-
-  const usadas = await rutasReferenciadas();
-  const conDueño = objetos.filter(o => usadas.has(`${o.bucket}/${o.ruta}`));
-  const huerfanos = objetos.filter(o => !usadas.has(`${o.bucket}/${o.ruta}`));
-
-  const mb = (n) => (n / (1024 * 1024)).toFixed(1);
-  const suma = (lista) => lista.reduce((n, o) => n + o.bytes, 0);
+  const { objetos, referenciados: conDueño, huerfanos } = await origen.clasificar({ dias: 0 });
+  const { mb, suma } = origen;
 
   console.log(`   objetos             ${objetos.length}  (${mb(suma(objetos))} MB)`);
   console.log(`   referenciados       ${conDueño.length}  (${mb(suma(conDueño))} MB)`);

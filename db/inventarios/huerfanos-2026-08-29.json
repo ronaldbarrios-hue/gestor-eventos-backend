@@ -1,0 +1,232 @@
+{
+  "medido": "2026-08-29",
+  "metodo": "storage.objects cruzado contra las 13 columnas de 9 tablas que guardan la URL dentro de la fila (SUPABASE.md 3.3)",
+  "total": 36,
+  "bytes": 29463317,
+  "mb": 28.1,
+  "sin_referencia_recientes": 0,
+  "nota": "Ninguno se subio en los ultimos 2 dias, asi que no hay formularios a medio llenar en riesgo.",
+  "por_bucket": {
+    "avatars": 2,
+    "event-media": 32,
+    "form-uploads": 2
+  },
+  "archivos": [
+    {
+      "bucket": "avatars",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/avatar-1782945143543.webp",
+      "bytes": 7866,
+      "creado": "2026-07-01"
+    },
+    {
+      "bucket": "avatars",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/avatar-1783379376662.png",
+      "bytes": 70040,
+      "creado": "2026-07-06"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/block-1783120154833-sr9nng.webp",
+      "bytes": 20054,
+      "creado": "2026-07-03"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/block-1783120197787-iyj2l4.jpg",
+      "bytes": 8813,
+      "creado": "2026-07-03"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/cover-1781728290773-5ldp0n.png",
+      "bytes": 2228212,
+      "creado": "2026-06-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/cover-1781728500405-dstnbq.png",
+      "bytes": 2523293,
+      "creado": "2026-06-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/gallery-1781728263614-7s6tu6.webp",
+      "bytes": 20054,
+      "creado": "2026-06-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "01ceeeed-da60-46fd-a680-822a3ec5ee23/gallery-1781728305320-28kmi1.png",
+      "bytes": 2228212,
+      "creado": "2026-06-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "0bc0259a-867c-4026-8b04-19864b0d0a6d/cover-1786484243552-b847mg.jpg",
+      "bytes": 142107,
+      "creado": "2026-08-11"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "0bc0259a-867c-4026-8b04-19864b0d0a6d/cover-1787697450547-4jkq13.png",
+      "bytes": 1651053,
+      "creado": "2026-08-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "0bc0259a-867c-4026-8b04-19864b0d0a6d/cover-1787697480388-6eif8e.png",
+      "bytes": 1651053,
+      "creado": "2026-08-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "0bc0259a-867c-4026-8b04-19864b0d0a6d/cover-1787698923968-xpkeqa.jpg",
+      "bytes": 1083187,
+      "creado": "2026-08-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "0bc0259a-867c-4026-8b04-19864b0d0a6d/cover-1787698939102-737suq.jpg",
+      "bytes": 1083187,
+      "creado": "2026-08-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "0bc0259a-867c-4026-8b04-19864b0d0a6d/cover-1787699024740-4vsq9i.jpg",
+      "bytes": 1089737,
+      "creado": "2026-08-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "0bc0259a-867c-4026-8b04-19864b0d0a6d/gallery-1787783054134-eeapbw.jpg",
+      "bytes": 4442038,
+      "creado": "2026-08-26"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/block-1784993426193-pqniwa.jpeg",
+      "bytes": 227299,
+      "creado": "2026-07-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/block-1784993503411-va167h.avif",
+      "bytes": 36998,
+      "creado": "2026-07-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/block-1786469877597-wc4c10.jpeg",
+      "bytes": 41936,
+      "creado": "2026-08-11"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/block-1786469945436-vndfj3.jpeg",
+      "bytes": 41936,
+      "creado": "2026-08-11"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/block-1786832397430-ywng59.png",
+      "bytes": 1356388,
+      "creado": "2026-08-15"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/cover-1778814281410-6564eh.png",
+      "bytes": 898650,
+      "creado": "2026-05-15"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/gallery-1778814290137-9rae2v.jpeg",
+      "bytes": 382515,
+      "creado": "2026-05-15"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/gallery-1778814297160-0itt3r.jpeg",
+      "bytes": 237393,
+      "creado": "2026-05-15"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/gallery-1778814301631-77xp1l.jpeg",
+      "bytes": 277659,
+      "creado": "2026-05-15"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "34b3e353-e9e4-4f63-996a-00e674ccec59/gallery-1778814306662-k9a216.jpeg",
+      "bytes": 213733,
+      "creado": "2026-05-15"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "67924e68-50b7-413b-98e0-1b952872c075/cover-1779712531422-o8ibel.webp",
+      "bytes": 41992,
+      "creado": "2026-05-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "67924e68-50b7-413b-98e0-1b952872c075/gallery-1779712555517-5psq8o.webp",
+      "bytes": 46162,
+      "creado": "2026-05-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "67924e68-50b7-413b-98e0-1b952872c075/gallery-1779712559973-57sgtx.webp",
+      "bytes": 26736,
+      "creado": "2026-05-25"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "d1a004bd-cd78-498d-80d0-7847a417b00f/cover-1779635037904-cyrz9a.png",
+      "bytes": 517143,
+      "creado": "2026-05-24"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "f9cbea00-8539-40d7-860a-39dd015d62df/block-1786929288815-5a67bo.png",
+      "bytes": 2222313,
+      "creado": "2026-08-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "f9cbea00-8539-40d7-860a-39dd015d62df/block-1786943450440-v5hlvm.png",
+      "bytes": 1592520,
+      "creado": "2026-08-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "f9cbea00-8539-40d7-860a-39dd015d62df/block-1786943527623-v061zs.png",
+      "bytes": 795234,
+      "creado": "2026-08-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "f9cbea00-8539-40d7-860a-39dd015d62df/block-1786943556340-tyka5i.png",
+      "bytes": 1592520,
+      "creado": "2026-08-17"
+    },
+    {
+      "bucket": "event-media",
+      "ruta": "f9cbea00-8539-40d7-860a-39dd015d62df/cover-1779923662975-hh02b3.webp",
+      "bytes": 9190,
+      "creado": "2026-05-27"
+    },
+    {
+      "bucket": "form-uploads",
+      "ruta": "b99aac3f-66e3-456f-a0a6-eaec6bffec9b/6b100e0e-4493-4612-b4de-c30d330d8a48-1784317940188.png",
+      "bytes": 656025,
+      "creado": "2026-07-17"
+    },
+    {
+      "bucket": "form-uploads",
+      "ruta": "expositor/zztest/logo.png",
+      "bytes": 69,
+      "creado": "2026-07-25"
+    }
+  ]
+}

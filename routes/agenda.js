@@ -2,6 +2,7 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { exige, sesion } = require('../core/permisos');
 
 const router = express.Router();
 
@@ -14,6 +15,11 @@ router.use(verifySupabaseJWT);
 /* Owner o miembro con permiso 'editar_evento' (gestiona contenido del evento). */
 /* `gestionar_agenda` es el permiso fino; `editar_evento` sigue valiendo para no
    romper a quien ya lo tenía concedido. */
+/* Las mismas listas que ya comprobaban los helpers, declaradas también en la
+   ruta para que el permiso se vea sin abrir el handler. */
+const PERMS_AGENDA      = ['gestionar_agenda', 'editar_evento'];
+const PERMS_AGENDA_LEER = ['gestionar_agenda', 'editar_evento', 'checkin'];
+
 function assertOwner(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['gestionar_agenda', 'editar_evento'], 'id, owner_id');
 }
@@ -49,7 +55,7 @@ async function assertPuedeParticipar(eventoId, user) {
 /* ─────────── SPEAKERS ─────────── */
 
 /* GET /eventos/:eventoId/speakers */
-router.get('/:eventoId/speakers', async (req, res) => {
+router.get('/:eventoId/speakers', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -63,7 +69,7 @@ router.get('/:eventoId/speakers', async (req, res) => {
   }
 });
 
-router.post('/:eventoId/speakers', async (req, res) => {
+router.post('/:eventoId/speakers', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId } = req.params;
   const { nombre, bio, foto_url, empresa, social_links } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'Nombre requerido.' });
@@ -89,7 +95,7 @@ router.post('/:eventoId/speakers', async (req, res) => {
   }
 });
 
-router.patch('/:eventoId/speakers/:speakerId', async (req, res) => {
+router.patch('/:eventoId/speakers/:speakerId', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId, speakerId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -106,7 +112,7 @@ router.patch('/:eventoId/speakers/:speakerId', async (req, res) => {
   }
 });
 
-router.delete('/:eventoId/speakers/:speakerId', async (req, res) => {
+router.delete('/:eventoId/speakers/:speakerId', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId, speakerId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -121,7 +127,7 @@ router.delete('/:eventoId/speakers/:speakerId', async (req, res) => {
 
 /* ─────────── SESSIONS ─────────── */
 
-router.get('/:eventoId/sessions', async (req, res) => {
+router.get('/:eventoId/sessions', exige(PERMS_AGENDA_LEER), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertLectura(eventoId, req.user.id);
@@ -162,7 +168,7 @@ async function normalizarSubcategoria(eventoId, valor) {
   return existente || limpio;
 }
 
-router.post('/:eventoId/sessions', async (req, res) => {
+router.post('/:eventoId/sessions', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, descripcion, inicio, fin, track, ubicacion, speaker_id, tipo, torneo_id,
           requiere_inscripcion, cupo, formulario_modo, subcategoria, zona_id } = req.body;
@@ -209,7 +215,7 @@ router.post('/:eventoId/sessions', async (req, res) => {
   }
 });
 
-router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
+router.patch('/:eventoId/sessions/:sessionId', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId, sessionId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -247,7 +253,7 @@ router.patch('/:eventoId/sessions/:sessionId', async (req, res) => {
   }
 });
 
-router.delete('/:eventoId/sessions/:sessionId', async (req, res) => {
+router.delete('/:eventoId/sessions/:sessionId', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId, sessionId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -264,7 +270,7 @@ router.delete('/:eventoId/sessions/:sessionId', async (req, res) => {
 
 /* GET /eventos/:eventoId/agenda/mis-favoritos — IDs de sesiones marcadas
    por el usuario logueado en este evento. Requiere boleta (u ser owner). */
-router.get('/:eventoId/agenda/mis-favoritos', async (req, res) => {
+router.get('/:eventoId/agenda/mis-favoritos', sesion('Los favoritos de la agenda son de la persona, no del evento: cada quien marca los suyos y sólo ve los suyos.'), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertPuedeParticipar(eventoId, req.user);
@@ -281,7 +287,7 @@ router.get('/:eventoId/agenda/mis-favoritos', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/agenda/favoritos/:sessionId — marcar como favorita */
-router.post('/:eventoId/agenda/favoritos/:sessionId', async (req, res) => {
+router.post('/:eventoId/agenda/favoritos/:sessionId', sesion('Los favoritos de la agenda son de la persona, no del evento: cada quien marca los suyos y sólo ve los suyos.'), async (req, res) => {
   const { eventoId, sessionId } = req.params;
   try {
     await assertPuedeParticipar(eventoId, req.user);
@@ -296,7 +302,7 @@ router.post('/:eventoId/agenda/favoritos/:sessionId', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/agenda/favoritos/:sessionId — quitar de favoritas */
-router.delete('/:eventoId/agenda/favoritos/:sessionId', async (req, res) => {
+router.delete('/:eventoId/agenda/favoritos/:sessionId', sesion('Los favoritos de la agenda son de la persona, no del evento: cada quien marca los suyos y sólo ve los suyos.'), async (req, res) => {
   const { eventoId, sessionId } = req.params;
   const { error } = await supabase
     .from('agenda_favoritos')

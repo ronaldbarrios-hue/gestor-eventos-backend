@@ -1,5 +1,5 @@
 {
-  "pendientes_maximo": 184,
+  "pendientes_maximo": 155,
   "censado_el": "2026-08-29",
   "total": 285,
   "rutas": {
@@ -705,37 +705,73 @@
       "estado": "pendiente"
     },
     "GET /eventos/:eventoId/speakers": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/speakers": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/speakers/:speakerId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/speakers/:speakerId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/sessions": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento",
+        "checkin"
+      ]
     },
     "POST /eventos/:eventoId/sessions": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/sessions/:sessionId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/sessions/:sessionId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_agenda",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/agenda/mis-favoritos": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los favoritos de la agenda son de la persona, no del evento: cada quien marca los suyos y sólo ve los suyos."
     },
     "POST /eventos/:eventoId/agenda/favoritos/:sessionId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los favoritos de la agenda son de la persona, no del evento: cada quien marca los suyos y sólo ve los suyos."
     },
     "DELETE /eventos/:eventoId/agenda/favoritos/:sessionId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los favoritos de la agenda son de la persona, no del evento: cada quien marca los suyos y sólo ve los suyos."
     },
     "GET /eventos/:eventoId/sesiones/participacion": {
       "estado": "pendiente"
@@ -846,58 +882,115 @@
       "estado": "pendiente"
     },
     "GET /eventos/:eventoId/torneos": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel."
     },
     "GET /eventos/:eventoId/torneos/:torneoId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel."
     },
     "GET /eventos/:eventoId/torneo-categorias": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/torneo-categorias": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/torneo-categorias/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/torneo-categorias/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/torneo": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/torneo": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/torneo/:torneoId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/torneo/:torneoId": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/torneo/:torneoId/campos-disponibles": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/torneo/:torneoId/importar-equipos": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/torneo/:torneoId/equipos": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/torneo/:torneoId/equipos/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/torneo/:torneoId/generar": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/torneo/:torneoId/cerrar-grupos": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/torneo/:torneoId/partidos/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/torneo/:torneoId/posiciones": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel."
     },
     "GET /eventos/:eventoId/motivos": {
       "estado": "pendiente"

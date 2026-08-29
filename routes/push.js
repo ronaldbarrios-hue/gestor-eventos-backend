@@ -12,7 +12,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificarVarios } = require('../lib/notificar.js');
 
-const { sesion } = require('../core/permisos');
+const { sesion, publica } = require('../core/permisos');
 const router = express.Router();
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY;
@@ -23,7 +23,7 @@ if (VAPID_PUBLIC && VAPID_PRIVATE) {
   webpush.setVapidDetails(VAPID_CONTACT, VAPID_PUBLIC, VAPID_PRIVATE);
 }
 
-router.get('/push/vapid-key', (_req, res) => {
+router.get('/push/vapid-key', publica('La clave PÚBLICA de push: el navegador la necesita para suscribirse, y es pública por definición.'), (_req, res) => {
   if (!VAPID_PUBLIC) return res.status(503).json({ error: 'Web push no configurado en el server.' });
   res.json({ key: VAPID_PUBLIC });
 });

@@ -1,5 +1,5 @@
 const express = require('express');
-const { exige, sesion } = require('../core/permisos');
+const { exige, sesion, publica } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const router = express.Router();
@@ -73,7 +73,7 @@ router.delete('/eventos/:id/promociones/:pid', verifySupabaseJWT, sesion('Sólo 
 
 /* POST /eventos/publicos/slug/:slug/promocion/validar — checkout público
    body: { codigo, ticket_id, cantidad } → { valida, descuento, tipo, valor } */
-router.post('/eventos/publicos/slug/:slug/promocion/validar', async (req, res) => {
+router.post('/eventos/publicos/slug/:slug/promocion/validar', publica('Validar un código de descuento pasa ANTES de comprar, y comprar no pide cuenta.'), async (req, res) => {
   const { codigo, ticket_id, cantidad } = req.body || {};
   if (!codigo?.trim()) return res.status(400).json({ error: 'codigo requerido.' });
 

@@ -14,7 +14,7 @@ const { checkoutUrl, verificarEvento } = require('../lib/wompi.js');
 const { confirmarTicketPagado } = require('../lib/confirmarTicket.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 
-const { sesion } = require('../core/permisos');
+const { sesion, publica } = require('../core/permisos');
 const router = express.Router();
 
 function publicBaseUrl() { return (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0]; }
@@ -57,7 +57,7 @@ router.get('/me/wompi', verifySupabaseJWT, sesion("La cuenta de cobro que el org
 });
 
 /* ── Comprar una boleta con Wompi ── */
-router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptional, async (req, res) => {
+router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptional, publica('La compra se hace sin cuenta: es el punto de vender entradas a quien llega desde fuera. La identidad viaja en el formulario, no en una sesión.'), async (req, res) => {
   const { slug } = req.params;
   const { ticket_type_id, email, nombre, telefono } = req.body || {};
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona un tipo de boleta.' });
@@ -148,7 +148,7 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
 });
 
 /* ── Webhook de Wompi (Events) ── */
-router.post('/webhooks/wompi', async (req, res) => {
+router.post('/webhooks/wompi', publica('Aviso de la pasarela, que llega desde sus servidores y no de un navegador. Se autentica con la firma del proveedor, no con sesión.'), async (req, res) => {
   res.status(200).json({ received: true });   // Wompi solo requiere 200
   try {
     const trx = req.body?.data?.transaction;

@@ -1,5 +1,5 @@
 {
-  "pendientes_maximo": 66,
+  "pendientes_maximo": 57,
   "censado_el": "2026-08-29",
   "total": 285,
   "rutas": {
@@ -290,10 +290,12 @@
       "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "POST /eventos/publicos/slug/:slug/comprar": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "La compra se hace sin cuenta: es el punto de vender entradas a quien llega desde fuera. La identidad viaja en el formulario, no en una sesión."
     },
     "POST /webhooks/mercadopago": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Aviso de la pasarela, que llega desde sus servidores y no de un navegador. Se autentica con la firma del proveedor, no con sesión."
     },
     "POST /me/wompi/conectar": {
       "estado": "sesion",
@@ -308,10 +310,12 @@
       "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
     },
     "POST /eventos/publicos/slug/:slug/comprar-wompi": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "La compra se hace sin cuenta: es el punto de vender entradas a quien llega desde fuera. La identidad viaja en el formulario, no en una sesión."
     },
     "POST /webhooks/wompi": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Aviso de la pasarela, que llega desde sus servidores y no de un navegador. Se autentica con la firma del proveedor, no con sesión."
     },
     "GET /me/google/conectar": {
       "estado": "sesion",
@@ -333,7 +337,8 @@
       "motivo": "Webhook entrante de un proveedor: se autentica por firma, no por sesión."
     },
     "GET /push/vapid-key": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "La clave PÚBLICA de push: el navegador la necesita para suscribirse, y es pública por definición."
     },
     "POST /me/push/subscribe": {
       "estado": "sesion",
@@ -370,7 +375,8 @@
       "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "POST /eventos/publicos/slug/:slug/promocion/validar": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Validar un código de descuento pasa ANTES de comprar, y comprar no pide cuenta."
     },
     "GET /eventos/:id/emails": {
       "estado": "exige",
@@ -562,13 +568,16 @@
       "estado": "pendiente"
     },
     "GET /vacantes/roles": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados."
     },
     "GET /vacantes": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados."
     },
     "GET /vacantes/:id": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados."
     },
     "GET /me/talento": {
       "estado": "sesion",

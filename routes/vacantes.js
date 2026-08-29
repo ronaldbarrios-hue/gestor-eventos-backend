@@ -17,7 +17,7 @@ const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/
 const { assertPermiso } = require('../lib/acceso.js');
 const { notificar } = require('../lib/notificar.js');
 
-const { exige, sesion } = require('../core/permisos');
+const { exige, sesion, publica } = require('../core/permisos');
 const router = express.Router();
 
 /* ══════════════════════════════════════════════════════════════════
@@ -48,7 +48,7 @@ const MODALIDADES_PUB = ['presencial', 'remoto', 'hibrido'];
 /* Catálogo de roles. Sin sesión devuelve solo los globales; con sesión
    añade los que el organizador creó para sí mismo.
    OJO: debe declararse ANTES que /vacantes/:id o ':id' se traga "roles". */
-router.get('/vacantes/roles', verifySupabaseJWTOptional, async (req, res) => {
+router.get('/vacantes/roles', verifySupabaseJWTOptional, publica('Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados.'), async (req, res) => {
   let query = supabase
     .from('catalogo_roles').select('id, nombre, slug, global, owner_id');
   query = req.user
@@ -61,7 +61,7 @@ router.get('/vacantes/roles', verifySupabaseJWTOptional, async (req, res) => {
 });
 
 /* Listado abierto. */
-router.get('/vacantes', verifySupabaseJWTOptional, async (req, res) => {
+router.get('/vacantes', verifySupabaseJWTOptional, publica('Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados.'), async (req, res) => {
   const { ciudad, rol_id, modalidad, pago_min, q } = req.query;
   let query = supabase.from('vacantes').select(SEL_VACANTE).eq('estado', 'abierta');
   if (ciudad)    query = query.ilike('ciudad', `%${ciudad}%`);
@@ -81,7 +81,7 @@ router.get('/vacantes', verifySupabaseJWTOptional, async (req, res) => {
 });
 
 /* Detalle. `mi_postulacion` solo tiene sentido con sesión. */
-router.get('/vacantes/:id', verifySupabaseJWTOptional, async (req, res) => {
+router.get('/vacantes/:id', verifySupabaseJWTOptional, publica('Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados.'), async (req, res) => {
   const { data, error } = await supabase.from('vacantes').select(SEL_VACANTE).eq('id', req.params.id).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Vacante no encontrada.' });

@@ -17,7 +17,7 @@ const { webhookLimiter } = require('../config/security.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
-const { sesion } = require('../core/permisos');
+const { sesion, publica } = require('../core/permisos');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 
 /* Sin el secreto el webhook sigue aceptándose, y es a propósito: rechazarlo
@@ -136,7 +136,7 @@ router.delete('/me/mercadopago', verifySupabaseJWT, sesion("La cuenta de cobro q
    una migración destructiva y no hace falta para esto. Nadie las lee. */
 
 /* ────────────── Compra pública ────────────── */
-router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, async (req, res) => {
+router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, publica('La compra se hace sin cuenta: es el punto de vender entradas a quien llega desde fuera. La identidad viaja en el formulario, no en una sesión.'), async (req, res) => {
   const { slug } = req.params;
   const { ticket_type_id, email, nombre, telefono } = req.body;
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona un tipo de boleta.' });
@@ -282,7 +282,7 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   });
 });
 /* ────────────── Webhook Mercado Pago ────────────── */
-router.post('/webhooks/mercadopago', webhookLimiter, async (req, res) => {
+router.post('/webhooks/mercadopago', webhookLimiter, publica('Aviso de la pasarela, que llega desde sus servidores y no de un navegador. Se autentica con la firma del proveedor, no con sesión.'), async (req, res) => {
   const sig = verifyMPSignature(req);
   if (!sig.ok) {
     console.warn('[webhook MP] firma inválida:', sig.reason);

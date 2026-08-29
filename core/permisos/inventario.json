@@ -1,5 +1,5 @@
 {
-  "pendientes_maximo": 95,
+  "pendientes_maximo": 66,
   "censado_el": "2026-08-29",
   "total": 285,
   "rutas": {
@@ -354,49 +354,89 @@
       "estado": "pendiente"
     },
     "GET /eventos/:id/promociones": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "POST /eventos/:id/promociones": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "PATCH /eventos/:id/promociones/:pid": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "DELETE /eventos/:id/promociones/:pid": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "POST /eventos/publicos/slug/:slug/promocion/validar": {
       "estado": "pendiente"
     },
     "GET /eventos/:id/emails": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_pagina_publica",
+        "editar_evento"
+      ]
     },
     "PUT /eventos/:id/emails/:tipo": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_pagina_publica",
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:id/emails/:tipo": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_pagina_publica",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:id/emails/previsualizar": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_pagina_publica",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:id/emails/diagnostico": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_pagina_publica",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:id/emails/smtp": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "PUT /eventos/:id/emails/smtp": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "POST /eventos/:id/emails/smtp/probar": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:id/emails/smtp": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "GET /eventos/:id/emails/envios": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "GET /eventos/:id/emails/cola": {
       "estado": "exige",
@@ -413,10 +453,18 @@
       ]
     },
     "POST /eventos/:id/emails/prueba": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_pagina_publica",
+        "editar_evento"
+      ]
     },
     "POST /eventos/:id/emails/enviar": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes",
+        "editar_evento"
+      ]
     },
     "GET /me/agente/estado": {
       "estado": "sesion",
@@ -459,13 +507,16 @@
       "motivo": "Las sugerencias que ha enviado esta persona."
     },
     "GET /eventos/:eventoId/solicitudes": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto."
     },
     "POST /eventos/:eventoId/solicitudes": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto."
     },
     "PATCH /eventos/:eventoId/solicitudes/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto."
     },
     "GET /me/recompensas": {
       "estado": "sesion",
@@ -561,22 +612,40 @@
       "motivo": "La reputación del propio organizador, hecha de reseñas que le dejaron."
     },
     "GET /eventos/:eventoId/vacantes": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/vacantes": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/vacantes/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "DELETE /eventos/:eventoId/vacantes/:id": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "GET /eventos/:eventoId/vacantes/:vid/postulaciones": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "PATCH /eventos/:eventoId/vacantes/:vid/postulaciones/:pid": {
-      "estado": "pendiente"
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
     },
     "POST /eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista": {
       "estado": "pendiente"
@@ -877,16 +946,20 @@
       "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler."
     },
     "GET /eventos/:eventoId/waitlist": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "PATCH /eventos/:eventoId/waitlist/:waitlistId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "POST /eventos/:eventoId/waitlist/:waitlistId/notify": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "DELETE /eventos/:eventoId/waitlist/:waitlistId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "GET /eventos/:eventoId/auditoria": {
       "estado": "pendiente"

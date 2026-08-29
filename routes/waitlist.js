@@ -10,6 +10,7 @@
 'use strict';
 
 const express  = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { ofrecerCupoAlSiguiente, enviarPushWaitlist, HORAS_OFERTA } = require('../lib/waitlistOferta.js');
@@ -32,7 +33,7 @@ async function verificarOwner(eventoId, userId) {
 
 /* ── GET /:eventoId/waitlist ─────────────────────────────── */
 
-router.get('/:eventoId/waitlist', async (req, res) => {
+router.get('/:eventoId/waitlist', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   if (!(await verificarOwner(req.params.eventoId, req.user.id))) {
     return res.status(403).json({ error: 'No autorizado.' });
   }
@@ -82,7 +83,7 @@ router.get('/:eventoId/waitlist', async (req, res) => {
 
 /* ── PATCH /:eventoId/waitlist/:waitlistId ───────────────── */
 
-router.patch('/:eventoId/waitlist/:waitlistId', async (req, res) => {
+router.patch('/:eventoId/waitlist/:waitlistId', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   const { estado } = req.body;
   if (!ESTADOS_VALIDOS.includes(estado)) {
     return res.status(400).json({ error: `estado inválido. Usa: ${ESTADOS_VALIDOS.join(', ')}.` });
@@ -114,7 +115,7 @@ router.patch('/:eventoId/waitlist/:waitlistId', async (req, res) => {
    forma de tomarlo antes que nadie. Ahora hace lo mismo que el disparador
    automático: correo `cupo_liberado` con enlace que caduca y el cupo guardado
    mientras tanto. */
-router.post('/:eventoId/waitlist/:waitlistId/notify', async (req, res) => {
+router.post('/:eventoId/waitlist/:waitlistId/notify', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   const esOwner = await verificarOwner(req.params.eventoId, req.user.id);
   if (!esOwner) return res.status(403).json({ error: 'No autorizado.' });
 
@@ -164,7 +165,7 @@ router.post('/:eventoId/waitlist/:waitlistId/notify', async (req, res) => {
 
 /* ── DELETE /:eventoId/waitlist/:waitlistId ──────────────── */
 
-router.delete('/:eventoId/waitlist/:waitlistId', async (req, res) => {
+router.delete('/:eventoId/waitlist/:waitlistId', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   if (!(await verificarOwner(req.params.eventoId, req.user.id))) {
     return res.status(403).json({ error: 'No autorizado.' });
   }

@@ -17,7 +17,7 @@ const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/
 const { assertPermiso } = require('../lib/acceso.js');
 const { notificar } = require('../lib/notificar.js');
 
-const { sesion } = require('../core/permisos');
+const { exige, sesion } = require('../core/permisos');
 const router = express.Router();
 
 /* ══════════════════════════════════════════════════════════════════
@@ -102,6 +102,9 @@ router.get('/vacantes/:id', verifySupabaseJWTOptional, async (req, res) => {
 
 /* ══ A partir de aquí TODO exige sesión ══ */
 router.use(verifySupabaseJWT);
+
+/* La misma lista que ya comprueban los assertPermiso de abajo. */
+const PERMS_VACANTES = ['editar_evento'];
 
 const ETAPAS = ['postulado', 'revisado', 'entrevista', 'oferta', 'aceptado', 'rechazado'];
 const MODALIDADES = ['presencial', 'remoto', 'hibrido'];
@@ -309,7 +312,7 @@ const CAMPOS_VACANTE = ['titulo', 'descripcion', 'rol_id', 'rol_texto', 'event_r
   'preguntas', 'pago_monto', 'pago_moneda', 'pago_periodo', 'ciudad', 'modalidad',
   'fecha_inicio', 'fecha_fin', 'cupos', 'estado'];
 
-router.get('/eventos/:eventoId/vacantes', async (req, res) => {
+router.get('/eventos/:eventoId/vacantes', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -330,7 +333,7 @@ router.get('/eventos/:eventoId/vacantes', async (req, res) => {
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
-router.post('/eventos/:eventoId/vacantes', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId } = req.params;
   const titulo = (req.body?.titulo || '').trim();
   if (!titulo) return res.status(400).json({ error: 'El título de la vacante es requerido.' });
@@ -351,7 +354,7 @@ router.post('/eventos/:eventoId/vacantes', async (req, res) => {
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
-router.patch('/eventos/:eventoId/vacantes/:id', async (req, res) => {
+router.patch('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -366,7 +369,7 @@ router.patch('/eventos/:eventoId/vacantes/:id', async (req, res) => {
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
-router.delete('/eventos/:eventoId/vacantes/:id', async (req, res) => {
+router.delete('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -377,7 +380,7 @@ router.delete('/eventos/:eventoId/vacantes/:id', async (req, res) => {
 });
 
 /* Pipeline: postulaciones de una vacante, con snapshot y datos básicos del candidato. */
-router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', async (req, res) => {
+router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, vid } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -392,7 +395,7 @@ router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', async (req, res) =>
 
 /* Mover de etapa. Al ACEPTAR: fija monto_contrato, mete al candidato al equipo
    con su rol, y registra la comisión (pendiente de cobro). */
-router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', async (req, res) => {
+router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, vid, pid } = req.params;
   const etapa = req.body?.etapa;
   if (!ETAPAS.includes(etapa)) return res.status(400).json({ error: 'Etapa inválida.' });

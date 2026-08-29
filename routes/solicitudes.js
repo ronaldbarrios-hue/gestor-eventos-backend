@@ -99,7 +99,7 @@ router.get('/me/solicitudes', sesion("Las sugerencias que ha enviado esta person
 });
 
 /* ── GET /eventos/:eventoId/solicitudes ───────────────────── */
-router.get('/eventos/:eventoId/solicitudes', async (req, res) => {
+router.get('/eventos/:eventoId/solicitudes', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto.'), async (req, res) => {
   try {
     const { isOwner } = await assertAccess(req.params.eventoId, req.user.id);
     let q = supabase
@@ -117,7 +117,7 @@ router.get('/eventos/:eventoId/solicitudes', async (req, res) => {
 });
 
 /* ── POST /eventos/:eventoId/solicitudes ──────────────────── */
-router.post('/eventos/:eventoId/solicitudes', async (req, res) => {
+router.post('/eventos/:eventoId/solicitudes', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto.'), async (req, res) => {
   const { tipo, titulo, contenido } = req.body || {};
   if (!contenido?.trim()) return res.status(400).json({ error: 'El contenido es requerido.' });
   try {
@@ -151,7 +151,7 @@ router.post('/eventos/:eventoId/solicitudes', async (req, res) => {
 });
 
 /* ── PATCH /eventos/:eventoId/solicitudes/:id (solo owner) ── */
-router.patch('/eventos/:eventoId/solicitudes/:id', async (req, res) => {
+router.patch('/eventos/:eventoId/solicitudes/:id', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto.'), async (req, res) => {
   try {
     const { ev, isOwner } = await assertAccess(req.params.eventoId, req.user.id);
     if (!isOwner) return res.status(403).json({ error: 'Solo el organizador gestiona las solicitudes.' });

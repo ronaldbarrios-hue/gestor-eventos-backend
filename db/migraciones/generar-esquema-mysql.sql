@@ -158,7 +158,22 @@ with cols as (
            join pg_namespace ns on ns.oid = cl.relnamespace and ns.nspname = 'public'
            join pg_attribute a on a.attrelid = cl.oid and a.attnum = any(i.indkey)
            where cl.relname = c.table_name and a.attname = c.column_name
-         ) as indexada
+         ) as indexada,
+         /* Que tablas mantienen `updated_at` con un disparador HOY. No se
+            deduce del nombre de la columna: 16 tablas tienen `updated_at`
+            pero solo 5 lo tocan con disparador; en las otras 11 lo escribe el
+            codigo cuando toca, y darles ON UPDATE cambiaria el comportamiento
+            por la puerta de atras. Se pregunta a pg_trigger, asi que si
+            manana se anade o se quita uno, esto lo sigue solo. */
+         exists (
+           select 1 from pg_trigger tg
+           join pg_class cl2 on cl2.oid = tg.tgrelid
+           join pg_namespace ns2 on ns2.oid = cl2.relnamespace and ns2.nspname = 'public'
+           join pg_proc pr on pr.oid = tg.tgfoid
+           where not tg.tgisinternal
+             and cl2.relname = c.table_name
+             and pr.proname in ('set_updated_at', 'fn_touch_email_plantilla')
+         ) as toca_updated
   from information_schema.columns c
   join information_schema.tables tb
     on tb.table_schema = c.table_schema and tb.table_name = c.table_name
@@ -192,6 +207,17 @@ lineas as (
          || case when obligatoria then ' NOT NULL' else ' NULL' end
          || coalesce(' DEFAULT ' || pg_temp.omision_mysql(def, tipo), '')
          || case when serie then ' AUTO_INCREMENT' else '' end
+         /* Los cuatro disparadores `set_updated_at` de Postgres se resuelven
+            aqui, sin disparador. Las notas ya lo daban por hecho pero el
+            generador no lo emitia: `updated_at` se habria quedado congelado en
+            la fecha de creacion en eventos, profiles, tareas y
+            payment_transactions, y nadie lo habria notado hasta buscar por que
+            no cambia. Se aplica solo a la columna que se llama `updated_at` y
+            que ya trae CURRENT_TIMESTAMP como omision: las otras marcas de
+            tiempo (verificado_at, published_at...) las escribe el codigo
+            cuando toca, y tocarlas en cada UPDATE seria falsear el dato. */
+         || case when toca_updated and k = 'updated_at'
+                 then ' ON UPDATE CURRENT_TIMESTAMP(6)' else '' end
          as linea
   from cols
 ),

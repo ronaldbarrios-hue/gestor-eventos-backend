@@ -185,7 +185,7 @@ app.use('/eventos',          require('./routes/interacciones.js'));
 app.use('/eventos',          require('./routes/eventos.js'));
 
 if (process.env.NODE_ENV !== 'production') {
-  app.get('/debug-sentry', () => { throw new Error('Prueba Sentry'); });
+  app.get('/debug-sentry', require('./core/permisos').publica('Comprobante de que Sentry recibe los errores. No lee ni escribe nada: revienta a propósito. Sólo existe fuera de producción.'), () => { throw new Error('Prueba Sentry'); });
 }
 
 // ── 7. Sentry error handler ──────────────────────────────────

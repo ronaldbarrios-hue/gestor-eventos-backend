@@ -1,4 +1,5 @@
 const express = require('express');
+const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar } = require('../lib/notificar.js');
@@ -15,7 +16,7 @@ function assertOwner(eventoId, userId, perms = PERMS_EQUIPO) {
 }
 
 /* GET /eventos/:eventoId/equipo */
-router.get('/:eventoId/equipo', async (req, res) => {
+router.get('/:eventoId/equipo', sesion("Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."), async (req, res) => {
   const eventoId = req.params.eventoId;
   try {
     const evento = await assertOwner(eventoId, req.user.id);
@@ -39,7 +40,7 @@ router.get('/:eventoId/equipo', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/equipo — invitar */
-router.post('/:eventoId/equipo', async (req, res) => {
+router.post('/:eventoId/equipo', sesion("Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."), async (req, res) => {
   const eventoId = req.params.eventoId;
   const { email, rol_id, nombre_invitado } = req.body;
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Email requerido.' });
@@ -129,7 +130,7 @@ router.post('/:eventoId/equipo', async (req, res) => {
 });
 
 /* PATCH /eventos/:eventoId/equipo/:miembroId — cambiar rol */
-router.patch('/:eventoId/equipo/:miembroId', async (req, res) => {
+router.patch('/:eventoId/equipo/:miembroId', sesion("Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."), async (req, res) => {
   const { eventoId, miembroId } = req.params;
   const { rol_id } = req.body;
   if (!rol_id) return res.status(400).json({ error: 'rol_id requerido.' });
@@ -154,7 +155,7 @@ router.patch('/:eventoId/equipo/:miembroId', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/equipo/:miembroId — sacar del equipo (soft) */
-router.delete('/:eventoId/equipo/:miembroId', async (req, res) => {
+router.delete('/:eventoId/equipo/:miembroId', sesion("Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."), async (req, res) => {
   const { eventoId, miembroId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id, ['remover_miembros']);
@@ -177,7 +178,7 @@ router.delete('/:eventoId/equipo/:miembroId', async (req, res) => {
    Devuelve rol y título del evento de la primera invitación (la más reciente),
    para que el frontend pueda mostrar el mensaje de bienvenida sin tener que
    volver a consultar por separado (evita condición de carrera con el status). */
-router.post('/vincular-invitaciones', async (req, res) => {
+router.post('/vincular-invitaciones', sesion("Acepta las invitaciones dirigidas al email de SU sesión. No recibe a quién vincular: sale de req.user."), async (req, res) => {
   const email = (req.user.email || '').toLowerCase().trim();
   if (!email) return res.json({ vinculadas: 0, invitaciones: [] });
 

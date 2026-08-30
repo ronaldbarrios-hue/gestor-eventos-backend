@@ -876,7 +876,7 @@ router.post('/:eventoId/alertas', sesion('Lo opera quien está en la puerta: la 
 });
 
 /* PATCH /eventos/:eventoId/alertas/:id/resolver */
-router.patch('/:eventoId/alertas/:id/resolver', async (req, res) => {
+router.patch('/:eventoId/alertas/:id/resolver', sesion("Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertCheckinAccess(eventoId, req.user.id);
@@ -903,7 +903,7 @@ router.patch('/:eventoId/alertas/:id/resolver', async (req, res) => {
 
    Se pagina internamente porque Supabase limita cuantas filas devuelve de una
    vez. Eso es un detalle del proveedor, no algo que quien exporta deba sufrir. */
-router.get('/:eventoId/clientes/exportar', async (req, res) => {
+router.get('/:eventoId/clientes/exportar', sesion("Exportar es leer la lista entera: la ruta exige ver_clientes o gestionar_clientes sobre el rol del miembro."), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);

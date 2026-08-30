@@ -15,7 +15,7 @@ const {
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
 const { hashDocumento, columnasSinPregunta, clave: clavePadron } = require('../lib/padronPrevio.js');
-const { exige } = require('../core/permisos');
+const { exige, sesion } = require('../core/permisos');
 const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
 /* El padrón es parte de configurar el formulario del evento, así que pide lo
@@ -71,7 +71,7 @@ function validarPublicacion(modo, url) {
 }
 
 /* GET /eventos — lista de mis eventos + eventos donde soy miembro activo */
-router.get('/', async (req, res) => {
+router.get('/', sesion('Los eventos propios y aquellos donde la persona es miembro del equipo. Es «lo mío», no un permiso sobre un evento ajeno: la consulta ya filtra por owner_id o por pertenencia.'), async (req, res) => {
   const { q, estado, modalidad, page = 1, limit = 20 } = req.query;
   const desde = (Number(page) - 1) * Number(limit);
   const hasta = desde + Number(limit) - 1;
@@ -113,7 +113,7 @@ router.get('/', async (req, res) => {
 });
 
 /* GET /eventos/:id — evento del owner O de un miembro activo */
-router.get('/:id', async (req, res) => {
+router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miembro activo del equipo. Se comprueba dentro contra owner_id y event_members.'), async (req, res) => {
   const { data, error } = await supabase
     .from('eventos')
     .select('*, categoria:categorias(slug, nombre)')
@@ -144,7 +144,7 @@ router.get('/:id', async (req, res) => {
 });
 
 /* POST /eventos — crear */
-router.post('/', async (req, res) => {
+router.post('/', sesion('Crear un evento no necesita permiso sobre ninguno: el que nace queda a nombre de quien lo crea (owner_id = req.user.id).'), async (req, res) => {
   const { titulo, fecha_inicio } = req.body;
   if (!titulo)       return res.status(400).json({ error: 'titulo requerido.' });
   if (!fecha_inicio) return res.status(400).json({ error: 'fecha_inicio requerida.' });
@@ -185,7 +185,7 @@ router.post('/', async (req, res) => {
    formulario, speakers, patrocinadores y roles propios) pero NO las personas
    ni las ventas: el clon nace en borrador, sin asistentes ni aforo vendido.
    Se usa tanto en "Duplicar" de la lista como al crear desde una plantilla. */
-router.post('/:id/duplicar', async (req, res) => {
+router.post('/:id/duplicar', sesion('Duplicar es leer un evento entero y crear otro: se reserva al dueño del original.'), async (req, res) => {
   const { data: origen, error: e1 } = await supabase
     .from('eventos').select('*')
     .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
@@ -269,7 +269,7 @@ router.post('/:id/duplicar', async (req, res) => {
 });
 
 /* PATCH /eventos/:id — editar */
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / owner_id + event_members antes de tocar nada.'), async (req, res) => {
   const { data: actual, error: e1 } = await supabase
     .from('eventos')
     /* `page_json` entra en la lectura porque el guardado lo MEZCLA en vez de
@@ -418,7 +418,7 @@ async function puedeEditarEvento(req, eventoId) {
    sub-evento, y dos copias de esto acabarían separándose. */
 
 /* GET /eventos/:id/formulario — campos personalizados del formulario de compra */
-router.get('/:id/formulario', async (req, res) => {
+router.get('/:id/formulario', sesion('Editar el evento: lo comprueba puedeEditarEvento / owner_id + event_members antes de tocar nada.'), async (req, res) => {
   const permiso = await puedeEditarEvento(req, req.params.id);
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
 
@@ -467,7 +467,7 @@ router.get('/:id/formulario', async (req, res) => {
    (conservan su id, así las respuestas ya guardadas en boletas no quedan
    huérfanas); campos sin `id` se INSERTAN; campos que ya no vienen en la
    lista se BORRAN. */
-router.put('/:id/formulario', async (req, res) => {
+router.put('/:id/formulario', sesion('Editar el evento: lo comprueba puedeEditarEvento / owner_id + event_members antes de tocar nada.'), async (req, res) => {
   const permiso = await puedeEditarEvento(req, req.params.id);
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
 
@@ -531,7 +531,7 @@ router.put('/:id/formulario', async (req, res) => {
 });
 
 /* DELETE /eventos/:id — soft delete */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', sesion('Borrar el evento se reserva al dueño; un miembro del equipo, por mucho permiso que tenga, no lo hace.'), async (req, res) => {
   const { data: actual } = await supabase
     .from('eventos').select('owner_id').eq('id', req.params.id).maybeSingle();
   if (!actual) return res.status(404).json({ error: 'Evento no encontrado.' });
@@ -548,7 +548,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 /* POST /eventos/:id/estado — cambiar estado */
-router.post('/:id/estado', async (req, res) => {
+router.post('/:id/estado', sesion('Publicar o despublicar exige el permiso `publicar_evento` sobre el rol del miembro, no el de editar.'), async (req, res) => {
   const { estado } = req.body;
   if (!ESTADOS_VALIDOS.includes(estado)) {
     return res.status(400).json({ error: `estado inválido. Usa: ${ESTADOS_VALIDOS.join(', ')}.` });

@@ -26,6 +26,7 @@
 */
 
 const express = require('express');
+const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
@@ -279,7 +280,7 @@ const PERMS_MARCAR = ['checkin', 'gestionar_clientes', 'gestionar_agenda', 'edit
 
 /* Resumen: cuánta gente por sub-evento, cuánta fue de verdad y cuánta llegó sin
    boleta. Sale de la vista v_participacion_sesiones (migración 0055). */
-panel.get('/:eventoId/sesiones/participacion', async (req, res) => {
+panel.get('/:eventoId/sesiones/participacion', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   try {
     await assertPermiso(req.params.eventoId, req.user.id, PERMS_VER, 'id, owner_id');
 
@@ -340,7 +341,7 @@ async function sesionDelEvento(eventoId, sesionId) {
   return data;
 }
 
-panel.get('/:eventoId/sesiones/:sesionId/formulario', async (req, res) => {
+panel.get('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, sesionId } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, PERMS_EDITAR_FORM, 'id, owner_id');
@@ -367,7 +368,7 @@ panel.get('/:eventoId/sesiones/:sesionId/formulario', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-panel.put('/:eventoId/sesiones/:sesionId/formulario', async (req, res) => {
+panel.put('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, sesionId } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, PERMS_EDITAR_FORM, 'id, owner_id');
@@ -444,7 +445,7 @@ panel.put('/:eventoId/sesiones/:sesionId/formulario', async (req, res) => {
 });
 
 /* Los inscritos de un sub-evento, con sus respuestas del formulario. */
-panel.get('/:eventoId/sesiones/:sesionId/inscripciones', async (req, res) => {
+panel.get('/:eventoId/sesiones/:sesionId/inscripciones', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 500, 2000);
   try {
     await assertPermiso(req.params.eventoId, req.user.id, PERMS_VER, 'id, owner_id');
@@ -487,7 +488,7 @@ panel.get('/:eventoId/sesiones/:sesionId/inscripciones', async (req, res) => {
 
    Por eso no hay atajo para marcar a quien no está inscrito: la respuesta dice
    quién es y que le falta registrarse, y el staff lo registra primero. */
-panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
+panel.post('/:eventoId/sesiones/:sesionId/asistencia', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, sesionId } = req.params;
   const codigo = String(req.body?.codigo || '').trim().toUpperCase();
   const qrToken = req.body?.qr_token || null;
@@ -596,7 +597,7 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', async (req, res) => {
 });
 
 /* Cancelar o reactivar una inscripción. El trigger de la 0055 recalcula el cupo. */
-panel.patch('/:eventoId/sesiones/:sesionId/inscripciones/:id', async (req, res) => {
+panel.patch('/:eventoId/sesiones/:sesionId/inscripciones/:id', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const estado = String(req.body?.estado || '');
   if (!ESTADOS.includes(estado)) {
     return res.status(400).json({ error: `Estado inválido. Usa: ${ESTADOS.join(', ')}.` });

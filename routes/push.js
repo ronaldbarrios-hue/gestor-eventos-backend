@@ -92,7 +92,7 @@ router.post('/me/push/test', verifySupabaseJWT, sesion("La suscripción de push 
    el anuncio se guarda y se crea una notificación in-app por destinatario —
    ése es el canal que no depende de claves ni de permisos del navegador. El
    push se manda además, si se puede. */
-router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, async (req, res) => {
+router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, sesion("Sólo el dueño del evento puede lanzar un aviso a todo el mundo; se comprueba contra owner_id."), async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, mensaje, url } = req.body || {};
   if (!titulo?.trim() || !mensaje?.trim()) return res.status(400).json({ error: 'Título y mensaje son requeridos.' });
@@ -169,7 +169,7 @@ router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, async (req, 
 });
 
 /* GET /eventos/:id/anuncios — lo que ya se anunció. */
-router.get('/eventos/:eventoId/anuncios', verifySupabaseJWT, async (req, res) => {
+router.get('/eventos/:eventoId/anuncios', verifySupabaseJWT, sesion("Comprueba a mano que quien pide es el dueño del evento, o un miembro activo de su equipo."), async (req, res) => {
   const { eventoId } = req.params;
   const { data: ev } = await supabase
     .from('eventos').select('id, owner_id').eq('id', eventoId).maybeSingle();

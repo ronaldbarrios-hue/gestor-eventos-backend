@@ -186,7 +186,7 @@ router.post('/me/talento/verificacion', sesion("Su perfil de talento: lo edita s
 
 /* ═══════════════════════ CATÁLOGO DE ROLES ═══════════════════════ */
 
-router.post('/vacantes/roles', async (req, res) => {
+router.post('/vacantes/roles', sesion("Crea un rol de catálogo propio, anotado con su owner_id."), async (req, res) => {
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'El nombre del rol es requerido.' });
   const { data, error } = await supabase
@@ -198,7 +198,7 @@ router.post('/vacantes/roles', async (req, res) => {
 
 /* ═══════════════════════ EXPLORAR (candidato) ═══════════════════════ */
 
-router.post('/vacantes/:id/postular', async (req, res) => {
+router.post('/vacantes/:id/postular', sesion("Se postula uno mismo: la postulación se firma con req.user.id y no se puede postular a otro."), async (req, res) => {
   const { id } = req.params;
   try {
     const { data: perfil } = await supabase.from('perfil_talento').select('*').eq('user_id', req.user.id).maybeSingle();
@@ -273,12 +273,17 @@ router.post('/me/postulaciones/:id/resena', sesion("A qué vacantes se presentó
 });
 
 /* Perfil público de talento + reputación (para organizadores buscando). */
-router.get('/perfil-talento/:userId', async (req, res) => {
+router.get('/perfil-talento/:userId', sesion("Perfil de talento ya publicado. El borrador sin publicar sólo lo ve su dueño."), async (req, res) => {
   const { userId } = req.params;
   const { data: perfil } = await supabase.from('perfil_talento')
     .select('user_id, titular, bio, habilidades, experiencia, disponibilidad, pais, portfolio_url, cv_url, cv_nombre, publicado, verificacion_estado')
     .eq('user_id', userId).maybeSingle();
-  if (!perfil) return res.status(404).json({ error: 'Perfil no encontrado.' });
+  /* Un perfil sin publicar es un borrador: lo ve su dueño y nadie más. Antes
+     bastaba con tener sesión y saber el userId para leer bio, CV y
+     disponibilidad de alguien que aún no se había publicado. */
+  if (!perfil || (!perfil.publicado && perfil.user_id !== req.user.id)) {
+    return res.status(404).json({ error: 'Perfil no encontrado.' });
+  }
   /* ciudad y foto (avatar_url) son de la persona, no de esta faceta: se leen
      de profiles, no de perfil_talento. */
   const { data: prof } = await supabase.from('profiles').select('nombre, avatar_url, ciudad').eq('id', userId).maybeSingle();
@@ -458,7 +463,7 @@ router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', exige(PERMS_
 
 /* Agendar entrevista. STUB v1: guarda los datos (+ enlace manual) y pasa a 'entrevista'.
    La sincronización con Google Calendar se conecta en un paso posterior. */
-router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, vid, pid } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -497,7 +502,7 @@ router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', as
 });
 
 /* Reseña del organizador hacia el trabajador (pública en el perfil del trabajador). */
-router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, vid, pid } = req.params;
   const estrellas = Number(req.body?.estrellas);
   if (!(estrellas >= 1 && estrellas <= 5)) return res.status(400).json({ error: 'Estrellas entre 1 y 5.' });
@@ -520,7 +525,7 @@ router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', async 
 });
 
 /* Buscar talento publicado (para el gancho "consíguelo con nosotros"). */
-router.get('/eventos/:eventoId/talento', async (req, res) => {
+router.get('/eventos/:eventoId/talento', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId } = req.params;
   const { q, ciudad } = req.query;
   try {
@@ -545,7 +550,7 @@ router.get('/eventos/:eventoId/talento', async (req, res) => {
 
 /* Destacar una vacante (micropago). STUB v1: registra el cobro 'pendiente';
    el destacado se activa cuando el pago se confirme (webhook de pagos). */
-router.post('/eventos/:eventoId/vacantes/:id/destacar', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes/:id/destacar', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);

@@ -171,7 +171,7 @@ router.get('/me/loyalty/badges', sesion("Sus puntos y sus insignias. Cuelgan del
 /* ─────────── RANKING EQUIPO POR EVENTO ───────────
    Visible para owner + miembros activos del evento. Suma points_log de
    audiencia 'empleado' filtrado por evento_id. */
-router.get('/eventos/:eventoId/ranking-equipo', async (req, res) => {
+router.get('/eventos/:eventoId/ranking-equipo', sesion("Comprueba a mano que quien pide es el dueño del evento, o un miembro activo de su equipo."), async (req, res) => {
   const { eventoId } = req.params;
 
   const { data: ev } = await supabase

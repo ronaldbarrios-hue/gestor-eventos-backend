@@ -1,6 +1,6 @@
 {
-  "pendientes_maximo": 49,
-  "censado_el": "2026-08-29",
+  "pendientes_maximo": 0,
+  "censado_el": "2026-08-30",
   "total": 285,
   "rutas": {
     "GET /": {
@@ -16,16 +16,20 @@
       "motivo": "Diagnóstico de red saliente, sin parámetros de entrada y sin datos sensibles. Temporal."
     },
     "GET /api/v1/eventos": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve."
     },
     "GET /api/v1/eventos/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve."
     },
     "GET /api/v1/eventos/:id/asistentes": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve."
     },
     "GET /api/v1/eventos/:id/resumen": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve."
     },
     "GET /.well-known/oauth-protected-resource": {
       "estado": "publica",
@@ -44,20 +48,24 @@
       "motivo": "Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token."
     },
     "POST /oauth/register": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado."
     },
     "GET /oauth/authorize": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado."
     },
     "POST /oauth/aprobar": {
       "estado": "sesion",
       "motivo": "Aprobar SÍ pide sesión: es lo que ata el permiso a una cuenta concreta."
     },
     "POST /oauth/token": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado."
     },
     "POST /oauth/revoke": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado."
     },
     "GET /me/conexiones/mcp": {
       "estado": "sesion",
@@ -280,10 +288,12 @@
       "motivo": "Integraciones de la propia cuenta, comprobadas contra req.user.id."
     },
     "POST /me/sugerencias/dinamica": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
     },
     "GET /me/sugerencias/dinamica": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
     },
     "GET /me/mercadopago/test": {
       "estado": "sesion",
@@ -338,7 +348,8 @@
       "motivo": "La conexión con Google de su propia cuenta."
     },
     "GET /integraciones/google/callback": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Callback de OAuth: lo llama Google, sin cabecera de sesión. Quién es sale del parámetro `state` firmado, que se verifica antes de guardar nada."
     },
     "POST /webhooks/truora": {
       "estado": "publica",
@@ -361,10 +372,12 @@
       "motivo": "La suscripción de push de SU navegador, identificada por su endpoint."
     },
     "POST /eventos/:eventoId/push/broadcast": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Sólo el dueño del evento puede lanzar un aviso a todo el mundo; se comprueba contra owner_id."
     },
     "GET /eventos/:eventoId/anuncios": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Comprueba a mano que quien pide es el dueño del evento, o un miembro activo de su equipo."
     },
     "GET /eventos/:id/promociones": {
       "estado": "sesion",
@@ -573,7 +586,8 @@
       "motivo": "Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."
     },
     "GET /eventos/:eventoId/ranking-equipo": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Comprueba a mano que quien pide es el dueño del evento, o un miembro activo de su equipo."
     },
     "GET /vacantes/roles": {
       "estado": "publica",
@@ -604,10 +618,12 @@
       "motivo": "Su perfil de talento: lo edita sólo su dueño."
     },
     "POST /vacantes/roles": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Crea un rol de catálogo propio, anotado con su owner_id."
     },
     "POST /vacantes/:id/postular": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Se postula uno mismo: la postulación se firma con req.user.id y no se puede postular a otro."
     },
     "GET /me/postulaciones": {
       "estado": "sesion",
@@ -622,7 +638,8 @@
       "motivo": "A qué vacantes se presentó esta persona."
     },
     "GET /perfil-talento/:userId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Perfil de talento ya publicado. El borrador sin publicar sólo lo ve su dueño."
     },
     "GET /me/organizador/reputacion": {
       "estado": "sesion",
@@ -665,37 +682,48 @@
       ]
     },
     "POST /eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "POST /eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "GET /eventos/:eventoId/talento": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "POST /eventos/:eventoId/vacantes/:id/destacar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "POST /sugerencias/dinamica": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
     },
     "GET /sugerencias/dinamica": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
     },
     "GET /eventos/:eventoId/equipo": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."
     },
     "POST /eventos/:eventoId/equipo": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."
     },
     "PATCH /eventos/:eventoId/equipo/:miembroId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."
     },
     "DELETE /eventos/:eventoId/equipo/:miembroId": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."
     },
     "POST /eventos/vincular-invitaciones": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Acepta las invitaciones dirigidas al email de SU sesión. No recibe a quién vincular: sale de req.user."
     },
     "GET /eventos/:eventoId/roles": {
       "estado": "exige",
@@ -804,10 +832,12 @@
       "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "PATCH /eventos/:eventoId/alertas/:id/resolver": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "GET /eventos/:eventoId/clientes/exportar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Exportar es leer la lista entera: la ruta exige ver_clientes o gestionar_clientes sobre el rol del miembro."
     },
     "GET /eventos/:eventoId/chat/channels": {
       "estado": "sesion",
@@ -915,28 +945,36 @@
       "motivo": "Los favoritos de la agenda son de la persona, no del evento: cada quien marca los suyos y sólo ve los suyos."
     },
     "GET /eventos/:eventoId/sesiones/participacion": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "GET /eventos/:eventoId/sesiones/:sesionId/formulario": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "PUT /eventos/:eventoId/sesiones/:sesionId/formulario": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "GET /eventos/:eventoId/sesiones/:sesionId/inscripciones": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "POST /eventos/:eventoId/sesiones/:sesionId/asistencia": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "PATCH /eventos/:eventoId/sesiones/:sesionId/inscripciones/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "GET /eventos/:eventoId/legal": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "PUT /eventos/:eventoId/legal": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."
     },
     "GET /eventos/:eventoId/tareas": {
       "estado": "sesion",
@@ -979,7 +1017,8 @@
       "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
     },
     "GET /eventos/:eventoId/auditoria": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "El registro de quién tocó qué lo ve sólo el dueño del evento."
     },
     "GET /eventos/:eventoId/analytics": {
       "estado": "exige",
@@ -1259,31 +1298,40 @@
       ]
     },
     "GET /eventos/": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Los eventos propios y aquellos donde la persona es miembro del equipo. Es «lo mío», no un permiso sobre un evento ajeno: la consulta ya filtra por owner_id o por pertenencia."
     },
     "GET /eventos/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Lee un evento del panel: el dueño siempre, y un miembro activo del equipo. Se comprueba dentro contra owner_id y event_members."
     },
     "POST /eventos/": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Crear un evento no necesita permiso sobre ninguno: el que nace queda a nombre de quien lo crea (owner_id = req.user.id)."
     },
     "POST /eventos/:id/duplicar": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Duplicar es leer un evento entero y crear otro: se reserva al dueño del original."
     },
     "PATCH /eventos/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Editar el evento: lo comprueba puedeEditarEvento / owner_id + event_members antes de tocar nada."
     },
     "GET /eventos/:id/formulario": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Editar el evento: lo comprueba puedeEditarEvento / owner_id + event_members antes de tocar nada."
     },
     "PUT /eventos/:id/formulario": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Editar el evento: lo comprueba puedeEditarEvento / owner_id + event_members antes de tocar nada."
     },
     "DELETE /eventos/:id": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Borrar el evento se reserva al dueño; un miembro del equipo, por mucho permiso que tenga, no lo hace."
     },
     "POST /eventos/:id/estado": {
-      "estado": "pendiente"
+      "estado": "sesion",
+      "motivo": "Publicar o despublicar exige el permiso `publicar_evento` sobre el rol del miembro, no el de editar."
     },
     "POST /eventos/:id/padron": {
       "estado": "exige",
@@ -1304,7 +1352,8 @@
       ]
     },
     "GET /debug-sentry": {
-      "estado": "pendiente"
+      "estado": "publica",
+      "motivo": "Comprobante de que Sentry recibe los errores. No lee ni escribe nada: revienta a propósito. Sólo existe fuera de producción."
     }
   }
 }

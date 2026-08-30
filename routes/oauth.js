@@ -67,7 +67,7 @@ router.get('/.well-known/openid-configuration', publica('Metadatos de OAuth: la 
 
 /* ── 3 · Registro dinámico (RFC 7591) ─────────────────────────────────── */
 
-publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), router.post('/oauth/register', async (req, res) => {
+router.post('/oauth/register', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   const { client_name, redirect_uris } = req.body || {};
   const r = await oauth.registrarCliente({ client_name, redirect_uris });
   if (r.error) return res.status(400).json({ error: 'invalid_client_metadata', error_description: r.error });
@@ -79,7 +79,7 @@ publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo qu
 /* No responde HTML: redirige a la pantalla del panel con los parámetros. Así
    la parte visual vive en el frontend, con la sesión que ya tiene el
    organizador, y aquí sólo queda la validación. */
-publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), router.get('/oauth/authorize', async (req, res) => {
+router.get('/oauth/authorize', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   const {
     client_id, redirect_uri, response_type = 'code',
     code_challenge, code_challenge_method = 'S256',
@@ -148,7 +148,7 @@ router.post('/oauth/aprobar', verifySupabaseJWT, sesion('Aprobar SÍ pide sesió
 
 /* ── 5 · Token ────────────────────────────────────────────────────────── */
 
-publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), router.post('/oauth/token', async (req, res) => {
+router.post('/oauth/token', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   /* El estándar manda form-urlencoded; algunos clientes envían JSON. Se
      aceptan los dos en vez de devolver un error que nadie sabe interpretar. */
   const b = req.body || {};
@@ -174,7 +174,7 @@ publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo qu
   res.json(r);
 });
 
-publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), router.post('/oauth/revoke', async (req, res) => {
+router.post('/oauth/revoke', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   const t = req.body?.token;
   if (t) await oauth.revocar(t);
   /* El estándar pide 200 siempre, incluso si el token no existía: decir

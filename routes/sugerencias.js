@@ -16,6 +16,7 @@
    público, sí. Preguntarlo aquí ahorra la conversación de vuelta. */
 
 const express = require('express');
+const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 
@@ -49,7 +50,7 @@ function validar(body) {
 }
 
 /* POST /sugerencias/dinamica */
-router.post('/sugerencias/dinamica', verifySupabaseJWT, async (req, res) => {
+router.post('/sugerencias/dinamica', verifySupabaseJWT, sesion("Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."), async (req, res) => {
   const v = validar(req.body);
   if (v.error) return res.status(400).json({ error: v.error });
 
@@ -80,7 +81,7 @@ router.post('/sugerencias/dinamica', verifySupabaseJWT, async (req, res) => {
 /* GET /sugerencias/dinamica — las propias, con la respuesta del equipo si la
    hubo. Que quien pidió algo pueda ver en qué quedó es lo que hace que vuelva
    a pedir; un buzón sin respuesta se usa una vez. */
-router.get('/sugerencias/dinamica', verifySupabaseJWT, async (req, res) => {
+router.get('/sugerencias/dinamica', verifySupabaseJWT, sesion("Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."), async (req, res) => {
   const { data, error } = await supabase
     .from('sugerencias_dinamica')
     .select('id, titulo, como_funciona, estado, respuesta, created_at, evento_id')

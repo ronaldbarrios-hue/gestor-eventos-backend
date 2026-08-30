@@ -6,7 +6,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const gc = require('../lib/googleCalendar.js');
 
-const { sesion } = require('../core/permisos');
+const { publica, sesion } = require('../core/permisos');
 const router = express.Router();
 function front() { return (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0]; }
 
@@ -29,7 +29,7 @@ router.delete('/me/google', verifySupabaseJWT, sesion("La conexión con Google d
 });
 
 /* Callback público de Google OAuth. */
-router.get('/integraciones/google/callback', async (req, res) => {
+router.get('/integraciones/google/callback', publica("Callback de OAuth: lo llama Google, sin cabecera de sesión. Quién es sale del parámetro `state` firmado, que se verifica antes de guardar nada."), async (req, res) => {
   const { code, state, error: oauthErr } = req.query;
   if (oauthErr) return res.redirect(`${front()}/ajustes?google=error`);
   const userId = gc.verificarEstado(state);

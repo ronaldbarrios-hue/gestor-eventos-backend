@@ -362,3 +362,13 @@ que devuelve supabase-js —no lanza, lo devuelve—, asi que la campana de la
 aplicacion lleva desde siempre vacia y en silencio. El codigo ya esta
 arreglado; para Supabase esta la migracion `0086`, que es de una linea y no
 borra nada.
+
+## La carga de los datos esta en su propio documento
+
+Ver `CARGA-DE-DATOS.md`. Este archivo explica **por que** cada tipo se traduce
+como se traduce; aquel explica **como** pasar las filas, en orden, y esta
+escrito para alguien que no ha estado en estas conversaciones.
+
+El dato que decide el metodo: la base entera son unas **2.000 filas**, y 30 de
+las 71 tablas estan vacias. No hace falta un proceso por lotes; cabe en un
+archivo que se importa de una vez.

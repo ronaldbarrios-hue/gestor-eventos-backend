@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { auditar } = require('../lib/auditar.js');
@@ -9,8 +10,10 @@ const router = express.Router();
 router.use(verifySupabaseJWT);
 
 /* Owner o miembro con permiso 'gestionar_tickets'. */
+const PERMS_TICKETS = ['gestionar_tickets'];
+
 function assertOwner(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['gestionar_tickets'], 'id, owner_id, currency');
+  return assertPermiso(eventoId, userId, PERMS_TICKETS, 'id, owner_id, currency');
 }
 
 const CAMPOS_EDITABLES = [
@@ -33,7 +36,7 @@ function sanitize(body, defaults = {}) {
 }
 
 /* GET /eventos/:eventoId/tickets */
-router.get('/:eventoId/tickets', async (req, res) => {
+router.get('/:eventoId/tickets', exige(PERMS_TICKETS), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -51,7 +54,7 @@ router.get('/:eventoId/tickets', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/tickets */
-router.post('/:eventoId/tickets', async (req, res) => {
+router.post('/:eventoId/tickets', exige(PERMS_TICKETS), async (req, res) => {
   const { eventoId } = req.params;
   if (!req.body?.nombre?.trim()) return res.status(400).json({ error: 'Nombre del ticket requerido.' });
 
@@ -83,7 +86,7 @@ router.post('/:eventoId/tickets', async (req, res) => {
 });
 
 /* PATCH /eventos/:eventoId/tickets/:ticketId */
-router.patch('/:eventoId/tickets/:ticketId', async (req, res) => {
+router.patch('/:eventoId/tickets/:ticketId', exige(PERMS_TICKETS), async (req, res) => {
   const { eventoId, ticketId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -111,7 +114,7 @@ router.patch('/:eventoId/tickets/:ticketId', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/tickets/:ticketId */
-router.delete('/:eventoId/tickets/:ticketId', async (req, res) => {
+router.delete('/:eventoId/tickets/:ticketId', exige(PERMS_TICKETS), async (req, res) => {
   const { eventoId, ticketId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);

@@ -2,6 +2,7 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const agente = require('../lib/agente.js');
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -12,7 +13,7 @@ router.use(verifySupabaseJWT);
    responde es que el servidor tenga proveedor de IA configurado. Se mantiene
    `requierePro: false` en la respuesta porque el frontend lo lee, y quitarlo de
    golpe dejaría la pantalla en un estado indefinido. */
-router.get('/me/agente/estado', async (req, res) => {
+router.get('/me/agente/estado', sesion("El asistente de IA del propio usuario: su historial y su cuota son suyos."), async (req, res) => {
   /* El aviso de capa gratuita se manda desde aquí y no se escribe en el
      frontend, porque depende de con qué proveedor está corriendo el servidor.
      Groq y Gemini tienen capa gratuita con límite de peticiones por minuto y por
@@ -37,7 +38,7 @@ router.get('/me/agente/estado', async (req, res) => {
 });
 
 /* POST /me/agente/chat */
-router.post('/me/agente/chat', async (req, res) => {
+router.post('/me/agente/chat', sesion("El asistente de IA del propio usuario: su historial y su cuota son suyos."), async (req, res) => {
   if (!agente.disponible) {
     return res.status(503).json({
       error: 'El asistente IA no está habilitado en este servidor.',
@@ -64,7 +65,7 @@ router.post('/me/agente/chat', async (req, res) => {
 /* POST /me/agente/generar-evento — borrador de evento a partir de una
    descripcion en lenguaje natural. Devuelve { borrador } y NO crea nada:
    el frontend pre-llena el asistente de creacion y el usuario revisa. */
-router.post('/me/agente/generar-evento', async (req, res) => {
+router.post('/me/agente/generar-evento', sesion("El asistente de IA del propio usuario: su historial y su cuota son suyos."), async (req, res) => {
   if (!agente.disponible) {
     return res.status(503).json({ error: 'El asistente IA no esta habilitado en este servidor.' });
   }

@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -12,9 +13,15 @@ router.use(verifySupabaseJWT);
 const CATEGORIAS_PERMITIDAS = ['negocios', 'marketing', 'tecnologia'];
 
 /* `gestionar_expositores` es el permiso fino (stands y rueda de negocios);
-   `editar_evento` sigue valiendo para no romper a quien ya lo tenía. */
+   `editar_evento` sigue valiendo para no romper a quien ya lo tenía.
+
+   La lista es UNA: la declara la ruta con `exige()` y la vuelve a comprobar el
+   helper dentro. Escrita dos veces acabarían separándose, y entonces la ruta
+   diría que pide un permiso y el handler exigiría otro. */
+const PERMS_EXPOSITORES = ['gestionar_expositores', 'editar_evento'];
+
 function assertOwner(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['gestionar_expositores', 'editar_evento'], 'id, owner_id');
+  return assertPermiso(eventoId, userId, PERMS_EXPOSITORES, 'id, owner_id');
 }
 
 /* Verifica que el evento tenga una categoría habilitada para este módulo. */
@@ -54,7 +61,7 @@ async function assertPuedeParticipar(eventoId, user) {
 /* GET /eventos/:eventoId/networking/expositores — lista pública (para
    asistentes con boleta u organizador) con sus horarios y si cada
    horario ya está reservado. */
-router.get('/:eventoId/networking/expositores', async (req, res) => {
+router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento».'), async (req, res) => {
   const { eventoId } = req.params;
 
   try {
@@ -106,7 +113,7 @@ router.get('/:eventoId/networking/expositores', async (req, res) => {
 });
 
 /* GET /eventos/:eventoId/networking/mis-citas — agenda del usuario logueado */
-router.get('/:eventoId/networking/mis-citas', async (req, res) => {
+router.get('/:eventoId/networking/mis-citas', sesion('Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento».'), async (req, res) => {
   const { eventoId } = req.params;
 
   try {
@@ -133,7 +140,7 @@ router.get('/:eventoId/networking/mis-citas', async (req, res) => {
 
 /* POST /eventos/:eventoId/networking/horarios/:horarioId/reservar
    Confirmación automática — si el horario ya está tomado, falla con 409. */
-router.post('/:eventoId/networking/horarios/:horarioId/reservar', async (req, res) => {
+router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento».'), async (req, res) => {
   const { eventoId, horarioId } = req.params;
 
   try {
@@ -220,7 +227,7 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', async (req, re
 
 /* DELETE /eventos/:eventoId/networking/citas/:citaId — cancelar mi propia cita.
    Se filtra por user_id, así que ya está implícitamente protegido. */
-router.delete('/:eventoId/networking/citas/:citaId', async (req, res) => {
+router.delete('/:eventoId/networking/citas/:citaId', sesion('Su propia cita: el borrado filtra por user_id, así que nadie puede tocar la de otro.'), async (req, res) => {
   const { citaId } = req.params;
   const { error } = await supabase
     .from('networking_citas')
@@ -250,7 +257,7 @@ const COLS_STAND = `id, nombre, descripcion, logo_url, stand, sitio_web,
    Con `?todos=1` vienen también los desactivados: el panel los necesita para
    reactivarlos, y antes quedaban invisibles pese a que el comentario prometía
    "incluye borradores". */
-router.get('/:eventoId/expositores', async (req, res) => {
+router.get('/:eventoId/expositores', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const todos = req.query.todos === '1' || req.query.todos === 'true';
   try {
@@ -325,7 +332,7 @@ router.get('/:eventoId/expositores', async (req, res) => {
    puntos, sigue valiendo. Comprobarlo solo aquí sería confiar en que nadie
    escriba una segunda ruta. */
 
-router.get('/:eventoId/expositores/bolsa', async (req, res) => {
+router.get('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -345,7 +352,7 @@ router.get('/:eventoId/expositores/bolsa', async (req, res) => {
   }
 });
 
-router.put('/:eventoId/expositores/bolsa', async (req, res) => {
+router.put('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const aEntero = (v) => (v === null || v === '' || v === undefined)
     ? null
@@ -376,7 +383,7 @@ router.put('/:eventoId/expositores/bolsa', async (req, res) => {
 /* Reparto: { cuotas: { <expositor_id>: numero|null } }.
    La suma se valida ANTES de guardar nada: repartir de más y descubrirlo stand
    por stand es peor que no dejar guardar. */
-router.put('/:eventoId/expositores/cuotas', async (req, res) => {
+router.put('/:eventoId/expositores/cuotas', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const cuotas = req.body?.cuotas && typeof req.body.cuotas === 'object' ? req.body.cuotas : null;
   if (!cuotas) return res.status(400).json({ error: 'Manda { cuotas: { id: puntos } }.' });
@@ -457,7 +464,7 @@ const CAMPOS_STAND = ['nombre', 'descripcion', 'logo_url', 'stand', 'sitio_web',
   'tipo_persona', 'redes', 'galeria', 'activo', 'estado_ficha', 'orden'];
 
 /* POST /eventos/:eventoId/expositores — crear un stand a mano. */
-router.post('/:eventoId/expositores', async (req, res) => {
+router.post('/:eventoId/expositores', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'El nombre del stand es requerido.' });
@@ -477,7 +484,7 @@ router.post('/:eventoId/expositores', async (req, res) => {
 });
 
 /* PATCH /eventos/:eventoId/expositores/:id — editar un stand. */
-router.patch('/:eventoId/expositores/:id', async (req, res) => {
+router.patch('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -502,7 +509,7 @@ router.patch('/:eventoId/expositores/:id', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/expositores/:id — borrar un stand (scoped al evento). */
-router.delete('/:eventoId/expositores/:id', async (req, res) => {
+router.delete('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -515,7 +522,7 @@ router.delete('/:eventoId/expositores/:id', async (req, res) => {
 });
 
 /* GET /eventos/:eventoId/networking/admin — expositores + horarios + quién reservó cada uno */
-router.get('/:eventoId/networking/admin', async (req, res) => {
+router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -554,7 +561,7 @@ router.get('/:eventoId/networking/admin', async (req, res) => {
 
 /* POST /eventos/:eventoId/networking/expositores — crear expositor.
    Solo permitido si la categoría del evento admite este módulo. */
-router.post('/:eventoId/networking/expositores', async (req, res) => {
+router.post('/:eventoId/networking/expositores', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const { nombre, descripcion, logo_url, stand } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del expositor es requerido.' });
@@ -576,7 +583,7 @@ router.post('/:eventoId/networking/expositores', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/networking/expositores/:id */
-router.delete('/:eventoId/networking/expositores/:id', async (req, res) => {
+router.delete('/:eventoId/networking/expositores/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -592,7 +599,7 @@ router.delete('/:eventoId/networking/expositores/:id', async (req, res) => {
    Body: { inicio, fin, duracion_min } — genera bloques consecutivos de
    `duracion_min` minutos entre `inicio` y `fin`, todo en un solo llamado
    (así el organizador no crea horario por horario a mano). */
-router.post('/:eventoId/networking/expositores/:id/horarios', async (req, res) => {
+router.post('/:eventoId/networking/expositores/:id/horarios', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId, id } = req.params;
   const { inicio, fin, duracion_min = 15 } = req.body;
   if (!inicio || !fin) return res.status(400).json({ error: 'inicio y fin son requeridos.' });
@@ -626,7 +633,7 @@ router.post('/:eventoId/networking/expositores/:id/horarios', async (req, res) =
 });
 
 /* DELETE /eventos/:eventoId/networking/horarios/:id — borrar un bloque (solo si no tiene cita) */
-router.delete('/:eventoId/networking/horarios/:id', async (req, res) => {
+router.delete('/:eventoId/networking/horarios/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);

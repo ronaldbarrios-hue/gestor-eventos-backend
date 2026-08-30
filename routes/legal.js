@@ -25,6 +25,7 @@
 */
 
 const express = require('express');
+const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -77,7 +78,7 @@ publico.get('/slug/:slug/legal', async (req, res) => {
 /* ── Panel ── */
 const PERMS = ['editar_evento', 'editar_pagina_publica'];
 
-panel.get('/:eventoId/legal', async (req, res) => {
+panel.get('/:eventoId/legal', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   try {
     await assertPermiso(req.params.eventoId, req.user.id, PERMS, 'id, owner_id');
     const { data, error } = await supabase
@@ -92,7 +93,7 @@ panel.get('/:eventoId/legal', async (req, res) => {
   }
 });
 
-panel.put('/:eventoId/legal', async (req, res) => {
+panel.put('/:eventoId/legal', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const texto = (v, max) => {
     const s = v == null ? null : String(v).trim();
     return s ? s.slice(0, max) : null;

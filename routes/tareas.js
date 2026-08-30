@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar, notificarVarios } = require('../lib/notificar.js');
@@ -103,7 +104,7 @@ async function logTarea(tareaId, userId, tipo, contenido = {}) {
 }
 
 /* GET /eventos/:eventoId/tareas — owner ve todas; miembros ven las suyas/su rol */
-router.get('/:eventoId/tareas', async (req, res) => {
+router.get('/:eventoId/tareas', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId } = req.params;
   try {
     const ctx = await assertAccess(eventoId, req.user.id);
@@ -133,7 +134,7 @@ router.get('/:eventoId/tareas', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/tareas */
-router.post('/:eventoId/tareas', async (req, res) => {
+router.post('/:eventoId/tareas', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, descripcion, prioridad, asignado_user_id, asignado_rol_id, vence_at } = req.body;
   if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido.' });
@@ -169,7 +170,7 @@ router.post('/:eventoId/tareas', async (req, res) => {
 });
 
 /* PATCH /eventos/:eventoId/tareas/:tareaId — owner edita todo, asignado puede cambiar estado */
-router.patch('/:eventoId/tareas/:tareaId', async (req, res) => {
+router.patch('/:eventoId/tareas/:tareaId', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, tareaId } = req.params;
   try {
     const ctx = await assertAccess(eventoId, req.user.id);
@@ -242,7 +243,7 @@ router.patch('/:eventoId/tareas/:tareaId', async (req, res) => {
 });
 
 /* DELETE — solo owner */
-router.delete('/:eventoId/tareas/:tareaId', async (req, res) => {
+router.delete('/:eventoId/tareas/:tareaId', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, tareaId } = req.params;
   try {
     const ctx = await assertAccess(eventoId, req.user.id);
@@ -257,7 +258,7 @@ router.delete('/:eventoId/tareas/:tareaId', async (req, res) => {
 });
 
 /* GET /eventos/:eventoId/tareas/:tareaId/log — trazabilidad */
-router.get('/:eventoId/tareas/:tareaId/log', async (req, res) => {
+router.get('/:eventoId/tareas/:tareaId/log', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, tareaId } = req.params;
   try {
     await assertAccess(eventoId, req.user.id);
@@ -274,7 +275,7 @@ router.get('/:eventoId/tareas/:tareaId/log', async (req, res) => {
 });
 
 /* POST /eventos/:eventoId/tareas/:tareaId/comentar */
-router.post('/:eventoId/tareas/:tareaId/comentar', async (req, res) => {
+router.post('/:eventoId/tareas/:tareaId/comentar', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, tareaId } = req.params;
   const { texto } = req.body;
   if (!texto?.trim()) return res.status(400).json({ error: 'Comentario vacío.' });

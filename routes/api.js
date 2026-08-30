@@ -2,6 +2,7 @@
    Solo lectura. Escopada al owner del token. Montada en /api/v1. */
 
 const express = require('express');
+const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifyApiToken } = require('../lib/apitoken.js');
 
@@ -9,7 +10,7 @@ const router = express.Router();
 router.use(verifyApiToken);
 
 /* GET /api/v1/eventos — eventos del owner del token */
-router.get('/eventos', async (req, res) => {
+router.get('/eventos', sesion('Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve.'), async (req, res) => {
   const { data, error } = await supabase
     .from('eventos')
     .select('id, slug, titulo, descripcion, estado, modalidad, fecha_inicio, fecha_fin, location_nombre, aforo_total, aforo_vendido, currency, created_at')
@@ -22,7 +23,7 @@ router.get('/eventos', async (req, res) => {
 });
 
 /* GET /api/v1/eventos/:id */
-router.get('/eventos/:id', async (req, res) => {
+router.get('/eventos/:id', sesion('Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve.'), async (req, res) => {
   const { data, error } = await supabase
     .from('eventos')
     .select('id, slug, titulo, descripcion, estado, modalidad, fecha_inicio, fecha_fin, location_nombre, location_direccion, aforo_total, aforo_vendido, currency, created_at')
@@ -36,7 +37,7 @@ router.get('/eventos/:id', async (req, res) => {
 });
 
 /* GET /api/v1/eventos/:id/asistentes */
-router.get('/eventos/:id/asistentes', async (req, res) => {
+router.get('/eventos/:id/asistentes', sesion('Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve.'), async (req, res) => {
   /* Verifica pertenencia del evento al owner del token */
   const { data: ev } = await supabase
     .from('eventos').select('id').eq('id', req.params.id).eq('owner_id', req.apiOwner).maybeSingle();
@@ -59,7 +60,7 @@ router.get('/eventos/:id/asistentes', async (req, res) => {
 });
 
 /* GET /api/v1/eventos/:id/resumen — métricas básicas */
-router.get('/eventos/:id/resumen', async (req, res) => {
+router.get('/eventos/:id/resumen', sesion('Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve.'), async (req, res) => {
   const { data: ev } = await supabase
     .from('eventos').select('id, aforo_total, aforo_vendido').eq('id', req.params.id).eq('owner_id', req.apiOwner).maybeSingle();
   if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });

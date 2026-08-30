@@ -17,6 +17,7 @@ const { webhookLimiter } = require('../config/security.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { sesion, publica } = require('../core/permisos');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 
 /* Sin el secreto el webhook sigue aceptándose, y es a propósito: rechazarlo
@@ -70,7 +71,7 @@ function apiBaseUrl() {
   return process.env.API_PUBLIC_URL || process.env.BACKEND_URL || 'http://localhost:3000';
 }
 /* ────────────── Settings del organizador ────────────── */
-router.get('/me/mercadopago/test', verifySupabaseJWT, async (req, res) => {
+router.get('/me/mercadopago/test', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { data: profile, error } = await supabase
     .from('profiles')
     .select('mp_access_token')
@@ -85,7 +86,7 @@ router.get('/me/mercadopago/test', verifySupabaseJWT, async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
-router.post('/me/mercadopago/conectar', verifySupabaseJWT, async (req, res) => {
+router.post('/me/mercadopago/conectar', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { mp_access_token, mp_public_key } = req.body;
   if (!mp_access_token) return res.status(400).json({ error: 'access_token requerido.' });
   let info;
@@ -108,7 +109,7 @@ router.post('/me/mercadopago/conectar', verifySupabaseJWT, async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json({ profile: data, mp_user: { id: info.id, nickname: info.nickname } });
 });
-router.delete('/me/mercadopago', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/mercadopago', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { error } = await supabase
     .from('profiles')
     .update({
@@ -135,7 +136,7 @@ router.delete('/me/mercadopago', verifySupabaseJWT, async (req, res) => {
    una migración destructiva y no hace falta para esto. Nadie las lee. */
 
 /* ────────────── Compra pública ────────────── */
-router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, async (req, res) => {
+router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, publica('La compra se hace sin cuenta: es el punto de vender entradas a quien llega desde fuera. La identidad viaja en el formulario, no en una sesión.'), async (req, res) => {
   const { slug } = req.params;
   const { ticket_type_id, email, nombre, telefono } = req.body;
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona un tipo de boleta.' });
@@ -281,7 +282,7 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, a
   });
 });
 /* ────────────── Webhook Mercado Pago ────────────── */
-router.post('/webhooks/mercadopago', webhookLimiter, async (req, res) => {
+router.post('/webhooks/mercadopago', webhookLimiter, publica('Aviso de la pasarela, que llega desde sus servidores y no de un navegador. Se autentica con la firma del proveedor, no con sesión.'), async (req, res) => {
   const sig = verifyMPSignature(req);
   if (!sig.ok) {
     console.warn('[webhook MP] firma inválida:', sig.reason);

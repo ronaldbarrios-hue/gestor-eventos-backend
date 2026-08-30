@@ -19,6 +19,7 @@
    Claude lee sin estar autenticado — y el conector no se podría ni descubrir. */
 
 const express = require('express');
+const { sesion, publica } = require('../core/permisos');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const oauth = require('../lib/oauth.js');
 
@@ -38,8 +39,8 @@ function recursoProtegido(req, res) {
 }
 
 /* Los clientes prueban las dos formas: con y sin la ruta del recurso. */
-router.get('/.well-known/oauth-protected-resource', recursoProtegido);
-router.get('/.well-known/oauth-protected-resource/mcp', recursoProtegido);
+router.get('/.well-known/oauth-protected-resource', publica('Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token.'), recursoProtegido);
+router.get('/.well-known/oauth-protected-resource/mcp', publica('Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token.'), recursoProtegido);
 
 /* ── 2 · Metadatos del servidor de autorización (RFC 8414) ────────────── */
 
@@ -61,12 +62,12 @@ function servidorAutorizacion(req, res) {
   });
 }
 
-router.get('/.well-known/oauth-authorization-server', servidorAutorizacion);
-router.get('/.well-known/openid-configuration', servidorAutorizacion);
+router.get('/.well-known/oauth-authorization-server', publica('Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token.'), servidorAutorizacion);
+router.get('/.well-known/openid-configuration', publica('Metadatos de OAuth: la especificación exige que se lean SIN autenticación — es lo que el cliente consulta ANTES de tener ningún token.'), servidorAutorizacion);
 
 /* ── 3 · Registro dinámico (RFC 7591) ─────────────────────────────────── */
 
-router.post('/oauth/register', async (req, res) => {
+router.post('/oauth/register', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   const { client_name, redirect_uris } = req.body || {};
   const r = await oauth.registrarCliente({ client_name, redirect_uris });
   if (r.error) return res.status(400).json({ error: 'invalid_client_metadata', error_description: r.error });
@@ -78,7 +79,7 @@ router.post('/oauth/register', async (req, res) => {
 /* No responde HTML: redirige a la pantalla del panel con los parámetros. Así
    la parte visual vive en el frontend, con la sesión que ya tiene el
    organizador, y aquí sólo queda la validación. */
-router.get('/oauth/authorize', async (req, res) => {
+router.get('/oauth/authorize', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   const {
     client_id, redirect_uri, response_type = 'code',
     code_challenge, code_challenge_method = 'S256',
@@ -126,7 +127,7 @@ router.get('/oauth/authorize', async (req, res) => {
 
 /* La persona aprobó en la pantalla. Esto sí exige su sesión: el código se ata
    a la cuenta de quien aprueba, no a la que diga el cliente. */
-router.post('/oauth/aprobar', verifySupabaseJWT, async (req, res) => {
+router.post('/oauth/aprobar', verifySupabaseJWT, sesion('Aprobar SÍ pide sesión: es lo que ata el permiso a una cuenta concreta.'), async (req, res) => {
   const { client_id, redirect_uri, code_challenge, state, scope } = req.body || {};
 
   const v = await oauth.validarAutorizacion({
@@ -147,7 +148,7 @@ router.post('/oauth/aprobar', verifySupabaseJWT, async (req, res) => {
 
 /* ── 5 · Token ────────────────────────────────────────────────────────── */
 
-router.post('/oauth/token', async (req, res) => {
+router.post('/oauth/token', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   /* El estándar manda form-urlencoded; algunos clientes envían JSON. Se
      aceptan los dos en vez de devolver un error que nadie sabe interpretar. */
   const b = req.body || {};
@@ -173,7 +174,7 @@ router.post('/oauth/token', async (req, res) => {
   res.json(r);
 });
 
-router.post('/oauth/revoke', async (req, res) => {
+router.post('/oauth/revoke', publica('Paso del flujo OAuth, que ocurre antes de que exista una sesión. Lo que lo protege es el propio protocolo: PKCE, el client_id y el redirect_uri registrado.'), async (req, res) => {
   const t = req.body?.token;
   if (t) await oauth.revocar(t);
   /* El estándar pide 200 siempre, incluso si el token no existía: decir
@@ -183,11 +184,11 @@ router.post('/oauth/revoke', async (req, res) => {
 
 /* ── Panel: ver y cortar conexiones ───────────────────────────────────── */
 
-router.get('/me/conexiones/mcp', verifySupabaseJWT, async (req, res) => {
+router.get('/me/conexiones/mcp', verifySupabaseJWT, sesion("Los conectores MCP de su cuenta: cada token es de una persona."), async (req, res) => {
   res.json(await oauth.conexionesDe(req.user.id));
 });
 
-router.delete('/me/conexiones/mcp/:id', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/conexiones/mcp/:id', verifySupabaseJWT, sesion("Los conectores MCP de su cuenta: cada token es de una persona."), async (req, res) => {
   const r = await oauth.revocarPorId(req.user.id, req.params.id);
   if (!r.ok) return res.status(400).json({ error: r.error });
   res.json({ ok: true, aviso: 'Conexión cortada. Claude tendrá que volver a pedir permiso.' });

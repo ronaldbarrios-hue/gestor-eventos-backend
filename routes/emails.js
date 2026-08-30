@@ -157,7 +157,7 @@ function dedupe(lista) {
 
 /* ─────────── catálogo + plantillas guardadas ─────────── */
 
-router.get('/eventos/:id/emails', async (req, res) => {
+router.get('/eventos/:id/emails', exige(PERMS_EDITAR), async (req, res) => {
   try {
     const evento = await cargarEvento(req.params.id, req.user.id);
 
@@ -195,7 +195,7 @@ router.get('/eventos/:id/emails', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-router.put('/eventos/:id/emails/:tipo', async (req, res) => {
+router.put('/eventos/:id/emails/:tipo', exige(PERMS_EDITAR), async (req, res) => {
   const tipo = String(req.params.tipo || '');
   if (!IDS_TIPOS.includes(tipo)) return res.status(400).json({ error: 'Tipo de correo desconocido.' });
   try {
@@ -223,7 +223,7 @@ router.put('/eventos/:id/emails/:tipo', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-router.delete('/eventos/:id/emails/:tipo', async (req, res) => {
+router.delete('/eventos/:id/emails/:tipo', exige(PERMS_EDITAR), async (req, res) => {
   const tipo = String(req.params.tipo || '');
   if (!IDS_TIPOS.includes(tipo)) return res.status(400).json({ error: 'Tipo de correo desconocido.' });
   try {
@@ -240,7 +240,7 @@ router.delete('/eventos/:id/emails/:tipo', async (req, res) => {
    Devuelve el HTML de verdad, el mismo que saldría por SMTP, con datos de
    ejemplo. La plantilla puede venir en el body sin guardar, para ver los
    cambios mientras se escriben. */
-router.post('/eventos/:id/emails/previsualizar', async (req, res) => {
+router.post('/eventos/:id/emails/previsualizar', exige(PERMS_EDITAR), async (req, res) => {
   const tipo = String(req.body?.tipo || 'personalizado');
   if (!IDS_TIPOS.includes(tipo)) return res.status(400).json({ error: 'Tipo de correo desconocido.' });
   try {
@@ -263,7 +263,7 @@ router.post('/eventos/:id/emails/previsualizar', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-router.get('/eventos/:id/emails/diagnostico', async (req, res) => {
+router.get('/eventos/:id/emails/diagnostico', exige(PERMS_EDITAR), async (req, res) => {
   try {
     await cargarEvento(req.params.id, req.user.id);
     const base = diagnosticoProveedor();
@@ -300,7 +300,7 @@ router.get('/eventos/:id/emails/diagnostico', async (req, res) => {
    escribirle a toda la lista en nombre del organizador. */
 const PERMS_SMTP = ['editar_evento'];
 
-router.get('/eventos/:id/emails/smtp', async (req, res) => {
+router.get('/eventos/:id/emails/smtp', exige(PERMS_SMTP), async (req, res) => {
   try {
     await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
     const estado = await smtpEvento.verConfig(req.params.id);
@@ -308,7 +308,7 @@ router.get('/eventos/:id/emails/smtp', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-router.put('/eventos/:id/emails/smtp', async (req, res) => {
+router.put('/eventos/:id/emails/smtp', exige(PERMS_SMTP), async (req, res) => {
   try {
     await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
     const r = await smtpEvento.guardar(req.params.id, req.body || {}, req.user.id);
@@ -327,14 +327,14 @@ router.put('/eventos/:id/emails/smtp', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-router.post('/eventos/:id/emails/smtp/probar', async (req, res) => {
+router.post('/eventos/:id/emails/smtp/probar', exige(PERMS_SMTP), async (req, res) => {
   try {
     await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
     res.json(await smtpEvento.verificar(req.params.id));
   } catch (e) { fallo(res, e); }
 });
 
-router.delete('/eventos/:id/emails/smtp', async (req, res) => {
+router.delete('/eventos/:id/emails/smtp', exige(PERMS_SMTP), async (req, res) => {
   try {
     await cargarEvento(req.params.id, req.user.id, PERMS_SMTP);
     const r = await smtpEvento.borrar(req.params.id);
@@ -344,7 +344,7 @@ router.delete('/eventos/:id/emails/smtp', async (req, res) => {
 });
 
 /* Últimos envíos: para ver si un asistente recibió su boleta y por qué no. */
-router.get('/eventos/:id/emails/envios', async (req, res) => {
+router.get('/eventos/:id/emails/envios', exige(PERMS_ENVIAR), async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 100, 300);
   try {
     const evento = await cargarEvento(req.params.id, req.user.id, PERMS_ENVIAR);
@@ -387,7 +387,7 @@ router.post('/eventos/:id/emails/cola/reintentar', exige(PERMS_ENVIAR), async (r
 
 /* ─────────── envíos ─────────── */
 
-router.post('/eventos/:id/emails/prueba', async (req, res) => {
+router.post('/eventos/:id/emails/prueba', exige(PERMS_EDITAR), async (req, res) => {
   const tipo = String(req.body?.tipo || 'personalizado');
   if (!IDS_TIPOS.includes(tipo)) return res.status(400).json({ error: 'Tipo de correo desconocido.' });
   try {
@@ -416,7 +416,7 @@ router.post('/eventos/:id/emails/prueba', async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
-router.post('/eventos/:id/emails/enviar', async (req, res) => {
+router.post('/eventos/:id/emails/enviar', exige(PERMS_ENVIAR), async (req, res) => {
   const tipo = String(req.body?.tipo || 'personalizado');
   const audiencia = String(req.body?.audiencia || 'todos');
   if (!IDS_TIPOS.includes(tipo)) return res.status(400).json({ error: 'Tipo de correo desconocido.' });

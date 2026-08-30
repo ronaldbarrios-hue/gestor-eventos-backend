@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -7,13 +8,15 @@ const router = express.Router();
 router.use(verifySupabaseJWT);
 
 /* Owner o miembro con permiso 'ver_analytics'. */
+const PERMS_ANALYTICS = ['ver_analytics'];
+
 function assertOwner(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['ver_analytics'], 'id, owner_id');
+  return assertPermiso(eventoId, userId, PERMS_ANALYTICS, 'id, owner_id');
 }
 
 /* GET /eventos/:eventoId/analytics — métricas agregadas del evento.
    Query: ?dias=30 (default). */
-router.get('/:eventoId/analytics', async (req, res) => {
+router.get('/:eventoId/analytics', exige(PERMS_ANALYTICS), async (req, res) => {
   const { eventoId } = req.params;
   const dias = Math.min(Number(req.query.dias || 30), 365);
 

@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion, publica } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const router = express.Router();
@@ -14,7 +15,7 @@ async function esOwner(eventoId, userId) {
 }
 
 /* GET /eventos/:id/promociones — listar (owner) */
-router.get('/eventos/:id/promociones', verifySupabaseJWT, async (req, res) => {
+router.get('/eventos/:id/promociones', verifySupabaseJWT, sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   if (!(await esOwner(req.params.id, req.user.id))) return res.status(403).json({ error: 'No autorizado.' });
   const { data, error } = await supabase.from('promociones')
     .select('*').eq('evento_id', req.params.id).order('created_at', { ascending: false });
@@ -23,7 +24,7 @@ router.get('/eventos/:id/promociones', verifySupabaseJWT, async (req, res) => {
 });
 
 /* POST /eventos/:id/promociones — crear */
-router.post('/eventos/:id/promociones', verifySupabaseJWT, async (req, res) => {
+router.post('/eventos/:id/promociones', verifySupabaseJWT, sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   if (!(await esOwner(req.params.id, req.user.id))) return res.status(403).json({ error: 'No autorizado.' });
   const { codigo, descripcion, tipo, valor, ticket_id, min_cantidad, limite_usos, vigente_desde, vigente_hasta } = req.body || {};
   if (!codigo?.trim()) return res.status(400).json({ error: 'codigo requerido.' });
@@ -51,7 +52,7 @@ router.post('/eventos/:id/promociones', verifySupabaseJWT, async (req, res) => {
 });
 
 /* PATCH /eventos/:id/promociones/:pid — editar / activar / desactivar */
-router.patch('/eventos/:id/promociones/:pid', verifySupabaseJWT, async (req, res) => {
+router.patch('/eventos/:id/promociones/:pid', verifySupabaseJWT, sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   if (!(await esOwner(req.params.id, req.user.id))) return res.status(403).json({ error: 'No autorizado.' });
   const permitidos = ['descripcion', 'tipo', 'valor', 'ticket_id', 'min_cantidad', 'limite_usos', 'vigente_desde', 'vigente_hasta', 'activo'];
   const updates = {};
@@ -63,7 +64,7 @@ router.patch('/eventos/:id/promociones/:pid', verifySupabaseJWT, async (req, res
 });
 
 /* DELETE /eventos/:id/promociones/:pid */
-router.delete('/eventos/:id/promociones/:pid', verifySupabaseJWT, async (req, res) => {
+router.delete('/eventos/:id/promociones/:pid', verifySupabaseJWT, sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
   if (!(await esOwner(req.params.id, req.user.id))) return res.status(403).json({ error: 'No autorizado.' });
   const { error } = await supabase.from('promociones').delete().eq('id', req.params.pid).eq('evento_id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
@@ -72,7 +73,7 @@ router.delete('/eventos/:id/promociones/:pid', verifySupabaseJWT, async (req, re
 
 /* POST /eventos/publicos/slug/:slug/promocion/validar — checkout público
    body: { codigo, ticket_id, cantidad } → { valida, descuento, tipo, valor } */
-router.post('/eventos/publicos/slug/:slug/promocion/validar', async (req, res) => {
+router.post('/eventos/publicos/slug/:slug/promocion/validar', publica('Validar un código de descuento pasa ANTES de comprar, y comprar no pide cuenta.'), async (req, res) => {
   const { codigo, ticket_id, cantidad } = req.body || {};
   if (!codigo?.trim()) return res.status(400).json({ error: 'codigo requerido.' });
 

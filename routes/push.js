@@ -12,6 +12,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificarVarios } = require('../lib/notificar.js');
 
+const { sesion, publica } = require('../core/permisos');
 const router = express.Router();
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY;
@@ -22,12 +23,12 @@ if (VAPID_PUBLIC && VAPID_PRIVATE) {
   webpush.setVapidDetails(VAPID_CONTACT, VAPID_PUBLIC, VAPID_PRIVATE);
 }
 
-router.get('/push/vapid-key', (_req, res) => {
+router.get('/push/vapid-key', publica('La clave PÚBLICA de push: el navegador la necesita para suscribirse, y es pública por definición.'), (_req, res) => {
   if (!VAPID_PUBLIC) return res.status(503).json({ error: 'Web push no configurado en el server.' });
   res.json({ key: VAPID_PUBLIC });
 });
 
-router.post('/me/push/subscribe', verifySupabaseJWT, async (req, res) => {
+router.post('/me/push/subscribe', verifySupabaseJWT, sesion("La suscripción de push de SU navegador, identificada por su endpoint."), async (req, res) => {
   const { endpoint, keys, user_agent } = req.body || {};
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'Subscription incompleta.' });
@@ -49,14 +50,14 @@ router.post('/me/push/subscribe', verifySupabaseJWT, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete('/me/push/unsubscribe', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/push/unsubscribe', verifySupabaseJWT, sesion("La suscripción de push de SU navegador, identificada por su endpoint."), async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'endpoint requerido.' });
   await supabase.from('push_subscriptions').delete().eq('user_id', req.user.id).eq('endpoint', endpoint);
   res.json({ ok: true });
 });
 
-router.post('/me/push/test', verifySupabaseJWT, async (req, res) => {
+router.post('/me/push/test', verifySupabaseJWT, sesion("La suscripción de push de SU navegador, identificada por su endpoint."), async (req, res) => {
   if (!VAPID_PUBLIC) return res.status(503).json({ error: 'Web push no configurado.' });
 
   const { data: subs } = await supabase
@@ -91,7 +92,7 @@ router.post('/me/push/test', verifySupabaseJWT, async (req, res) => {
    el anuncio se guarda y se crea una notificación in-app por destinatario —
    ése es el canal que no depende de claves ni de permisos del navegador. El
    push se manda además, si se puede. */
-router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, async (req, res) => {
+router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, sesion("Sólo el dueño del evento puede lanzar un aviso a todo el mundo; se comprueba contra owner_id."), async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, mensaje, url } = req.body || {};
   if (!titulo?.trim() || !mensaje?.trim()) return res.status(400).json({ error: 'Título y mensaje son requeridos.' });
@@ -168,7 +169,7 @@ router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, async (req, 
 });
 
 /* GET /eventos/:id/anuncios — lo que ya se anunció. */
-router.get('/eventos/:eventoId/anuncios', verifySupabaseJWT, async (req, res) => {
+router.get('/eventos/:eventoId/anuncios', verifySupabaseJWT, sesion("Comprueba a mano que quien pide es el dueño del evento, o un miembro activo de su equipo."), async (req, res) => {
   const { eventoId } = req.params;
   const { data: ev } = await supabase
     .from('eventos').select('id, owner_id').eq('id', eventoId).maybeSingle();

@@ -14,6 +14,7 @@ const { checkoutUrl, verificarEvento } = require('../lib/wompi.js');
 const { confirmarTicketPagado } = require('../lib/confirmarTicket.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 
+const { sesion, publica } = require('../core/permisos');
 const router = express.Router();
 
 function publicBaseUrl() { return (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0]; }
@@ -24,7 +25,7 @@ function generarCodigo() {
 }
 
 /* ── Conectar / desconectar (organizador) ── */
-router.post('/me/wompi/conectar', verifySupabaseJWT, async (req, res) => {
+router.post('/me/wompi/conectar', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { public_key, private_key, events_secret, integrity_secret } = req.body || {};
   if (!public_key || !/^pub_(test|prod)_/.test(public_key)) return res.status(400).json({ error: 'Llave pública de Wompi inválida (debe empezar por pub_test_ o pub_prod_).' });
   if (!integrity_secret) return res.status(400).json({ error: 'Falta el secreto de integridad.' });
@@ -40,7 +41,7 @@ router.post('/me/wompi/conectar', verifySupabaseJWT, async (req, res) => {
   res.json({ profile: data });
 });
 
-router.delete('/me/wompi', verifySupabaseJWT, async (req, res) => {
+router.delete('/me/wompi', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { error } = await supabase.from('profiles').update({
     wompi_public_key: null, wompi_private_key: null, wompi_events_secret: null,
     wompi_integrity_secret: null, wompi_connected_at: null,
@@ -50,13 +51,13 @@ router.delete('/me/wompi', verifySupabaseJWT, async (req, res) => {
 });
 
 /* Estado (para la UI): ¿el organizador tiene Wompi conectado? */
-router.get('/me/wompi', verifySupabaseJWT, async (req, res) => {
+router.get('/me/wompi', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {
   const { data } = await supabase.from('profiles').select('wompi_public_key, wompi_connected_at').eq('id', req.user.id).maybeSingle();
   res.json({ conectado: Boolean(data?.wompi_public_key), public_key: data?.wompi_public_key || null, connected_at: data?.wompi_connected_at || null });
 });
 
 /* ── Comprar una boleta con Wompi ── */
-router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptional, async (req, res) => {
+router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptional, publica('La compra se hace sin cuenta: es el punto de vender entradas a quien llega desde fuera. La identidad viaja en el formulario, no en una sesión.'), async (req, res) => {
   const { slug } = req.params;
   const { ticket_type_id, email, nombre, telefono } = req.body || {};
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona un tipo de boleta.' });
@@ -147,7 +148,7 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
 });
 
 /* ── Webhook de Wompi (Events) ── */
-router.post('/webhooks/wompi', async (req, res) => {
+router.post('/webhooks/wompi', publica('Aviso de la pasarela, que llega desde sus servidores y no de un navegador. Se autentica con la firma del proveedor, no con sesión.'), async (req, res) => {
   res.status(200).json({ received: true });   // Wompi solo requiere 200
   try {
     const trx = req.body?.data?.transaction;

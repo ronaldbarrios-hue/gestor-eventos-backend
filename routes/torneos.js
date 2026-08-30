@@ -2,11 +2,19 @@ const express = require('express');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { exige, sesion } = require('../core/permisos');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
 const FORMATOS_VALIDOS = ['eliminacion', 'liga', 'grupos_eliminacion'];
+
+/* Las mismas listas que ya comprobaban los helpers de abajo, ahora también
+   declaradas en la ruta. `exige` las verifica antes del handler y el helper
+   las vuelve a verificar dentro: es el patrón que ya usa emails.js, y la
+   repetición es barata al lado de una ruta cuyo permiso no se ve. */
+const PERMS_TORNEO_CONFIG = ['editar_evento'];
+const PERMS_TORNEO        = ['gestionar_torneo', 'editar_evento'];
 
 function assertOwner(eventoId, userId) {
   return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
@@ -23,7 +31,7 @@ function assertGestionaTorneo(eventoId, userId) {
 
 /* GET /eventos/:eventoId/torneos — lista de torneos del evento (metadatos +
    cuántos equipos tiene cada uno, para el selector). */
-router.get('/:eventoId/torneos', async (req, res) => {
+router.get('/:eventoId/torneos', sesion('Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel.'), async (req, res) => {
   const { eventoId } = req.params;
   const { data: torneos, error } = await supabase
     .from('torneos').select('*').eq('evento_id', eventoId)
@@ -52,7 +60,7 @@ async function cargarTorneo(torneo) {
 }
 
 /* GET /eventos/:eventoId/torneos/:torneoId — un torneo con equipos y partidos. */
-router.get('/:eventoId/torneos/:torneoId', async (req, res) => {
+router.get('/:eventoId/torneos/:torneoId', sesion('Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel.'), async (req, res) => {
   const { eventoId, torneoId } = req.params;
   const { data: torneo } = await supabase
     .from('torneos').select('*').eq('id', torneoId).eq('evento_id', eventoId).maybeSingle();
@@ -106,7 +114,7 @@ async function validarPadre(eventoId, categoriaId, padreId) {
 /* GET /eventos/:eventoId/torneo-categorias — el árbol plano.
    Se devuelve plano y no anidado a propósito: el panel y la página pública lo
    arman de formas distintas, y una lista con `padre_id` sirve para las dos. */
-router.get('/:eventoId/torneo-categorias', async (req, res) => {
+router.get('/:eventoId/torneo-categorias', exige(PERMS_TORNEO_CONFIG), async (req, res) => {
   const { eventoId } = req.params;
   const { data, error } = await supabase
     .from('torneo_categorias')
@@ -120,7 +128,7 @@ router.get('/:eventoId/torneo-categorias', async (req, res) => {
 
 /* POST /eventos/:eventoId/torneo-categorias — crear una rama.
    Body: { nombre, padre_id? } */
-router.post('/:eventoId/torneo-categorias', async (req, res) => {
+router.post('/:eventoId/torneo-categorias', exige(PERMS_TORNEO_CONFIG), async (req, res) => {
   const { eventoId } = req.params;
   const nombre = String(req.body?.nombre || '').trim();
   const padre_id = req.body?.padre_id || null;
@@ -155,7 +163,7 @@ router.post('/:eventoId/torneo-categorias', async (req, res) => {
 });
 
 /* PATCH /eventos/:eventoId/torneo-categorias/:id — renombrar o mover. */
-router.patch('/:eventoId/torneo-categorias/:id', async (req, res) => {
+router.patch('/:eventoId/torneo-categorias/:id', exige(PERMS_TORNEO_CONFIG), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -191,7 +199,7 @@ router.patch('/:eventoId/torneo-categorias/:id', async (req, res) => {
    Se lleva las ramas hijas (cascade en la migración), pero NINGÚN torneo: los
    que colgaban de aquí quedan sin clasificar y se siguen viendo sueltos. Se
    dice cuántos son para que el aviso del panel pueda ser concreto. */
-router.delete('/:eventoId/torneo-categorias/:id', async (req, res) => {
+router.delete('/:eventoId/torneo-categorias/:id', exige(PERMS_TORNEO_CONFIG), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -210,7 +218,7 @@ router.delete('/:eventoId/torneo-categorias/:id', async (req, res) => {
 });
 
 /* GET /eventos/:eventoId/torneo — RETROCOMPAT: primer torneo del evento. */
-router.get('/:eventoId/torneo', async (req, res) => {
+router.get('/:eventoId/torneo', exige(PERMS_TORNEO_CONFIG), async (req, res) => {
   const { eventoId } = req.params;
   const { data: torneo } = await supabase
     .from('torneos').select('*').eq('evento_id', eventoId)
@@ -222,7 +230,7 @@ router.get('/:eventoId/torneo', async (req, res) => {
 
 /* POST /eventos/:eventoId/torneo — crear UN torneo (se pueden crear varios).
    Body: { nombre, formato, disciplina?, num_grupos?, avanzan_por_grupo? } */
-router.post('/:eventoId/torneo', async (req, res) => {
+router.post('/:eventoId/torneo', exige(PERMS_TORNEO_CONFIG), async (req, res) => {
   const { eventoId } = req.params;
   const { nombre, formato, disciplina, num_grupos, avanzan_por_grupo, categoria_id } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del torneo es requerido.' });
@@ -267,7 +275,7 @@ router.post('/:eventoId/torneo', async (req, res) => {
    partidos, y ya de paso renombrarlo. El formato y los grupos NO se tocan
    aquí: cambiarlos con el fixture generado dejaría partidos que no
    corresponden a ningún formato. Para eso se borra y se rehace. */
-router.patch('/:eventoId/torneo/:torneoId', async (req, res) => {
+router.patch('/:eventoId/torneo/:torneoId', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId } = req.params;
   try {
     await assertGestionaTorneo(eventoId, req.user.id);
@@ -305,7 +313,7 @@ router.patch('/:eventoId/torneo/:torneoId', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/torneo/:torneoId — borrar el torneo completo (reinicia todo) */
-router.delete('/:eventoId/torneo/:torneoId', async (req, res) => {
+router.delete('/:eventoId/torneo/:torneoId', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -319,7 +327,7 @@ router.delete('/:eventoId/torneo/:torneoId', async (req, res) => {
 
 /* ────────────── Equipos ────────────── */
 
-router.get('/:eventoId/torneo/:torneoId/campos-disponibles', async (req, res) => {
+router.get('/:eventoId/torneo/:torneoId/campos-disponibles', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertGestionaTorneo(eventoId, req.user.id);
@@ -340,7 +348,7 @@ router.get('/:eventoId/torneo/:torneoId/campos-disponibles', async (req, res) =>
    Además de nombre/foto, guarda el contacto (email + user_id si tiene
    cuenta) de cada boleta como "capitán" del equipo — se usa después para
    avisarle automáticamente cuándo juega su equipo. */
-router.post('/:eventoId/torneo/:torneoId/importar-equipos', async (req, res) => {
+router.post('/:eventoId/torneo/:torneoId/importar-equipos', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId } = req.params;
   const { campo_nombre_id, campo_foto_id } = req.body;
   if (!campo_nombre_id) return res.status(400).json({ error: 'Selecciona qué campo usar como nombre del equipo.' });
@@ -393,7 +401,7 @@ router.post('/:eventoId/torneo/:torneoId/importar-equipos', async (req, res) => 
 });
 
 /* POST /eventos/:eventoId/torneo/:torneoId/equipos — registrar un equipo manual */
-router.post('/:eventoId/torneo/:torneoId/equipos', async (req, res) => {
+router.post('/:eventoId/torneo/:torneoId/equipos', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId } = req.params;
   const { nombre, foto_url, contacto_email } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del equipo es requerido.' });
@@ -423,7 +431,7 @@ router.post('/:eventoId/torneo/:torneoId/equipos', async (req, res) => {
 });
 
 /* DELETE /eventos/:eventoId/torneo/:torneoId/equipos/:id */
-router.delete('/:eventoId/torneo/:torneoId/equipos/:id', async (req, res) => {
+router.delete('/:eventoId/torneo/:torneoId/equipos/:id', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId, id } = req.params;
   try {
     await assertGestionaTorneo(eventoId, req.user.id);
@@ -508,7 +516,7 @@ async function generarBracketEliminacion(torneoId, equipoIds, fase) {
    - 'grupos_eliminacion': reparte equipos en N grupos y arma todos-contra-
      todos DENTRO de cada grupo (fase 'grupos'). La eliminación se genera
      después, con /cerrar-grupos, una vez jugados los partidos de grupo. */
-router.post('/:eventoId/torneo/:torneoId/generar', async (req, res) => {
+router.post('/:eventoId/torneo/:torneoId/generar', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId } = req.params;
   try {
     await assertGestionaTorneo(eventoId, req.user.id);
@@ -581,7 +589,7 @@ router.post('/:eventoId/torneo/:torneoId/generar', async (req, res) => {
    de grupos (solo formato grupos_eliminacion) y genera el bracket de
    eliminación con los clasificados de cada grupo. Requiere que todos los
    partidos de la fase de grupos ya estén jugados. */
-router.post('/:eventoId/torneo/:torneoId/cerrar-grupos', async (req, res) => {
+router.post('/:eventoId/torneo/:torneoId/cerrar-grupos', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId } = req.params;
   try {
     await assertGestionaTorneo(eventoId, req.user.id);
@@ -667,7 +675,7 @@ async function avanzarGanador(partidoId, ganadorId) {
 
 /* ────────────── Resultados ────────────── */
 
-router.patch('/:eventoId/torneo/:torneoId/partidos/:id', async (req, res) => {
+router.patch('/:eventoId/torneo/:torneoId/partidos/:id', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId, id } = req.params;
   const { marcador_a, marcador_b, cancha, fecha_hora } = req.body;
 
@@ -758,7 +766,7 @@ async function notificarHorarioPartido(partido) {
 /* GET /eventos/:eventoId/torneo/:torneoId/posiciones — tabla de posiciones.
    Para formato liga: una sola tabla. Para grupos_eliminacion en fase
    'grupos': una tabla POR GRUPO. */
-router.get('/:eventoId/torneo/:torneoId/posiciones', async (req, res) => {
+router.get('/:eventoId/torneo/:torneoId/posiciones', sesion('Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel.'), async (req, res) => {
   const { torneoId } = req.params;
 
   const { data: torneo } = await supabase.from('torneos').select('formato, fase_actual').eq('id', torneoId).maybeSingle();

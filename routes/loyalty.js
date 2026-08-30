@@ -11,6 +11,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { BADGES } = require('../lib/gamificacion.js');
 
+const { sesion } = require('../core/permisos');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -24,7 +25,7 @@ async function perfilesPorIds(ids) {
 }
 
 /* ─────────── CLIENTE ─────────── */
-router.get('/me/loyalty/cliente', async (req, res) => {
+router.get('/me/loyalty/cliente', sesion("Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."), async (req, res) => {
   const { data: balances, error } = await supabase
     .from('puntos_balance')
     .select('organizador_id, puntos')
@@ -72,7 +73,7 @@ router.get('/me/loyalty/cliente', async (req, res) => {
 });
 
 /* ─────────── EMPLEADO ─────────── */
-router.get('/me/loyalty/empleado', async (req, res) => {
+router.get('/me/loyalty/empleado', sesion("Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."), async (req, res) => {
   const { data: balances, error } = await supabase
     .from('puntos_balance')
     .select('organizador_id, puntos')
@@ -140,7 +141,7 @@ router.get('/me/loyalty/empleado', async (req, res) => {
 });
 
 /* ─────────── CANJE ─────────── */
-router.post('/me/loyalty/canjear', async (req, res) => {
+router.post('/me/loyalty/canjear', sesion("Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."), async (req, res) => {
   const { recompensa_id } = req.body;
   if (!recompensa_id) return res.status(400).json({ error: 'recompensa_id requerido.' });
 
@@ -154,7 +155,7 @@ router.post('/me/loyalty/canjear', async (req, res) => {
 });
 
 /* ─────────── BADGES (capa plataforma) ─────────── */
-router.get('/me/loyalty/badges', async (req, res) => {
+router.get('/me/loyalty/badges', sesion("Sus puntos y sus insignias. Cuelgan del usuario, no de un evento."), async (req, res) => {
   const { data: ganadas } = await supabase
     .from('user_badges').select('badge_slug, earned_at').eq('user_id', req.user.id);
   const set = new Set((ganadas || []).map(b => b.badge_slug));
@@ -170,7 +171,7 @@ router.get('/me/loyalty/badges', async (req, res) => {
 /* ─────────── RANKING EQUIPO POR EVENTO ───────────
    Visible para owner + miembros activos del evento. Suma points_log de
    audiencia 'empleado' filtrado por evento_id. */
-router.get('/eventos/:eventoId/ranking-equipo', async (req, res) => {
+router.get('/eventos/:eventoId/ranking-equipo', sesion("Comprueba a mano que quien pide es el dueño del evento, o un miembro activo de su equipo."), async (req, res) => {
   const { eventoId } = req.params;
 
   const { data: ev } = await supabase

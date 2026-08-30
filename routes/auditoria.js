@@ -6,12 +6,13 @@
    vacía con requierePro:true, así que la auditoría se veía como un evento sin
    actividad en vez de como una función bloqueada. */
 const express = require('express');
+const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-router.get('/:eventoId/auditoria', async (req, res) => {
+router.get('/:eventoId/auditoria', sesion("El registro de quién tocó qué lo ve sólo el dueño del evento."), async (req, res) => {
   const { eventoId } = req.params;
   const limit = Math.min(Number(req.query.limit) || 100, 300);
 

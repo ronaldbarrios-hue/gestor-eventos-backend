@@ -218,7 +218,101 @@ datos personales y **no puede quedarse fuera**.
    ⚠️ No se llama desde ninguna ruta todavía, a propósito: los datos siguen en
    Supabase y allí los disparadores hacen su trabajo.
 
-   Falta reescribir los **seed_\*** de `eventos` (canales de chat, roles,
-   page_json) y las cuatro funciones de aforo, que son de lectura y no tienen
-   trampa de concurrencia.
-5. ⏸ Una prueba que compare fila a fila las dos bases antes del corte.
+   ✅ **Los seed_\*** → `modules/eventos/semillas.js`. Los cuatro canales, los
+   diez roles con sus permisos exactos y los siete bloques de la página. Aquí
+   no había trampa de concurrencia —crear canales no compite con nadie—; lo que
+   se gana es que la decisión de producto se pueda leer, cambiar sin migración
+   y probar sin base. Los ids de los bloques son fijos (`sys_*`) y no
+   aleatorios: un embed exportado «de esta sección exacta» apunta a uno.
+
+   ✅ **Las cuatro de aforo** → `modules/aforo/consultas.js`. Siguen siendo SQL
+   y no JavaScript a propósito: sólo leen, y la razón por la que se hicieron en
+   la base sigue en pie —traerse las filas y sumarlas en el backend es lo que
+   hacía que a partir del movimiento 1.001 el aforo mintiera por lo bajo—. Lo
+   único que cambia es que el SQL vive donde se lee y se prueba.
+
+   Tres traducciones que no eran mecánicas, y las tres comprobadas contra
+   Postgres antes de darlas por buenas:
+   · `FILTER (WHERE …)` → `CASE WHEN`, igual que en las vistas.
+   · `array_agg(x ORDER BY y DESC)[1]` → `ROW_NUMBER()`. Es «el nombre más
+     reciente de la zona», y se probó con una zona renombrada, que es el caso
+     por el que existe.
+   · `to_timestamp(floor(epoch/n)*n)` → `FROM_UNIXTIME`. Comprobados los cuatro
+     bordes de la franja: caen al mismo lado.
+
+   ⚠️ **Y una trampa que apareció al traducir la última**: `UNIX_TIMESTAMP` usa
+   la zona de la SESIÓN de MySQL, no la del driver. `core/db/mysql.js` ponía
+   `timezone: 'Z'`, que es una opción de mysql2 y no toca la sesión. Como el
+   esquema guarda todo en UTC, una sesión con la zona del servidor —en cPanel
+   suele ser la del país— habría leído esas fechas como locales: el pico de
+   aforo de las 8 de la noche saldría a las 3 de la tarde y **nada fallaría de
+   forma visible**. Ahora cada conexión del pool hace `SET time_zone = '+00:00'`
+   y la zona sale en la comprobación de vida, junto al juego de caracteres, por
+   la misma razón: los dos fallan en silencio y con datos ya escritos.
+5. ✅ **La comparación entre las dos bases** → `scripts/comparar-bases.js`.
+   Es lo único que decide si el corte se hace.
+
+   Contar filas NO basta, y es la comprobación que todo el mundo hace: una
+   carga que trunca un texto a 255, que pierde los microsegundos de una fecha o
+   que convierte un `null` en cadena vacía deja EXACTAMENTE el mismo número de
+   filas. Se compara con una huella del contenido entero por fila, ordenada por
+   id, y sólo si difiere se buscan las columnas concretas (`--detalle`).
+
+   La parte difícil es la normalización, y tiene dos formas de salir mal:
+   normalizar de menos hace que cada fila salga distinta —los dos motores
+   escriben fechas y JSON de otra forma— y el informe no dice nada; normalizar
+   de más se come diferencias reales. Se igualan fechas, booleanos, el orden de
+   claves de un JSON y los arreglos. **No** se igualan los espacios al final,
+   las mayúsculas, ni `null` contra cadena vacía: distinguir «no contestó» de
+   «contestó vacío» es parte de lo que se vigila. Quince pruebas cubren las dos
+   direcciones.
+
+   Lee de los dos lados y no arregla nada. Si algo no cuadra, lo dice y para:
+   corregirlo es volver a correr la carga, porque una fila parcheada a mano
+   deja la duda de cuántas más habrá.
+
+## Lo que queda del paso 3
+
+El **script de carga de datos** es lo único de la fase 6 que sigue pendiente, y
+va después de que exista la base: mover los 829 campos con `timestamptz` a UTC
+y los 8 arreglos a JSON se escribe contra un esquema ya creado, no antes.
+
+## Correrlo de verdad encontro dos fallos que leyendolo no se veian
+
+Se ejecuto el generador contra produccion el 30 de agosto de 2026. Es de solo
+lectura, asi que correrlo no costaba nada — y ahi salieron dos cosas:
+
+1. **La nota de la omision se comia la coma.** Cuando una columna traia un
+   `DEFAULT` que no se sabia traducir, se anotaba al final de su linea:
+
+   ```
+     `id` CHAR(36) NOT NULL  -- omision en Postgres: gen_random_uuid(),
+     `session_id` CHAR(36) NOT NULL,
+   ```
+
+   En MySQL `--` llega hasta el fin de linea, asi que esa coma —la que separa
+   una columna de la siguiente— quedaba comentada y el `CREATE TABLE` no
+   compilaba. Ahora la nota va **delante**, en su propia linea.
+
+2. **La nota saltaba donde no habia nada que anotar.** `gen_random_uuid()` no
+   es una omision que no se supo traducir: es una que se descarta a proposito,
+   porque los UUID los genera el backend. Igual `nextval(...)`, que pasa a
+   `AUTO_INCREMENT`. Las dos se excluyen ahora, y con eso la nota deja de
+   aparecer en casi todas las tablas.
+
+Comprobado despues del arreglo: **ninguna** columna del esquema de hoy tiene un
+`DEFAULT` que el generador no sepa traducir. Cero. Las tablas salen limpias.
+
+### Y una cifra que ya no cuadra
+
+Arriba dice 829 columnas, medido el 29 de agosto. El 30 son **799**. La tabla
+de tipos de arriba sigue sirviendo para decidir, pero el recuento hay que
+volver a hacerlo el dia del corte, no fiarse de este.
+
+### Por que no hay un `003_esquema.sql` en el repositorio
+
+A proposito, y es lo mismo que dice la cabecera del generador: un volcado de
+hoy queda viejo en una semana y nadie se entera hasta que falta una columna en
+produccion. El artefacto que se mantiene es el generador; el `.sql` se saca
+corriendolo el dia que se cree la base, y se compara con `git diff` si se
+quiere ver que se movio.

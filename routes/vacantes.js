@@ -17,6 +17,7 @@ const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/
 const { assertPermiso } = require('../lib/acceso.js');
 const { notificar } = require('../lib/notificar.js');
 
+const { exige, sesion, publica } = require('../core/permisos');
 const router = express.Router();
 
 /* ══════════════════════════════════════════════════════════════════
@@ -47,7 +48,7 @@ const MODALIDADES_PUB = ['presencial', 'remoto', 'hibrido'];
 /* Catálogo de roles. Sin sesión devuelve solo los globales; con sesión
    añade los que el organizador creó para sí mismo.
    OJO: debe declararse ANTES que /vacantes/:id o ':id' se traga "roles". */
-router.get('/vacantes/roles', verifySupabaseJWTOptional, async (req, res) => {
+router.get('/vacantes/roles', verifySupabaseJWTOptional, publica('Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados.'), async (req, res) => {
   let query = supabase
     .from('catalogo_roles').select('id, nombre, slug, global, owner_id');
   query = req.user
@@ -60,7 +61,7 @@ router.get('/vacantes/roles', verifySupabaseJWTOptional, async (req, res) => {
 });
 
 /* Listado abierto. */
-router.get('/vacantes', verifySupabaseJWTOptional, async (req, res) => {
+router.get('/vacantes', verifySupabaseJWTOptional, publica('Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados.'), async (req, res) => {
   const { ciudad, rol_id, modalidad, pago_min, q } = req.query;
   let query = supabase.from('vacantes').select(SEL_VACANTE).eq('estado', 'abierta');
   if (ciudad)    query = query.ilike('ciudad', `%${ciudad}%`);
@@ -80,7 +81,7 @@ router.get('/vacantes', verifySupabaseJWTOptional, async (req, res) => {
 });
 
 /* Detalle. `mi_postulacion` solo tiene sentido con sesión. */
-router.get('/vacantes/:id', verifySupabaseJWTOptional, async (req, res) => {
+router.get('/vacantes/:id', verifySupabaseJWTOptional, publica('Bolsa de empleo abierta: una que exige registrarse para MIRAR no la encuentra nadie. Sólo se exponen vacantes abiertas de eventos publicados.'), async (req, res) => {
   const { data, error } = await supabase.from('vacantes').select(SEL_VACANTE).eq('id', req.params.id).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Vacante no encontrada.' });
@@ -102,6 +103,9 @@ router.get('/vacantes/:id', verifySupabaseJWTOptional, async (req, res) => {
 /* ══ A partir de aquí TODO exige sesión ══ */
 router.use(verifySupabaseJWT);
 
+/* La misma lista que ya comprueban los assertPermiso de abajo. */
+const PERMS_VACANTES = ['editar_evento'];
+
 const ETAPAS = ['postulado', 'revisado', 'entrevista', 'oferta', 'aceptado', 'rechazado'];
 const MODALIDADES = ['presencial', 'remoto', 'hibrido'];
 
@@ -120,7 +124,7 @@ const slugify = (s) => {
 
 /* ═══════════════════════ PERFIL DE TALENTO (candidato) ═══════════════════════ */
 
-router.get('/me/talento', async (req, res) => {
+router.get('/me/talento', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const { data, error } = await supabase
     .from('perfil_talento').select('*').eq('user_id', req.user.id).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
@@ -133,7 +137,7 @@ router.get('/me/talento', async (req, res) => {
 const CAMPOS_PERFIL = ['titular', 'bio', 'habilidades', 'experiencia', 'disponibilidad',
   'pais', 'portfolio_url', 'redes', 'cv_url', 'cv_nombre'];
 
-router.put('/me/talento', async (req, res) => {
+router.put('/me/talento', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const fila = { user_id: req.user.id, updated_at: new Date().toISOString() };
   for (const k of CAMPOS_PERFIL) if (req.body?.[k] !== undefined) fila[k] = req.body[k];
   const { data, error } = await supabase
@@ -142,7 +146,7 @@ router.put('/me/talento', async (req, res) => {
   res.json({ perfil: data });
 });
 
-router.post('/me/talento/publicar', async (req, res) => {
+router.post('/me/talento/publicar', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const publicado = req.body?.publicado !== false;
   const { data, error } = await supabase
     .from('perfil_talento').update({ publicado, updated_at: new Date().toISOString() })
@@ -155,7 +159,7 @@ router.post('/me/talento/publicar', async (req, res) => {
 /* Verificación de identidad (identidad + rostro). STUB v1: marca 'pendiente'.
    La integración con el proveedor KYC (p.ej. Truora) llega en un paso posterior;
    el webhook /webhooks/kyc confirmará 'verificado'. */
-router.post('/me/talento/verificacion', async (req, res) => {
+router.post('/me/talento/verificacion', sesion("Su perfil de talento: lo edita sólo su dueño."), async (req, res) => {
   const { data: existe } = await supabase.from('perfil_talento').select('user_id').eq('user_id', req.user.id).maybeSingle();
   if (!existe) return res.status(400).json({ error: 'Primero crea tu perfil de talento.' });
 
@@ -182,7 +186,7 @@ router.post('/me/talento/verificacion', async (req, res) => {
 
 /* ═══════════════════════ CATÁLOGO DE ROLES ═══════════════════════ */
 
-router.post('/vacantes/roles', async (req, res) => {
+router.post('/vacantes/roles', sesion("Crea un rol de catálogo propio, anotado con su owner_id."), async (req, res) => {
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'El nombre del rol es requerido.' });
   const { data, error } = await supabase
@@ -194,7 +198,7 @@ router.post('/vacantes/roles', async (req, res) => {
 
 /* ═══════════════════════ EXPLORAR (candidato) ═══════════════════════ */
 
-router.post('/vacantes/:id/postular', async (req, res) => {
+router.post('/vacantes/:id/postular', sesion("Se postula uno mismo: la postulación se firma con req.user.id y no se puede postular a otro."), async (req, res) => {
   const { id } = req.params;
   try {
     const { data: perfil } = await supabase.from('perfil_talento').select('*').eq('user_id', req.user.id).maybeSingle();
@@ -229,7 +233,7 @@ router.post('/vacantes/:id/postular', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.get('/me/postulaciones', async (req, res) => {
+router.get('/me/postulaciones', sesion("A qué vacantes se presentó esta persona."), async (req, res) => {
   const { data, error } = await supabase.from('postulaciones')
     .select(`id, etapa, mensaje, entrevista, monto_contrato, created_at,
       vacante:vacantes!vacante_id(id, titulo, pago_monto, pago_moneda, estado,
@@ -239,7 +243,7 @@ router.get('/me/postulaciones', async (req, res) => {
   res.json({ postulaciones: data || [] });
 });
 
-router.delete('/me/postulaciones/:id', async (req, res) => {
+router.delete('/me/postulaciones/:id', sesion("A qué vacantes se presentó esta persona."), async (req, res) => {
   const { data: p } = await supabase.from('postulaciones').select('id, etapa, user_id').eq('id', req.params.id).maybeSingle();
   if (!p || p.user_id !== req.user.id) return res.status(404).json({ error: 'Postulación no encontrada.' });
   if (p.etapa === 'aceptado') return res.status(400).json({ error: 'No puedes retirar una postulación ya aceptada.' });
@@ -249,7 +253,7 @@ router.delete('/me/postulaciones/:id', async (req, res) => {
 });
 
 /* Reseña del candidato hacia el organizador (pública en la cuenta organizadora). */
-router.post('/me/postulaciones/:id/resena', async (req, res) => {
+router.post('/me/postulaciones/:id/resena', sesion("A qué vacantes se presentó esta persona."), async (req, res) => {
   const estrellas = Number(req.body?.estrellas);
   if (!(estrellas >= 1 && estrellas <= 5)) return res.status(400).json({ error: 'Estrellas entre 1 y 5.' });
   const { data: p } = await supabase.from('postulaciones')
@@ -269,12 +273,17 @@ router.post('/me/postulaciones/:id/resena', async (req, res) => {
 });
 
 /* Perfil público de talento + reputación (para organizadores buscando). */
-router.get('/perfil-talento/:userId', async (req, res) => {
+router.get('/perfil-talento/:userId', sesion("Perfil de talento ya publicado. El borrador sin publicar sólo lo ve su dueño."), async (req, res) => {
   const { userId } = req.params;
   const { data: perfil } = await supabase.from('perfil_talento')
     .select('user_id, titular, bio, habilidades, experiencia, disponibilidad, pais, portfolio_url, cv_url, cv_nombre, publicado, verificacion_estado')
     .eq('user_id', userId).maybeSingle();
-  if (!perfil) return res.status(404).json({ error: 'Perfil no encontrado.' });
+  /* Un perfil sin publicar es un borrador: lo ve su dueño y nadie más. Antes
+     bastaba con tener sesión y saber el userId para leer bio, CV y
+     disponibilidad de alguien que aún no se había publicado. */
+  if (!perfil || (!perfil.publicado && perfil.user_id !== req.user.id)) {
+    return res.status(404).json({ error: 'Perfil no encontrado.' });
+  }
   /* ciudad y foto (avatar_url) son de la persona, no de esta faceta: se leen
      de profiles, no de perfil_talento. */
   const { data: prof } = await supabase.from('profiles').select('nombre, avatar_url, ciudad').eq('id', userId).maybeSingle();
@@ -290,7 +299,7 @@ router.get('/perfil-talento/:userId', async (req, res) => {
 });
 
 /* Reputación pública del organizador (reseñas que le dejaron los trabajadores). */
-router.get('/me/organizador/reputacion', async (req, res) => {
+router.get('/me/organizador/reputacion', sesion("La reputación del propio organizador, hecha de reseñas que le dejaron."), async (req, res) => {
   const { data: resenas } = await supabase.from('talento_resenas')
     .select('estrellas, comentario, created_at, evento:eventos!evento_id(titulo), de:profiles!de_user_id(nombre, avatar_url)')
     .eq('para_user_id', req.user.id).eq('rol_de', 'trabajador')
@@ -308,7 +317,7 @@ const CAMPOS_VACANTE = ['titulo', 'descripcion', 'rol_id', 'rol_texto', 'event_r
   'preguntas', 'pago_monto', 'pago_moneda', 'pago_periodo', 'ciudad', 'modalidad',
   'fecha_inicio', 'fecha_fin', 'cupos', 'estado'];
 
-router.get('/eventos/:eventoId/vacantes', async (req, res) => {
+router.get('/eventos/:eventoId/vacantes', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -329,7 +338,7 @@ router.get('/eventos/:eventoId/vacantes', async (req, res) => {
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
-router.post('/eventos/:eventoId/vacantes', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId } = req.params;
   const titulo = (req.body?.titulo || '').trim();
   if (!titulo) return res.status(400).json({ error: 'El título de la vacante es requerido.' });
@@ -350,7 +359,7 @@ router.post('/eventos/:eventoId/vacantes', async (req, res) => {
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
-router.patch('/eventos/:eventoId/vacantes/:id', async (req, res) => {
+router.patch('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -365,7 +374,7 @@ router.patch('/eventos/:eventoId/vacantes/:id', async (req, res) => {
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }
 });
 
-router.delete('/eventos/:eventoId/vacantes/:id', async (req, res) => {
+router.delete('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -376,7 +385,7 @@ router.delete('/eventos/:eventoId/vacantes/:id', async (req, res) => {
 });
 
 /* Pipeline: postulaciones de una vacante, con snapshot y datos básicos del candidato. */
-router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', async (req, res) => {
+router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, vid } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -391,7 +400,7 @@ router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', async (req, res) =>
 
 /* Mover de etapa. Al ACEPTAR: fija monto_contrato, mete al candidato al equipo
    con su rol, y registra la comisión (pendiente de cobro). */
-router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', async (req, res) => {
+router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, vid, pid } = req.params;
   const etapa = req.body?.etapa;
   if (!ETAPAS.includes(etapa)) return res.status(400).json({ error: 'Etapa inválida.' });
@@ -454,7 +463,7 @@ router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', async (req, 
 
 /* Agendar entrevista. STUB v1: guarda los datos (+ enlace manual) y pasa a 'entrevista'.
    La sincronización con Google Calendar se conecta en un paso posterior. */
-router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, vid, pid } = req.params;
   try {
     await assertPermiso(eventoId, req.user.id, ['editar_evento']);
@@ -493,7 +502,7 @@ router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', as
 });
 
 /* Reseña del organizador hacia el trabajador (pública en el perfil del trabajador). */
-router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, vid, pid } = req.params;
   const estrellas = Number(req.body?.estrellas);
   if (!(estrellas >= 1 && estrellas <= 5)) return res.status(400).json({ error: 'Estrellas entre 1 y 5.' });
@@ -516,7 +525,7 @@ router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', async 
 });
 
 /* Buscar talento publicado (para el gancho "consíguelo con nosotros"). */
-router.get('/eventos/:eventoId/talento', async (req, res) => {
+router.get('/eventos/:eventoId/talento', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId } = req.params;
   const { q, ciudad } = req.query;
   try {
@@ -541,7 +550,7 @@ router.get('/eventos/:eventoId/talento', async (req, res) => {
 
 /* Destacar una vacante (micropago). STUB v1: registra el cobro 'pendiente';
    el destacado se activa cuando el pago se confirme (webhook de pagos). */
-router.post('/eventos/:eventoId/vacantes/:id/destacar', async (req, res) => {
+router.post('/eventos/:eventoId/vacantes/:id/destacar', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);

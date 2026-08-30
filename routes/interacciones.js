@@ -1,4 +1,5 @@
 const express = require('express');
+const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
@@ -21,13 +22,16 @@ const router = express.Router();
 router.use(verifySupabaseJWT);
 
 /* Gestionar el catálogo requiere editar el evento. */
+const PERMS_GESTION = ['editar_evento'];
+const PERMS_ESCANEO = ['checkin', 'gestionar_clientes', 'editar_evento'];
+
 function assertGestion(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['editar_evento'], 'id, owner_id');
+  return assertPermiso(eventoId, userId, PERMS_GESTION, 'id, owner_id');
 }
 
 /* Escanear en un stand: lo hace el personal, mismo permiso que el check-in. */
 function assertEscaneo(eventoId, userId) {
-  return assertPermiso(eventoId, userId, ['checkin', 'gestionar_clientes', 'editar_evento'], 'id, owner_id');
+  return assertPermiso(eventoId, userId, PERMS_ESCANEO, 'id, owner_id');
 }
 
 const err = (res, e) => res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -35,7 +39,7 @@ const err = (res, e) => res.status(e.message === 'No autorizado.' ? 403 : 400).j
 /* ───────────── Catálogo de motivos ───────────── */
 
 /* GET /eventos/:eventoId/motivos */
-router.get('/:eventoId/motivos', async (req, res) => {
+router.get('/:eventoId/motivos', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertEscaneo(eventoId, req.user.id);
@@ -51,7 +55,7 @@ router.get('/:eventoId/motivos', async (req, res) => {
    Body: { motivos: [{ id?, nombre, tipo, puntos, descripcion?, color?, activo? }] }
    Los motivos borrados NO rompen el historial: ticket_interacciones guarda
    una copia del nombre en `motivo_texto` y su FK queda en null. */
-router.put('/:eventoId/motivos', async (req, res) => {
+router.put('/:eventoId/motivos', exige(PERMS_GESTION), async (req, res) => {
   const { eventoId } = req.params;
   const lista = Array.isArray(req.body.motivos) ? req.body.motivos : [];
   if (lista.length > 60) return res.status(400).json({ error: 'Máximo 60 motivos.' });
@@ -115,7 +119,7 @@ async function totalPuntos(ticketId) {
 /* POST /eventos/:eventoId/interacciones — registra un escaneo con motivo.
    Body: { qr_token | codigo, motivo_id?, puntos?, tipo?, nota?, lugar? }
    Sin motivo_id se puede mandar un registro suelto (puntos + nota). */
-router.post('/:eventoId/interacciones', async (req, res) => {
+router.post('/:eventoId/interacciones', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
   const { qr_token, codigo, motivo_id, nota, lugar } = req.body;
   if (!qr_token && !codigo) return res.status(400).json({ error: 'qr_token o codigo requerido.' });
@@ -192,7 +196,7 @@ router.post('/:eventoId/interacciones', async (req, res) => {
 
 /* GET /eventos/:eventoId/interacciones — historial del evento.
    Query: ?ticket_id= &limit= */
-router.get('/:eventoId/interacciones', async (req, res) => {
+router.get('/:eventoId/interacciones', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
   const limit = Math.min(Number(req.query.limit) || 100, 500);
   try {
@@ -211,7 +215,7 @@ router.get('/:eventoId/interacciones', async (req, res) => {
 
 /* GET /eventos/:eventoId/expositores/ranking — clasificación de expositores
    por puntos otorgados e interacciones registradas (gamificación por stand). */
-router.get('/:eventoId/expositores/ranking', async (req, res) => {
+router.get('/:eventoId/expositores/ranking', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertEscaneo(eventoId, req.user.id);
@@ -242,7 +246,7 @@ router.get('/:eventoId/expositores/ranking', async (req, res) => {
 
 /* DELETE /eventos/:eventoId/interacciones/:id — deshacer un registro
    (un escaneo equivocado no debe quedar pesando en el saldo). */
-router.delete('/:eventoId/interacciones/:id', async (req, res) => {
+router.delete('/:eventoId/interacciones/:id', exige(PERMS_GESTION), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
     await assertGestion(eventoId, req.user.id);
@@ -265,7 +269,7 @@ function codigoCanje() {
 /* POST /eventos/:eventoId/canje/saldo { qr_token | codigo }
    Escanea la escarapela y devuelve saldo + qué puede llevarse. Por POST y no
    por GET: el qr_token quedaría escrito en los logs de acceso del servidor. */
-router.post('/:eventoId/canje/saldo', async (req, res) => {
+router.post('/:eventoId/canje/saldo', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
   try {
     const ev = await assertEscaneo(eventoId, req.user.id);
@@ -284,7 +288,7 @@ router.post('/:eventoId/canje/saldo', async (req, res) => {
 
 /* POST /eventos/:eventoId/canje — entrega una recompensa contra la boleta.
    Body: { qr_token | codigo, recompensa_id } */
-router.post('/:eventoId/canje', async (req, res) => {
+router.post('/:eventoId/canje', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
   const { qr_token, codigo, recompensa_id } = req.body;
   if (!recompensa_id) return res.status(400).json({ error: 'recompensa_id requerido.' });

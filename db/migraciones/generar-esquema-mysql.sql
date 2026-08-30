@@ -173,17 +173,25 @@ sin_traduccion as (
 lineas as (
   select t,
          pos,
-         '  `' || k || '` '
+         /* Lo que no se supo traducir se deja escrito, pero DELANTE y en su
+            propia linea. Iba detras, al final de la linea de la columna, y
+            como `--` en MySQL llega hasta el fin de linea, se tragaba la coma
+            que separa una columna de la siguiente: el CREATE TABLE no
+            compilaba. Se vio al correrlo de verdad, no leyendo el SQL. */
+         case when def is not null
+               and pg_temp.omision_mysql(def, tipo) is null
+               and not serie
+               /* Estas dos NO son «no se supo»: se descartan a proposito
+                  —el backend genera sus propios UUID y las secuencias pasan
+                  a AUTO_INCREMENT—, asi que anotarlas era ruido en 60 tablas. */
+               and def not in ('gen_random_uuid()', 'uuid_generate_v4()')
+              then '  -- omision en Postgres: ' || replace(def, E'\n', ' ') || E'\n'
+              else '' end
+         || '  `' || k || '` '
          || pg_temp.tipo_mysql(t, k, tipo, udt, prec, escala, indexada)
          || case when obligatoria then ' NOT NULL' else ' NULL' end
          || coalesce(' DEFAULT ' || pg_temp.omision_mysql(def, tipo), '')
          || case when serie then ' AUTO_INCREMENT' else '' end
-         /* Lo que no se supo traducir se deja escrito al lado, no se pierde. */
-         || case when def is not null
-                  and pg_temp.omision_mysql(def, tipo) is null
-                  and not serie
-                 then '  -- omisión en Postgres: ' || replace(def, E'\n', ' ')
-                 else '' end
          as linea
   from cols
 ),

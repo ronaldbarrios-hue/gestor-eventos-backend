@@ -276,3 +276,43 @@ datos personales y **no puede quedarse fuera**.
 El **script de carga de datos** es lo único de la fase 6 que sigue pendiente, y
 va después de que exista la base: mover los 829 campos con `timestamptz` a UTC
 y los 8 arreglos a JSON se escribe contra un esquema ya creado, no antes.
+
+## Correrlo de verdad encontro dos fallos que leyendolo no se veian
+
+Se ejecuto el generador contra produccion el 30 de agosto de 2026. Es de solo
+lectura, asi que correrlo no costaba nada — y ahi salieron dos cosas:
+
+1. **La nota de la omision se comia la coma.** Cuando una columna traia un
+   `DEFAULT` que no se sabia traducir, se anotaba al final de su linea:
+
+   ```
+     `id` CHAR(36) NOT NULL  -- omision en Postgres: gen_random_uuid(),
+     `session_id` CHAR(36) NOT NULL,
+   ```
+
+   En MySQL `--` llega hasta el fin de linea, asi que esa coma —la que separa
+   una columna de la siguiente— quedaba comentada y el `CREATE TABLE` no
+   compilaba. Ahora la nota va **delante**, en su propia linea.
+
+2. **La nota saltaba donde no habia nada que anotar.** `gen_random_uuid()` no
+   es una omision que no se supo traducir: es una que se descarta a proposito,
+   porque los UUID los genera el backend. Igual `nextval(...)`, que pasa a
+   `AUTO_INCREMENT`. Las dos se excluyen ahora, y con eso la nota deja de
+   aparecer en casi todas las tablas.
+
+Comprobado despues del arreglo: **ninguna** columna del esquema de hoy tiene un
+`DEFAULT` que el generador no sepa traducir. Cero. Las tablas salen limpias.
+
+### Y una cifra que ya no cuadra
+
+Arriba dice 829 columnas, medido el 29 de agosto. El 30 son **799**. La tabla
+de tipos de arriba sigue sirviendo para decidir, pero el recuento hay que
+volver a hacerlo el dia del corte, no fiarse de este.
+
+### Por que no hay un `003_esquema.sql` en el repositorio
+
+A proposito, y es lo mismo que dice la cabecera del generador: un volcado de
+hoy queda viejo en una semana y nadie se entera hasta que falta una columna en
+produccion. El artefacto que se mantiene es el generador; el `.sql` se saca
+corriendolo el dia que se cree la base, y se compara con `git diff` si se
+quiere ver que se movio.

@@ -316,3 +316,59 @@ hoy queda viejo en una semana y nadie se entera hasta que falta una columna en
 produccion. El artefacto que se mantiene es el generador; el `.sql` se saca
 corriendolo el dia que se cree la base, y se compara con `git diff` si se
 quiere ver que se movio.
+
+## Los nueve disparadores y las siete RPC: cerrados
+
+Al 30 de agosto de 2026 los nueve disparadores que se iban al codigo y las
+siete funciones que el backend llama por RPC estan escritas:
+
+| Original | Donde vive ahora |
+|---|---|
+| `seed_chat_channels`, `seed_event_roles`, `seed_page_json_v2` | `modules/eventos/semillas.js` |
+| `fn_verificar_cuota_stand`, `fn_sync_inscritos_sesion` | `modules/contadores/index.js` |
+| `fn_touch_email_plantilla`, `evento_legal_version`, `fn_puente_page_json`, `fn_expositor_desde_boleta` | `modules/eventos/derivados.js` |
+| `aforo_zonas`, `aforo_zonas_resumen`, `aforo_zonas_serie`, `aforo_zonas_estancia` | `modules/aforo/consultas.js` |
+| `canjear_recompensa` | `modules/contadores/index.js` |
+| `find_pending_reminders`, `generar_recordatorios_inapp` | `modules/recordatorios/index.js` |
+
+`fn_puente_page_json` vive en el esquema `private`, no en `public`: por eso no
+aparecia al buscarla con `pg_get_functiondef` filtrando por `public`.
+
+### El ON UPDATE que esta seccion daba por hecho y no existia
+
+Aqui arriba decia que los `set_updated_at` «se resuelven en el propio DDL».
+El generador **no emitia `ON UPDATE` en ninguna parte**. Tal como estaba,
+`updated_at` se habria quedado congelado en la fecha de creacion, y no se
+habria notado hasta preguntarse por que no cambia nunca.
+
+Ya se emite, pero **no por el nombre de la columna**: 16 tablas tienen
+`updated_at` y solo 5 lo mantienen con disparador hoy. En las otras 11 lo
+escribe el codigo cuando toca, y darles `ON UPDATE` seria cambiar el
+comportamiento por la puerta de atras. El generador pregunta a `pg_trigger`,
+asi que si manana se anade o se quita un disparador, esto lo sigue solo.
+
+Las cinco que lo llevan: `eventos`, `profiles`, `tareas`,
+`payment_transactions` y `evento_email_plantillas`.
+
+### Y una funcion que nunca ha funcionado
+
+`generar_recordatorios_inapp` inserta en `notificaciones` una columna `link`
+que esa tabla no tiene. Revienta en la primera fila del bucle. Medido antes de
+tocar nada: **0 filas** en `notificaciones` en toda su historia, frente a 28
+correos de recordatorio enviados y 11 eventos que hoy cumplen la condicion.
+
+El mismo fallo estaba en `lib/notificar.js`, que ademas no miraba el `error`
+que devuelve supabase-js —no lanza, lo devuelve—, asi que la campana de la
+aplicacion lleva desde siempre vacia y en silencio. El codigo ya esta
+arreglado; para Supabase esta la migracion `0086`, que es de una linea y no
+borra nada.
+
+## La carga de los datos esta en su propio documento
+
+Ver `CARGA-DE-DATOS.md`. Este archivo explica **por que** cada tipo se traduce
+como se traduce; aquel explica **como** pasar las filas, en orden, y esta
+escrito para alguien que no ha estado en estas conversaciones.
+
+El dato que decide el metodo: la base entera son unas **2.000 filas**, y 30 de
+las 71 tablas estan vacias. No hace falta un proceso por lotes; cabe en un
+archivo que se importa de una vez.

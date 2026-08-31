@@ -908,28 +908,43 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   const { ticket_type_id, email, nombre, telefono } = req.body;
 
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona un tipo de boleta.' });
-  if (!email?.includes('@')) return res.status(400).json({ error: 'Email válido requerido.' });
-  if (!nombre?.trim())  return res.status(400).json({ error: 'Tu nombre es requerido.' });
+  /* Si viene un correo tiene que ser uno de verdad; si no viene ninguno, que
+     sea obligatorio o no se decide más abajo, cuando ya se sabe qué evento es
+     (el organizador lo configura en Comercial → Proceso de compra). */
+  if (email && !email.includes('@')) return res.status(400).json({ error: 'Ese correo no es válido.' });
 
   const cap = await verifyTurnstile(req.body.captcha_token, clientIp(req));
   if (!cap.ok) return res.status(400).json({ error: 'Verificación anti-bot fallida. Recargá e intentá de nuevo.' });
 
   const { data: evento, error: e1 } = await supabase
     .from('eventos')
-    .select('id, owner_id, titulo, cover_url, fecha_inicio, location_nombre, estado, deleted_at, aforo_total, aforo_vendido, pago_llave, pago_qr_url, pago_instrucciones')
+    .select('id, owner_id, titulo, cover_url, fecha_inicio, location_nombre, estado, deleted_at, aforo_total, aforo_vendido, pago_llave, pago_qr_url, pago_instrucciones, page_json')
     .eq('slug', slug).maybeSingle();
   if (e1) return res.status(500).json({ error: e1.message });
   if (!evento || evento.deleted_at || evento.estado !== 'publicado')
     return res.status(404).json({ error: 'Evento no disponible.' });
 
+  /* Nombre y correo son obligatorios por defecto: `undefined` cuenta como «sí
+     exigido», así que ningún evento existente cambia de comportamiento a
+     menos que el organizador apague el interruptor a propósito. */
+  const checkoutCfg = evento.page_json?.checkout || {};
+  if (checkoutCfg.requiere_email !== false && !email?.includes('@')) {
+    return res.status(400).json({ error: 'Email válido requerido.' });
+  }
+  if (checkoutCfg.requiere_nombre !== false && !nombre?.trim()) {
+    return res.status(400).json({ error: 'Tu nombre es requerido.' });
+  }
+
   const MAX_POR_EMAIL = Number(process.env.MAX_TICKETS_POR_EMAIL || 5);
-  const { count: yaTiene } = await supabase
-    .from('tickets')
-    .select('id', { count: 'exact', head: true })
-    .eq('evento_id', evento.id)
-    .eq('guest_email', email.toLowerCase().trim());
-  if ((yaTiene || 0) >= MAX_POR_EMAIL) {
-    return res.status(429).json({ error: `Alcanzaste el máximo de ${MAX_POR_EMAIL} boletas con este email para este evento.` });
+  if (email) {
+    const { count: yaTiene } = await supabase
+      .from('tickets')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', evento.id)
+      .eq('guest_email', email.toLowerCase().trim());
+    if ((yaTiene || 0) >= MAX_POR_EMAIL) {
+      return res.status(429).json({ error: `Alcanzaste el máximo de ${MAX_POR_EMAIL} boletas con este email para este evento.` });
+    }
   }
 
   const { data: tipo, error: e2 } = await supabase
@@ -980,10 +995,15 @@ router.post('/slug/:slug/reservar', async (req, res) => {
 
   /* Solo se validan los campos aplicables a ESTE tipo de boleta: los globales
      (ticket_type_id NULL) y los específicos de `tipo`. Un campo obligatorio de
-     VIP no debe bloquear una compra de General. */
+     VIP no debe bloquear una compra de General.
+
+     `COLUMNAS_CAMPO` y no una lista recortada a mano: sin `visible_si` aquí,
+     `validarFormulario` no tiene forma de saber que un campo estaba OCULTO
+     por su condición, y lo exige igual — el campo pide una respuesta que la
+     persona nunca llegó a ver en el formulario. */
   const { data: camposReq } = await supabase
     .from('event_form_fields')
-    .select('id, etiqueta, requerido, tipo, opciones, ticket_type_id').eq('evento_id', evento.id);
+    .select(COLUMNAS_CAMPO).eq('evento_id', evento.id);
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
 
   /* validarFormulario ya salta los campos de otro tipo de boleta: un
@@ -1000,8 +1020,8 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     .insert({
       ticket_type_id: tipo.id,
       evento_id     : evento.id,
-      guest_email   : email.toLowerCase().trim(),
-      guest_nombre  : nombre.trim(),
+      guest_email   : email ? email.toLowerCase().trim() : null,
+      guest_nombre  : nombre ? nombre.trim() : null,
       codigo,
       estado,
       precio_pagado : esGratis ? 0 : null,
@@ -1052,7 +1072,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     userId  : evento.owner_id,
     tipo    : 'reserva',
     titulo  : esGratis ? 'Nueva reserva' : 'Nueva boleta emitida',
-    cuerpo  : `${nombre.trim()} reservó "${tipo.nombre}" en ${evento.titulo}.`,
+    cuerpo  : `${nombre?.trim() || 'Alguien'} reservó "${tipo.nombre}" en ${evento.titulo}.`,
     link    : `/eventos/${evento.id}`,
     eventoId: evento.id,
   });

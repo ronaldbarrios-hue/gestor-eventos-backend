@@ -13,6 +13,7 @@ const { verifyTurnstile } = require('../lib/turnstile.js');
 const { checkoutUrl, verificarEvento } = require('../lib/wompi.js');
 const { confirmarTicketPagado } = require('../lib/confirmarTicket.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 
 const { sesion, publica } = require('../core/permisos');
 const router = express.Router();
@@ -61,20 +62,34 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   const { slug } = req.params;
   const { ticket_type_id, email, nombre, telefono } = req.body || {};
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona un tipo de boleta.' });
-  if (!email?.includes('@')) return res.status(400).json({ error: 'Email válido requerido.' });
-  if (!nombre?.trim()) return res.status(400).json({ error: 'Tu nombre es requerido.' });
+  /* Si viene un correo tiene que ser uno de verdad; si no viene ninguno, que
+     sea obligatorio o no se decide más abajo, cuando ya se sabe qué evento es. */
+  if (email && !email.includes('@')) return res.status(400).json({ error: 'Ese correo no es válido.' });
 
   const cap = await verifyTurnstile(req.body.captcha_token, (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim());
   if (!cap.ok) return res.status(400).json({ error: 'Verificación anti-bot fallida. Recarga e intenta de nuevo.' });
 
   const { data: evento } = await supabase.from('eventos')
-    .select('id, owner_id, titulo, estado, deleted_at, currency, aforo_total, aforo_vendido').eq('slug', slug).maybeSingle();
+    .select('id, owner_id, titulo, estado, deleted_at, currency, aforo_total, aforo_vendido, page_json').eq('slug', slug).maybeSingle();
   if (!evento || evento.deleted_at || evento.estado !== 'publicado') return res.status(404).json({ error: 'Evento no disponible.' });
 
+  /* Nombre y correo son obligatorios por defecto: `undefined` cuenta como «sí
+     exigido», así que ningún evento existente cambia de comportamiento a menos
+     que el organizador apague el interruptor a propósito. */
+  const checkoutCfg = evento.page_json?.checkout || {};
+  if (checkoutCfg.requiere_email !== false && !email?.includes('@')) {
+    return res.status(400).json({ error: 'Email válido requerido.' });
+  }
+  if (checkoutCfg.requiere_nombre !== false && !nombre?.trim()) {
+    return res.status(400).json({ error: 'Tu nombre es requerido.' });
+  }
+
   const MAX = Number(process.env.MAX_TICKETS_POR_EMAIL || 5);
-  const { count: yaTiene } = await supabase.from('tickets').select('id', { count: 'exact', head: true })
-    .eq('evento_id', evento.id).eq('guest_email', email.toLowerCase().trim());
-  if ((yaTiene || 0) >= MAX) return res.status(429).json({ error: `Alcanzaste el máximo de ${MAX} boletas con este email para este evento.` });
+  if (email) {
+    const { count: yaTiene } = await supabase.from('tickets').select('id', { count: 'exact', head: true })
+      .eq('evento_id', evento.id).eq('guest_email', email.toLowerCase().trim());
+    if ((yaTiene || 0) >= MAX) return res.status(429).json({ error: `Alcanzaste el máximo de ${MAX} boletas con este email para este evento.` });
+  }
 
   const { data: owner } = await supabase.from('profiles')
     .select('wompi_public_key, wompi_integrity_secret').eq('id', evento.owner_id).single();
@@ -109,21 +124,21 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   if (precio <= 0) return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usa la reserva directa.' });
   const currency = evento.currency || tipo.currency || 'COP';
 
-  /* Campos de formulario obligatorios (globales + de este tipo). */
-  const { data: campos } = await supabase.from('event_form_fields').select('id, etiqueta, requerido, ticket_type_id').eq('evento_id', evento.id);
+  /* Campos de formulario obligatorios (globales + de este tipo). `COLUMNAS_CAMPO`
+     y `validarFormulario` — no una lista de columnas recortada con un loop a
+     mano — porque sin `visible_si` un campo oculto por su condición se exigía
+     igual: pedía una respuesta a algo que nunca se le mostró. */
+  const { data: campos } = await supabase.from('event_form_fields').select(COLUMNAS_CAMPO).eq('evento_id', evento.id);
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
-  for (const c of campos || []) {
-    if (c.ticket_type_id && c.ticket_type_id !== tipo.id) continue;
-    if (c.requerido && (respuestas[c.id] === undefined || respuestas[c.id] === null || respuestas[c.id] === '')) {
-      return res.status(400).json({ error: `El campo "${c.etiqueta}" es obligatorio.` });
-    }
-  }
+  const falloForm = validarFormulario(campos, respuestas, tipo.id);
+  if (falloForm) return res.status(400).json({ error: falloForm });
+  const respuestasLimpias = normalizarRespuestas(campos, respuestas);
 
   const codigo = generarCodigo();
   const { data: ticket, error: eT } = await supabase.from('tickets').insert({
     ticket_type_id: tipo.id, evento_id: evento.id,
-    guest_email: email.toLowerCase().trim(), guest_nombre: nombre.trim(),
-    codigo, estado: 'emitido', respuestas: Object.keys(respuestas).length ? respuestas : null,
+    guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null,
+    codigo, estado: 'emitido', respuestas: Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
   }).select().single();
   if (eT) return res.status(500).json({ error: eT.message });
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
@@ -135,7 +150,7 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   await supabase.from('payment_transactions').insert({
     evento_id: evento.id, ticket_id: ticket.id, ticket_type_id: tipo.id,
     gateway: 'wompi', referencia, status: 'pending', monto: precio, currency,
-    guest_email: email.toLowerCase().trim(), guest_nombre: nombre.trim(), guest_telefono: telefono || null,
+    guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null, guest_telefono: telefono || null,
   });
 
   const url = checkoutUrl({

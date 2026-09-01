@@ -557,7 +557,12 @@ router.get('/slug/:slug', async (req, res) => {
           agenda: a.agenda, ahora: a.ahora, siguiente: a.siguiente,
           dentro: viva ? viva.dentro : null,
           lleno : viva ? Boolean(z.aforo_max && viva.dentro >= z.aforo_max) : null,
+          ocupacion_pct: viva ? viva.ocupacion_pct : null,
           excedido: viva ? viva.excedido : null,
+          /* Semáforo para el efecto "en fuego" del mapa (lib/aforoZonas.js):
+             'en_fuego' al 100%, 'caliente' desde el 85%. null sin aforo
+             publicado o sin tope — el círculo es sólo el sitio. */
+          nivel: viva ? viva.nivel : null,
         };
       });
       /* Se conserva `mapa_aforo` con la forma de antes: hay páginas publicadas

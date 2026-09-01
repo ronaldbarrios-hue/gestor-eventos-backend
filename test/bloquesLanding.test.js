@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 
 const {
   TIPOS_BLOQUE, fallaBloque, fallaPaginas, catalogoPublico,
-  MAX_BLOQUES_POR_PAGINA, MAX_PAGINAS,
+  MAX_BLOQUES_POR_PAGINA, MAX_PAGINAS, bloqueDeSeccion,
 } = require('../lib/bloquesLanding.js');
 
 test('un bloque válido pasa', () => {
@@ -110,4 +110,57 @@ test('el catálogo público no lleva funciones y describe cada campo', () => {
   assert.doesNotThrow(() => JSON.stringify(cat), 'tiene que poder viajar como JSON');
   const cta = cat.find(b => b.type === 'cta');
   assert.ok(cta.campos.find(c => c.nombre === 'estilo').opciones.includes('primary'));
+});
+
+/* ── El bloque que se sirve a un embed ─────────────────────────────────────
+   `/embed/<slug>/<seccion>` recibía la landing ENTERA y se quedaba con su
+   bloque en el navegador: el resto viajaba igual, dentro de la web de otra
+   empresa. `bloqueDeSeccion` es lo que permite recortarla en el servidor. */
+
+const LANDING = [
+  { blocks: [
+    { id: 'b1', type: 'mapa',  data: { titulo: 'Cómo llegar' } },
+    { id: 'b2', type: 'texto', data: { titulo: 'Secreto', texto: 'No es del que incrusta' } },
+    { id: 'b3', type: 'faq',   data: { titulo: 'Escondido', oculto: true } },
+  ] },
+];
+
+test('la sección se resuelve por alias amigable, no sólo por el tipo real', () => {
+  /* El organizador pega /embed/mi-evento/como-llegar y no tiene por qué saber
+     que internamente el bloque se llama "mapa". */
+  assert.equal(bloqueDeSeccion(LANDING, 'como-llegar').id, 'b1');
+  assert.equal(bloqueDeSeccion(LANDING, 'mapa').id, 'b1');
+});
+
+test('la sección se puede pedir por el id del bloque concreto', () => {
+  assert.equal(bloqueDeSeccion(LANDING, 'b2').id, 'b2');
+});
+
+test('un bloque oculto no se sirve por la puerta de atrás', () => {
+  /* Quitarlo de la página tiene que quitarlo de todas partes; si no, el embed
+     es una forma de publicar lo que el organizador despublicó. */
+  assert.equal(bloqueDeSeccion(LANDING, 'faq'), null);
+});
+
+test('una sección que no es un bloque devuelve null, no la landing entera', () => {
+  /* El torneo, la agenda y el registro no son bloques. Devolver null hace que
+     el endpoint mande las páginas VACÍAS — que es el objetivo: nada de lo que
+     no se pidió acaba en el DOM de una web ajena. */
+  for (const s of ['torneo', 'agenda', 'registro', 'inventada', '']) {
+    assert.equal(bloqueDeSeccion(LANDING, s), null, `«${s}» no debería resolver`);
+  }
+});
+
+test('recortar por sección deja fuera los demás bloques', () => {
+  const bloque = bloqueDeSeccion(LANDING, 'como-llegar');
+  const recortada = JSON.stringify([{ blocks: [bloque] }]);
+  assert.ok(!recortada.includes('Secreto'), 'el resto de la landing no puede viajar');
+});
+
+test('un bloque con claves de más se rechaza, no sólo con campos de más', () => {
+  /* `data` estaba validado pero el bloque que lo envuelve no: por MCP se podía
+     guardar `{type, data, loQueSea}` y quedaba ahí para siempre. */
+  const f = fallaBloque({ type: 'texto', data: {}, script: '<img onerror=x>' });
+  assert.ok(f && f.includes('script'), 'tiene que nombrar la clave sobrante');
+  assert.equal(fallaBloque({ id: 'b1', type: 'texto', data: {} }), null, 'id sí es suyo');
 });

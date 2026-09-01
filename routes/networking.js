@@ -4,6 +4,10 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const {
+  COLS_TARJETA, COLS_COMPLETAS, CAMPOS_EDITABLES_ORGANIZADOR,
+} = require('../lib/expositores.js');
+const { zonasDelEvento } = require('../lib/aforoZonas.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -72,7 +76,7 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
 
   const { data: expositores, error: e1 } = await supabase
     .from('networking_expositores')
-    .select('id, nombre, descripcion, logo_url, stand')
+    .select(`${COLS_TARJETA}, descripcion`)
     .eq('evento_id', eventoId)
     .order('nombre', { ascending: true });
   if (e1) return res.status(500).json({ error: e1.message });
@@ -246,10 +250,12 @@ router.delete('/:eventoId/networking/citas/:citaId', sesion('Su propia cita: el 
    guardar: contacto_nombre, contacto_email, contacto_telefono, tipo_persona y
    redes se escribían bien y no se volvían a ver nunca. En el panel parecía que
    la ficha no tuviera contacto ni redes, y de ahí salió la idea de que hacía
-   falta "ampliarla" — lo que hacía falta era devolverla. */
-const COLS_STAND = `id, nombre, descripcion, logo_url, stand, sitio_web,
-  categoria_negocio, contacto_nombre, contacto_email, contacto_telefono,
-  tipo_persona, redes, galeria, cuota_puntos, activo, estado_ficha, ticket_id, orden`;
+   falta "ampliarla" — lo que hacía falta era devolverla.
+
+   Ahora la lista vive en `lib/expositores.js`, con las otras dos y con las de
+   escritura: era la misma lección repetida en diez copias, y `zona_id` (0087)
+   iba camino de repetirla otra vez. */
+const COLS_STAND = COLS_COMPLETAS;
 
 /* GET /eventos/:eventoId/expositores — expositores para el MAPA y el directorio
    (staff). Sin gate de categoría.
@@ -459,9 +465,27 @@ router.put('/:eventoId/expositores/cuotas', exige(PERMS_EXPOSITORES), async (req
    A diferencia de la Rueda de Negocios (gateada por categoría), los stands
    funcionan para CUALQUIER evento: se crean solos al comprar una boleta-stand
    y también se pueden agregar A MANO aquí (ticket_id = null). */
-const CAMPOS_STAND = ['nombre', 'descripcion', 'logo_url', 'stand', 'sitio_web',
-  'categoria_negocio', 'contacto_nombre', 'contacto_email', 'contacto_telefono',
-  'tipo_persona', 'redes', 'galeria', 'activo', 'estado_ficha', 'orden'];
+const CAMPOS_STAND = CAMPOS_EDITABLES_ORGANIZADOR;
+
+/* La zona tiene que ser una de las declaradas en el plano del evento.
+ *
+ * Las zonas viven dentro de `page_json.zonas`, así que la base no puede
+ * comprobarlo con una clave foránea: si nadie mira, un `zona_id` inventado se
+ * guarda igual y el stand queda ubicado en ninguna parte. Quien lee aguanta
+ * eso —itera sobre las zonas declaradas, y una referencia huérfana
+ * simplemente no aparece—, pero aguantarlo no es lo mismo que provocarlo.
+ *
+ * La 0079 y la 0080 no lo validan y por eso acumulan huérfanos cuando alguien
+ * borra una zona. Aquí, al menos, no se crean nuevos por escribir mal.
+ * Vaciar la zona ('' → null) sigue siendo válido: es "todavía sin ubicar". */
+async function zonaInvalida(eventoId, zonaId) {
+  if (zonaId === undefined || zonaId === null) return null;
+  const zonas = await zonasDelEvento(eventoId).catch(() => []);
+  if (zonas.some(z => z.id === zonaId)) return null;
+  return zonas.length
+    ? `Esa zona no existe en el plano del evento. Las que hay: ${zonas.map(z => z.nombre).join(', ')}.`
+    : 'El evento todavía no tiene zonas en su plano, así que no se puede ubicar el stand.';
+}
 
 /* POST /eventos/:eventoId/expositores — crear un stand a mano. */
 router.post('/:eventoId/expositores', exige(PERMS_EXPOSITORES), async (req, res) => {
@@ -475,6 +499,8 @@ router.post('/:eventoId/expositores', exige(PERMS_EXPOSITORES), async (req, res)
       if (k === 'nombre') continue;
       if (req.body?.[k] !== undefined) fila[k] = req.body[k] === '' ? null : req.body[k];
     }
+    const malaZona = await zonaInvalida(eventoId, fila.zona_id);
+    if (malaZona) return res.status(400).json({ error: malaZona });
     const { data, error } = await supabase.from('networking_expositores').insert(fila).select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.status(201).json({ expositor: data });
@@ -498,6 +524,8 @@ router.patch('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), async (req,
       patch.nombre = n;
     }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada que actualizar.' });
+    const malaZona = await zonaInvalida(eventoId, patch.zona_id);
+    if (malaZona) return res.status(400).json({ error: malaZona });
     const { data, error } = await supabase.from('networking_expositores')
       .update(patch).eq('id', id).eq('evento_id', eventoId).select().maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
@@ -529,7 +557,7 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
 
     const { data: expositores } = await supabase
       .from('networking_expositores')
-      .select('id, nombre, descripcion, logo_url, stand')
+      .select(`${COLS_TARJETA}, descripcion`)
       .eq('evento_id', eventoId)
       .order('nombre', { ascending: true });
 

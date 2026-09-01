@@ -6,6 +6,7 @@ const { resolverTicket } = require('../lib/ticketLookup.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { otorgarPuntos, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
+const { COLS_TARJETA } = require('../lib/expositores.js');
 
 /* ── Stands: escanear la escarapela y registrar un MOTIVO ──────────────
    La escarapela impresa lleva el QR del ticket. En cada stand/actividad se
@@ -234,11 +235,11 @@ router.get('/:eventoId/expositores/ranking', exige(PERMS_ESCANEO), async (req, r
     const nombres = {};
     if (ids.length) {
       const { data: exps } = await supabase.from('networking_expositores')
-        .select('id, nombre, logo_url, stand').in('id', ids);
+        .select(COLS_TARJETA).in('id', ids);
       for (const e of exps || []) nombres[e.id] = e;
     }
     const ranking = Object.values(agg)
-      .map(a => ({ ...a, nombre: nombres[a.expositor_id]?.nombre || 'Expositor', logo_url: nombres[a.expositor_id]?.logo_url || null, stand: nombres[a.expositor_id]?.stand || null }))
+      .map(a => ({ ...a, nombre: nombres[a.expositor_id]?.nombre || 'Expositor', logo_url: nombres[a.expositor_id]?.logo_url || null, stand: nombres[a.expositor_id]?.stand || null, zona_id: nombres[a.expositor_id]?.zona_id || null }))
       .sort((x, y) => y.puntos - x.puntos || y.interacciones - x.interacciones);
     res.json({ ranking });
   } catch (e) { err(res, e); }

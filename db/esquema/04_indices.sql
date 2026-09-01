@@ -88,6 +88,7 @@ CREATE INDEX `eventos_owner_idx` ON `eventos` (`owner_id`);
 CREATE UNIQUE INDEX `eventos_slug_key` ON `eventos` (`slug`);
 CREATE UNIQUE INDEX `networking_citas_horario_id_key` ON `networking_citas` (`horario_id`);
 CREATE INDEX `idx_expositores_evento_activo` ON `networking_expositores` (`evento_id`, `activo`);
+CREATE INDEX `networking_expositores_zona_idx` ON `networking_expositores` (`evento_id`, `zona_id`);
 CREATE UNIQUE INDEX `networking_expositores_ticket_id_key` ON `networking_expositores` (`ticket_id`);
 CREATE INDEX `notif_user_idx` ON `notificaciones` (`user_id`, `leida`, `created_at`);
 CREATE INDEX `notif_user_unread_idx` ON `notificaciones` (`user_id`);  -- era parcial: WHERE (leida = false) (no unico: la condicion se puede tirar)

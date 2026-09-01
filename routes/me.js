@@ -6,6 +6,7 @@ const { otorgarBadge } = require('../lib/gamificacion.js');
 const { esUrlImagenSegura } = require('../lib/urls.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const { COLS_TARJETA } = require('../lib/expositores.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -211,11 +212,15 @@ router.get('/expositor', async (req, res) => {
     if (!ids.length) return res.json({ expositores: [] });
     const codigoPorTicket = Object.fromEntries((tks || []).map(t => [t.id, t.codigo]));
     const { data: exps, error } = await supabase.from('networking_expositores')
-      .select('id, nombre, logo_url, stand, estado_ficha, activo, evento_id, ticket_id, evento:eventos!evento_id(titulo, slug)')
+      .select(`${COLS_TARJETA}, estado_ficha, activo, evento_id, ticket_id, evento:eventos!evento_id(titulo, slug)`)
       .in('ticket_id', ids);
     if (error) return res.status(500).json({ error: error.message });
+    /* El mapper enumera campo a campo, así que una columna nueva en el select
+       no llega sola: hay que nombrarla aquí también. Es el segundo filtro que
+       hizo falta ampliar para `zona_id` (0087). */
     const expositores = (exps || []).map(e => ({
       id: e.id, nombre: e.nombre, logo_url: e.logo_url, stand: e.stand,
+      zona_id: e.zona_id,
       estado_ficha: e.estado_ficha, activo: e.activo, evento_id: e.evento_id,
       evento: e.evento, codigo: codigoPorTicket[e.ticket_id] || null,
     }));

@@ -101,7 +101,9 @@ MySQL no los tiene. Se parten en dos grupos que no se parecen en nada:
   `UNIQUE` normal (su condición es «esta columna no es nula» y esa columna está
   en la clave: MySQL, igual que Postgres, deja repetir los NULL) y cuatro
   necesitan una columna generada que valga NULL cuando la condición no se
-  cumple.
+  cumple. Nota: uno de esos primeros cuatro (`torneo_categorias_unica_hija`)
+  lleva igual una columna generada, no por la condición sino porque va sobre
+  `nombre`, que es TEXT, y MySQL no indexa un TEXT sin prefijo (error 1170).
 
 ## La colación: `as_ci`, no `ai_ci`
 

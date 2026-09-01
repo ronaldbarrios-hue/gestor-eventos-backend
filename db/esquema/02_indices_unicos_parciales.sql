@@ -14,7 +14,9 @@
  * que cuando la condición es «esta columna no es nula» Y esa columna está en
  * la clave, un UNIQUE normal se comporta EXACTAMENTE igual: las filas que la
  * condición excluía son justo las que tienen el NULL, y ésas nunca chocan.
- * Cuatro de los ocho caen aquí y no necesitan nada.
+ * Cuatro de los ocho caen aquí — pero uno de esos cuatro
+ * (`torneo_categorias_unica_hija`) va sobre una columna TEXT y necesita igual
+ * una columna generada, no por la condición sino porque MySQL no indexa TEXT.
  *
  * Los otros cuatro tienen condiciones que no se dejan reescribir así —
  * «cuando global es cierto», «cuando NO hay boleta», «cuando el estado es uno
@@ -41,13 +43,16 @@ CREATE UNIQUE INDEX `waitlist_oferta_token_uidx`
 CREATE UNIQUE INDEX `sesion_inscripciones_ticket_uidx`
   ON `sesion_inscripciones` (`session_id`, `ticket_id`);
 
-/* WHERE padre_id IS NOT NULL — y padre_id está en la clave.
-   OJO — divergencia respecto a db/migraciones/003_esquema_indices_parciales.sql:
-   allí este índice iba sobre `nombre` directo, pero `torneo_categorias.nombre`
-   es TEXT y MySQL no indexa un TEXT sin prefijo de longitud (error 1170). Se
-   usa una columna generada VARCHAR(255), igual que el caso raíz de abajo. El
-   lower(nombre) del original lo hace la colación (utf8mb4_0900_as_ci compara
-   sin distinguir mayúsculas, igual que lower(); sí distingue acentos). */
+/* WHERE padre_id IS NOT NULL — y padre_id está en la clave, así que el NULL
+   hace solo el trabajo de la condición parcial. Pero un UNIQUE sobre `nombre`
+   no compila: `torneo_categorias.nombre` es TEXT y MySQL no indexa un TEXT sin
+   prefijo de longitud (error 1170), y un prefijo no garantiza unicidad real
+   para nombres largos. Por eso este índice —aunque su condición se traduzca
+   sola— necesita una columna generada VARCHAR, igual que el caso raíz de
+   abajo. El lower(nombre) del original va explícito en el LOWER(): así la
+   unicidad no distingue mayúsculas ni siquiera con una colación _bin (con la
+   colación por defecto utf8mb4_0900_as_ci daría igual, pero sí distingue
+   acentos, que es lo que se quiere). */
 ALTER TABLE `torneo_categorias`
   ADD COLUMN `nombre_hija` VARCHAR(255)
     AS (IF(`padre_id` IS NOT NULL, LOWER(`nombre`), NULL)) VIRTUAL;

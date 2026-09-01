@@ -16,7 +16,7 @@ cómo mover las filas, en [`../migraciones/CARGA-DE-DATOS.md`](../migraciones/CA
 | Archivo | Qué es | Origen |
 |---|---|---|
 | `01_tablas.sql` | Las 71 `CREATE TABLE` (tipos, defaults, PK). | Generado |
-| `02_indices_unicos_parciales.sql` | Los 8 índices únicos parciales, a mano. | Basado en `../migraciones/003_esquema_indices_parciales.sql`, con una divergencia marcada `OJO` dentro (índice `torneo_categorias_unica_hija`: `nombre` es TEXT y MySQL no lo indexa sin prefijo → columna generada) |
+| `02_indices_unicos_parciales.sql` | Los 8 índices únicos parciales, a mano. | Copia de `../migraciones/003_esquema_indices_parciales.sql` (mismo contenido; `torneo_categorias_unica_hija` va sobre columna generada porque `nombre` es TEXT y MySQL no lo indexa sin prefijo — error 1170) |
 | `03_datos.sql` | El volcado de las filas. **NO generado aún** — ver abajo. | — |
 | `04_indices.sql` | El resto de índices (147). | Generado |
 | `05_claves_foraneas.sql` | Las 148 FK de `public`. Al final, hay ciclos. | Generado |

@@ -298,9 +298,12 @@ router.post('/ticket/:codigo/formulario', async (req, res) => {
   if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.' });
   if (ticket.respuestas) return res.status(400).json({ error: 'Esta boleta ya tiene el formulario completado.' });
 
+  /* COLUMNAS_CAMPO y no una lista recortada a mano: sin `visible_si` aquí,
+     `validarFormulario` no puede saber que un campo estaba OCULTO por su
+     condición, y lo exige igual — el mismo bug que en /reservar y /comprar. */
   const { data: campos } = await supabase
     .from('event_form_fields')
-    .select('id, etiqueta, requerido, tipo, opciones, ticket_type_id')
+    .select(COLUMNAS_CAMPO)
     .eq('evento_id', ticket.evento_id);
 
   /* Antes aquí solo se comprobaba que un obligatorio no llegara vacío: un campo

@@ -479,7 +479,7 @@ router.get('/slug/:slug', async (req, res) => {
   try {
     const { data: fichas } = await supabase
       .from('networking_expositores')
-      .select('id, nombre, descripcion, logo_url, stand, tipo_persona, sitio_web, redes, categoria_negocio, orden')
+      .select('id, nombre, descripcion, logo_url, galeria, stand, tipo_persona, sitio_web, redes, categoria_negocio, orden')
       .eq('evento_id', evento.id).eq('activo', true).eq('estado_ficha', 'completa')
       .order('orden', { ascending: true }).order('nombre', { ascending: true });
     const lista = fichas || [];

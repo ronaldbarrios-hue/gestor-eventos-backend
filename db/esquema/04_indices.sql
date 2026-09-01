@@ -96,6 +96,7 @@ CREATE INDEX `idx_oauth_tokens_expira` ON `oauth_tokens` (`expira_at`);  -- era 
 CREATE INDEX `idx_oauth_tokens_owner` ON `oauth_tokens` (`owner_id`, `revocado`);
 CREATE UNIQUE INDEX `oauth_tokens_refresh_hash_key` ON `oauth_tokens` (`refresh_hash`);
 CREATE UNIQUE INDEX `oauth_tokens_token_hash_key` ON `oauth_tokens` (`token_hash`);
+CREATE UNIQUE INDEX `padron_previo_unico` ON `padron_previo` (`evento_id`, `documento_hash`);
 CREATE INDEX `payment_transactions_referencia_idx` ON `payment_transactions` (`referencia`);
 CREATE INDEX `payment_tx_evento_idx` ON `payment_transactions` (`evento_id`);
 CREATE INDEX `payment_tx_payment_idx` ON `payment_transactions` (`payment_id`);
@@ -104,6 +105,8 @@ CREATE INDEX `payment_tx_user_idx` ON `payment_transactions` (`user_id`);  -- er
 CREATE INDEX `perfil_talento_ciudad_idx` ON `perfil_talento` (`ciudad`);
 CREATE INDEX `perfil_talento_publicado_idx` ON `perfil_talento` (`publicado`);  -- era parcial: WHERE (publicado = true) (no unico: la condicion se puede tirar)
 CREATE UNIQUE INDEX `perfil_talento_user_id_key` ON `perfil_talento` (`user_id`);
+CREATE INDEX `idx_points_log_origen` ON `points_log` (`origen_tipo`, `origen_id`);  -- era parcial: WHERE (origen_tipo IS NOT NULL) (no unico: la condicion se puede tirar)
+CREATE INDEX `idx_points_log_usuario_evento` ON `points_log` (`user_id`, `evento_id`, `created_at`);
 CREATE INDEX `points_log_evento_aud_idx` ON `points_log` (`evento_id`, `audiencia`);  -- era parcial: WHERE (evento_id IS NOT NULL) (no unico: la condicion se puede tirar)
 CREATE INDEX `points_log_org_aud_idx` ON `points_log` (`organizador_id`, `audiencia`, `user_id`);
 CREATE INDEX `postulaciones_user_idx` ON `postulaciones` (`user_id`);

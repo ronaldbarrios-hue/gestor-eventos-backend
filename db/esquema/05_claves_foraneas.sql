@@ -90,6 +90,7 @@ ALTER TABLE `notificaciones` ADD CONSTRAINT `notificaciones_evento_id_fkey` FORE
 ALTER TABLE `notificaciones` ADD CONSTRAINT `notificaciones_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `profiles` (`id`) ON DELETE CASCADE;
 ALTER TABLE `oauth_codes` ADD CONSTRAINT `oauth_codes_client_id_fkey` FOREIGN KEY (`client_id`) REFERENCES `oauth_clients` (`client_id`) ON DELETE CASCADE;
 ALTER TABLE `oauth_tokens` ADD CONSTRAINT `oauth_tokens_client_id_fkey` FOREIGN KEY (`client_id`) REFERENCES `oauth_clients` (`client_id`) ON DELETE CASCADE;
+ALTER TABLE `padron_previo` ADD CONSTRAINT `padron_previo_evento_id_fkey` FOREIGN KEY (`evento_id`) REFERENCES `eventos` (`id`) ON DELETE CASCADE;
 ALTER TABLE `payment_transactions` ADD CONSTRAINT `payment_transactions_evento_id_fkey` FOREIGN KEY (`evento_id`) REFERENCES `eventos` (`id`) ON DELETE CASCADE;
 ALTER TABLE `payment_transactions` ADD CONSTRAINT `payment_transactions_ticket_id_fkey` FOREIGN KEY (`ticket_id`) REFERENCES `tickets` (`id`) ON DELETE SET NULL;
 ALTER TABLE `payment_transactions` ADD CONSTRAINT `payment_transactions_ticket_type_id_fkey` FOREIGN KEY (`ticket_type_id`) REFERENCES `ticket_types` (`id`) ON DELETE SET NULL;

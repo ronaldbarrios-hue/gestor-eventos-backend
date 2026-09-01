@@ -244,6 +244,7 @@ CREATE TABLE `event_form_fields` (
   `ayuda` TEXT NULL,
   `session_id` CHAR(36) NULL,
   `buscable` TINYINT(1) NULL,
+  `visible_si` JSON NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -608,6 +609,16 @@ CREATE TABLE `organizador_conexiones` (
   PRIMARY KEY (`owner_id`, `tipo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
+CREATE TABLE `padron_previo` (
+  `id` CHAR(36) NOT NULL,
+  `evento_id` CHAR(36) NOT NULL,
+  `documento_hash` VARCHAR(255) NOT NULL,
+  `datos` JSON NOT NULL DEFAULT (CAST('{}' AS JSON)),
+  `origen` TEXT NULL,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
+
 CREATE TABLE `payment_transactions` (
   `id` CHAR(36) NOT NULL,
   `evento_id` CHAR(36) NOT NULL,
@@ -666,6 +677,9 @@ CREATE TABLE `points_log` (
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `organizador_id` CHAR(36) NULL,
   `audiencia` VARCHAR(255) NOT NULL DEFAULT ('cliente'),
+  `origen_tipo` VARCHAR(255) NULL,
+  `origen_id` CHAR(36) NULL,
+  `detalle` TEXT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 

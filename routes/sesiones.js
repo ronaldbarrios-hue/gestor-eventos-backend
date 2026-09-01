@@ -121,14 +121,6 @@ publico.get('/slug/:slug/sesiones', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
-  const sesiones = (data || []).map(s => ({
-    ...s,
-    libres: s.cupo == null ? null : Math.max(0, s.cupo - (s.inscritos || 0)),
-    lleno: s.cupo != null && (s.inscritos || 0) >= s.cupo,
-    /* Para que la página sepa si tiene que mostrar preguntas o basta un botón. */
-    pide_datos: (s.formulario_modo || 'ninguno') !== 'ninguno',
-  }));
-
   /* Las preguntas de los que tienen formulario propio, para poder pintarlas sin
      una petición por sub-evento. */
   const conPropio = (data || []).filter(s => s.formulario_modo === 'propio').map(s => s.id);
@@ -143,6 +135,23 @@ publico.get('/slug/:slug/sesiones', async (req, res) => {
       (preguntas[c.session_id] = preguntas[c.session_id] || []).push(c);
     }
   }
+
+  const sesiones = (data || []).map(s => {
+    const modo = s.formulario_modo || 'ninguno';
+    /* Un sub-evento en modo 'propio' pero sin ninguna pregunta guardada se
+       comporta como 'ninguno': basta un botón. Es la misma regla que aplica el
+       editor al guardar (panel.put .../formulario), pero repetida al leer para
+       cubrir los que quedaron a medias — p.ej. si el modo se puso desde los
+       ajustes del sub-evento y las preguntas nunca llegaron a guardarse. */
+    const propioVacio = modo === 'propio' && !(preguntas[s.id]?.length);
+    return {
+      ...s,
+      libres: s.cupo == null ? null : Math.max(0, s.cupo - (s.inscritos || 0)),
+      lleno: s.cupo != null && (s.inscritos || 0) >= s.cupo,
+      /* Para que la página sepa si tiene que mostrar preguntas o basta un botón. */
+      pide_datos: modo !== 'ninguno' && !propioVacio,
+    };
+  });
 
   res.json({ sesiones, preguntas, almacenamiento_listo: true });
 });

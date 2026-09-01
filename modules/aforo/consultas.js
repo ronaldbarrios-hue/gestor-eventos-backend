@@ -60,9 +60,13 @@ async function ocupacionViva(eventoId) {
          AND (mv.zona_id IS NOT NULL OR mv.zona IS NOT NULL)
     ),
     c AS (
+      -- Sólo 'reset' cuenta como corte de la ocupación viva (migración 0087):
+      -- un reporte manual o automático también escribe en zona_cortes, para
+      -- el histórico, y no debe poner el contador en cero.
       SELECT COALESCE(zc.zona_id, zc.zona) AS clave, MAX(zc.created_at) AS corte_at
         FROM zona_cortes zc
        WHERE zc.evento_id = ?
+         AND zc.tipo = 'reset'
        GROUP BY 1
     ),
     /* El nombre más reciente de cada zona. En Postgres era

@@ -60,7 +60,7 @@ dentro de un proceso dormido no corre. El fallo sería silencioso y sólo
 aparecería con poca actividad — o sea de madrugada, que es cuando salen los
 recordatorios del día siguiente.
 
-**Cron Jobs** → dos entradas. La ruta de `node` se copia de *Setup Node.js App*
+**Cron Jobs** → tres entradas. La ruta de `node` se copia de *Setup Node.js App*
 (el botón que da el comando de entrada al entorno virtual); **no** es el `node`
 del sistema, que suele ser más viejo.
 
@@ -79,7 +79,15 @@ Cada minuto, la cola de correo:
 La cola va aparte y cada minuto porque su gracia es repartir los envíos: a
 ráfagas cada quince minutos, el proveedor de SMTP corta por spam.
 
-Los dos scripts salen con código 1 si fallan, así que un fallo se ve en el
+Cada quince minutos también, el reporte automático de aforo (Camino unitario,
+fase 3): la cadencia real por evento (mínimo 60 min) la decide
+`lib/aforoReporteAuto.js`, este cron sólo le da la oportunidad seguido.
+
+```
+*/15 * * * *   cd /home/CUENTA/api && /home/CUENTA/nodevenv/api/22/bin/node scripts/cron-aforo-reporte.js >> /home/CUENTA/logs/aforo-reporte.log 2>&1
+```
+
+Los tres scripts salen con código 1 si fallan, así que un fallo se ve en el
 panel en vez de perderse en un log que nadie abre. Y el de la cola sólo escribe
 cuando hay algo que decir: una línea por minuto son medio millón al año
 diciendo «nada que hacer», en un disco de 9,81 GB compartido.

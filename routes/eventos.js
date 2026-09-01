@@ -14,7 +14,7 @@ const {
 } = require('../lib/formularioCampos.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
-const { hashDocumento, columnasSinPregunta, clave: clavePadron } = require('../lib/padronPrevio.js');
+const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO, extraerDocumento } = require('../lib/padronPrevio.js');
 const { exige, sesion } = require('../core/permisos');
 const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
@@ -608,7 +608,7 @@ router.post('/:id/padron', exige(PERMS_PADRON), async (req, res) => {
     if (!f || typeof f !== 'object') continue;
     /* La columna del documento se acepta con varios nombres porque el archivo
        viene de fuera y cada organizador la llama distinto. */
-    const doc = f.documento ?? f.cedula ?? f.cédula ?? f.identificacion ?? f.identificación ?? f.nit ?? f.dni;
+    const doc = extraerDocumento(f);
     const hash = hashDocumento(eventoId, doc);
     if (!hash) { sinDocumento++; continue; }
 
@@ -617,7 +617,7 @@ router.post('/:id/padron', exige(PERMS_PADRON), async (req, res) => {
     const datos = {};
     for (const [k, v] of Object.entries(f)) {
       const ck = clavePadron(k);
-      if (['documento', 'cedula', 'identificacion', 'nit', 'dni'].includes(ck)) continue;
+      if (ALIAS_DOCUMENTO.includes(ck)) continue;
       if (v === undefined || v === null || v === '') continue;
       datos[k] = typeof v === 'string' ? v.trim() : v;
       columnas.add(k);

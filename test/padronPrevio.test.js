@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 
 const {
   normalizarDocumento, hashDocumento, salDelEvento,
-  emparejar, columnasSinPregunta,
+  emparejar, columnasSinPregunta, extraerDocumento,
 } = require('../lib/padronPrevio.js');
 
 const EV_A = '11111111-1111-1111-1111-111111111111';
@@ -76,6 +76,28 @@ test('un valor vacío cuenta como que falta, no como respondido', () => {
   const { respuestas, faltan } = emparejar({ 'Ciudad': '' }, [{ id: 'c1', etiqueta: 'Ciudad' }]);
   assert.deepEqual(respuestas, {});
   assert.equal(faltan.length, 1);
+});
+
+test('extraerDocumento reconoce la columna aunque venga en mayúscula o con tilde', () => {
+  /* "Documento", "NIT" en mayúscula o "Cédula" no se reconocían por
+     comparación exacta en minúscula: la fila se descartaba sin explicación. */
+  assert.equal(extraerDocumento({ Documento: '123' }), '123');
+  assert.equal(extraerDocumento({ NIT: '456' }), '456');
+  assert.equal(extraerDocumento({ 'Cédula': '789' }), '789');
+});
+
+test('extraerDocumento reconoce alias en inglés o snake_case', () => {
+  /* Común en bases humanitarias o exportadas de sistemas en inglés. */
+  assert.equal(extraerDocumento({ id_number: '321' }), '321');
+  assert.equal(extraerDocumento({ 'numero_documento': '654' }), '654');
+});
+
+test('extraerDocumento respeta la prioridad cuando hay más de un alias', () => {
+  assert.equal(extraerDocumento({ nit: '111', documento: '222' }), '222');
+});
+
+test('extraerDocumento no encuentra nada si ninguna columna es reconocible', () => {
+  assert.equal(extraerDocumento({ Nombre: 'Ana', Empresa: 'Acme' }), undefined);
 });
 
 test('columnasSinPregunta dice qué trae el archivo que nadie recoge', () => {

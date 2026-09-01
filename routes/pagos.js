@@ -13,6 +13,7 @@ const { signTicketQR } = require('../lib/qr.js');
 const mp = require('../lib/mercadopago.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
+const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 const { webhookLimiter } = require('../config/security.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
@@ -140,25 +141,38 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
   const { slug } = req.params;
   const { ticket_type_id, email, nombre, telefono } = req.body;
   if (!ticket_type_id) return res.status(400).json({ error: 'Selecciona un tipo de boleta.' });
-  if (!email?.includes('@')) return res.status(400).json({ error: 'Email válido requerido.' });
-  if (!nombre?.trim()) return res.status(400).json({ error: 'Tu nombre es requerido.' });
+  /* Si viene un correo tiene que ser uno de verdad; si no viene ninguno, que
+     sea obligatorio o no se decide más abajo, cuando ya se sabe qué evento es. */
+  if (email && !email.includes('@')) return res.status(400).json({ error: 'Ese correo no es válido.' });
   const capC = await verifyTurnstile(req.body.captcha_token, (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim());
   if (!capC.ok) return res.status(400).json({ error: 'Verificación anti-bot fallida. Recargá e intentá de nuevo.' });
   const { data: evento, error: e1 } = await supabase
     .from('eventos')
-    .select('id, owner_id, titulo, estado, deleted_at, currency, aforo_total, aforo_vendido')
+    .select('id, owner_id, titulo, estado, deleted_at, currency, aforo_total, aforo_vendido, page_json')
     .eq('slug', slug).maybeSingle();
   if (e1) return res.status(500).json({ error: e1.message });
   if (!evento || evento.deleted_at || evento.estado !== 'publicado')
     return res.status(404).json({ error: 'Evento no disponible.' });
+  /* Nombre y correo son obligatorios por defecto: `undefined` cuenta como «sí
+     exigido», así que ningún evento existente cambia de comportamiento a menos
+     que el organizador apague el interruptor a propósito. */
+  const checkoutCfg = evento.page_json?.checkout || {};
+  if (checkoutCfg.requiere_email !== false && !email?.includes('@')) {
+    return res.status(400).json({ error: 'Email válido requerido.' });
+  }
+  if (checkoutCfg.requiere_nombre !== false && !nombre?.trim()) {
+    return res.status(400).json({ error: 'Tu nombre es requerido.' });
+  }
   const MAX_POR_EMAIL = Number(process.env.MAX_TICKETS_POR_EMAIL || 5);
-  const { count: yaTiene } = await supabase
-    .from('tickets')
-    .select('id', { count: 'exact', head: true })
-    .eq('evento_id', evento.id)
-    .eq('guest_email', email.toLowerCase().trim());
-  if ((yaTiene || 0) >= MAX_POR_EMAIL) {
-    return res.status(429).json({ error: `Alcanzaste el máximo de ${MAX_POR_EMAIL} boletas con este email para este evento.` });
+  if (email) {
+    const { count: yaTiene } = await supabase
+      .from('tickets')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', evento.id)
+      .eq('guest_email', email.toLowerCase().trim());
+    if ((yaTiene || 0) >= MAX_POR_EMAIL) {
+      return res.status(429).json({ error: `Alcanzaste el máximo de ${MAX_POR_EMAIL} boletas con este email para este evento.` });
+    }
   }
   const { data: owner, error: eOwner } = await supabase
     .from('profiles').select('mp_access_token').eq('id', evento.owner_id).single();
@@ -197,30 +211,27 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
   if (precioEfectivo <= 0)
     return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usá la reserva directa.' });
   /* Validar campos personalizados del formulario aplicables a este tipo de
-     boleta (globales + específicos de `tipo`). */
+     boleta (globales + específicos de `tipo`). `COLUMNAS_CAMPO` y
+     `validarFormulario` — no una lista de columnas recortada con un loop a
+     mano — porque sin `visible_si` un campo oculto por su condición se
+     exigía igual: pedía una respuesta a algo que nunca se le mostró. */
   const { data: camposReq } = await supabase
-    .from('event_form_fields').select('id, etiqueta, requerido, ticket_type_id').eq('evento_id', evento.id);
+    .from('event_form_fields').select(COLUMNAS_CAMPO).eq('evento_id', evento.id);
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
-  for (const c of camposReq || []) {
-    if (c.ticket_type_id && c.ticket_type_id !== tipo.id) continue;
-    if (c.requerido) {
-      const v = respuestas[c.id];
-      if (v === undefined || v === null || v === '') {
-        return res.status(400).json({ error: `El campo "${c.etiqueta}" es obligatorio.` });
-      }
-    }
-  }
+  const falloForm = validarFormulario(camposReq, respuestas, tipo.id);
+  if (falloForm) return res.status(400).json({ error: falloForm });
+  const respuestasLimpias = normalizarRespuestas(camposReq, respuestas);
   const codigo = generarCodigo();
   const { data: ticket, error: e3 } = await supabase
     .from('tickets')
     .insert({
       ticket_type_id: tipo.id,
       evento_id     : evento.id,
-      guest_email   : email.toLowerCase().trim(),
-      guest_nombre  : nombre.trim(),
+      guest_email   : email ? email.toLowerCase().trim() : null,
+      guest_nombre  : nombre ? nombre.trim() : null,
       codigo,
       estado        : 'emitido',
-      respuestas    : Object.keys(respuestas).length ? respuestas : null,
+      respuestas    : Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
     })
     .select().single();
   if (e3) return res.status(500).json({ error: e3.message });
@@ -246,8 +257,8 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
         unit_price  : precioEfectivo,
       }],
       payer: {
-        name : nombre.trim(),
-        email: email.toLowerCase().trim(),
+        name : nombre ? nombre.trim() : undefined,
+        email: email ? email.toLowerCase().trim() : undefined,
         phone: telefono ? { number: telefono } : undefined,
       },
       externalReference: externalRef,
@@ -267,8 +278,8 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
     status        : 'pending',
     monto         : precioEfectivo,
     currency,
-    guest_email   : email.toLowerCase().trim(),
-    guest_nombre  : nombre.trim(),
+    guest_email   : email ? email.toLowerCase().trim() : null,
+    guest_nombre  : nombre ? nombre.trim() : null,
     guest_telefono: telefono || null,
     raw           : { preference_id: preference.id },
   });

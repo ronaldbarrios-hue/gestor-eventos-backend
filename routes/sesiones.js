@@ -79,7 +79,10 @@ async function camposDeSesion(eventoId, sesion) {
   const modo = sesion?.formulario_modo || 'ninguno';
   if (modo === 'ninguno') return [];
 
-  const cols = 'id, etiqueta, requerido, tipo, opciones, ticket_type_id, grupo, ayuda, orden';
+  /* COLUMNAS_CAMPO y no una lista recortada: sin `visible_si`, `validarFormulario`
+     (línea 215 abajo) no puede saber que un campo estaba OCULTO por su
+     condición y lo exige igual. */
+  const cols = COLUMNAS_CAMPO;
 
   if (modo === 'propio') {
     const { data } = await supabase
@@ -133,7 +136,7 @@ publico.get('/slug/:slug/sesiones', async (req, res) => {
   if (conPropio.length) {
     const { data: campos } = await supabase
       .from('event_form_fields')
-      .select('id, session_id, etiqueta, requerido, tipo, opciones, grupo, ayuda, orden')
+      .select(`${COLUMNAS_CAMPO}, session_id`)
       .in('session_id', conPropio)
       .order('orden', { ascending: true });
     for (const c of (campos || [])) {

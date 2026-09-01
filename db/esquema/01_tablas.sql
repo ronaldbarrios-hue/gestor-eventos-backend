@@ -244,6 +244,7 @@ CREATE TABLE `event_form_fields` (
   `ayuda` TEXT NULL,
   `session_id` CHAR(36) NULL,
   `buscable` TINYINT(1) NULL,
+  `visible_si` JSON NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 

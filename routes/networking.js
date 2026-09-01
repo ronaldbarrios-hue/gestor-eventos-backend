@@ -253,7 +253,7 @@ router.delete('/:eventoId/networking/citas/:citaId', sesion('Su propia cita: el 
    falta "ampliarla" — lo que hacía falta era devolverla.
 
    Ahora la lista vive en `lib/expositores.js`, con las otras dos y con las de
-   escritura: era la misma lección repetida en diez copias, y `zona_id` (0087)
+   escritura: era la misma lección repetida en diez copias, y `zona_id` (0088)
    iba camino de repetirla otra vez. */
 const COLS_STAND = COLS_COMPLETAS;
 

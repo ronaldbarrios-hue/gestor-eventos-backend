@@ -1,4 +1,4 @@
--- 0087 · Un stand pertenece a una zona. Idempotente.
+-- 0088 · Un stand pertenece a una zona. Idempotente.
 --
 -- `networking_expositores.stand` es la ETIQUETA del puesto ("A-12"), no el
 -- sitio donde está. Con eso no se puede contestar "qué stands hay en la Zona

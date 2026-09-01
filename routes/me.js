@@ -217,7 +217,7 @@ router.get('/expositor', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
     /* El mapper enumera campo a campo, así que una columna nueva en el select
        no llega sola: hay que nombrarla aquí también. Es el segundo filtro que
-       hizo falta ampliar para `zona_id` (0087). */
+       hizo falta ampliar para `zona_id` (0088). */
     const expositores = (exps || []).map(e => ({
       id: e.id, nombre: e.nombre, logo_url: e.logo_url, stand: e.stand,
       zona_id: e.zona_id,

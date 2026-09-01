@@ -2,7 +2,7 @@
 
    Existe por un fallo que este repo ya pagó una vez: nueve campos de la ficha
    se guardaban bien y no se volvían a ver nunca, porque el SELECT del panel
-   tenía su propia copia de la lista de columnas. `zona_id` (0087) iba camino
+   tenía su propia copia de la lista de columnas. `zona_id` (0088) iba camino
    de repetirlo en diez copias a la vez.
 
    Lo que se protege aquí: que las listas de lectura cubran lo que las de
@@ -32,7 +32,7 @@ test('lo que el organizador puede guardar, se puede volver a leer', () => {
 
 test('las tres listas de lectura llevan la zona', () => {
   /* Si una se queda fuera, el stand tiene zona en una pantalla y no en otra,
-     que es justo el fallo que la 0087 venía a evitar. */
+     que es justo el fallo que la 0088 venía a evitar. */
   for (const [nombre, cols] of Object.entries({ COLS_TARJETA, COLS_DIRECTORIO, COLS_COMPLETAS })) {
     assert.ok(columnas(cols).includes('zona_id'), `${nombre} no devuelve zona_id`);
   }

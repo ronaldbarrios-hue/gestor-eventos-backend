@@ -488,7 +488,7 @@ router.get('/slug/:slug', async (req, res) => {
       .select(COLS_DIRECTORIO)
       .eq('evento_id', evento.id).eq('activo', true).eq('estado_ficha', 'completa')
       .order('orden', { ascending: true }).order('nombre', { ascending: true });
-    /* Con el nombre de la zona resuelto: la ficha guarda el id (0087) y quien
+    /* Con el nombre de la zona resuelto: la ficha guarda el id (0088) y quien
        mira el directorio necesita leer "Zona Gamer", no un identificador. Una
        zona que ya no existe deja `zona_nombre` en null y la ficha sale igual —
        el stand sigue estando, lo que caducó es su ubicación. */

@@ -14,7 +14,8 @@ const {
 } = require('../lib/formularioCampos.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
-const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO, extraerDocumento } = require('../lib/padronPrevio.js');
+const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO, extraerDocumento,
+  limpiarMapeo, mapeoSugerido, filasSinCruce } = require('../lib/padronPrevio.js');
 const { exige, sesion } = require('../core/permisos');
 const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
@@ -652,12 +653,92 @@ router.post('/:id/padron', exige(PERMS_PADRON), async (req, res) => {
   const { data: campos } = await supabase
     .from('event_form_fields').select('id, etiqueta')
     .eq('evento_id', eventoId).is('session_id', null);
+  const listaCampos = campos || [];
+  const listaColumnas = [...columnas];
+
+  /* Las columnas del archivo se guardan en el evento para que la pantalla de
+     mapeo pueda ofrecerlas sin obligar a subir el archivo otra vez, y para
+     poder validar el mapeo contra ellas. Van en `page_json.padron`: el PATCH
+     mezcla `page_json` por clave de primer nivel (0064), así que esto no toca
+     nada más de la landing. */
+  const { data: evActual } = await supabase
+    .from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
+  const pjActual = evActual?.page_json && typeof evActual.page_json === 'object' ? evActual.page_json : {};
+  const padronAntes = pjActual.padron && typeof pjActual.padron === 'object' ? pjActual.padron : {};
+
+  /* El mapeo que hubiera: se conserva el del organizador para las preguntas
+     que siga habiendo, y se rellena el resto con lo que el cruce por nombre
+     ya daría. Así reemplazar el archivo no borra el trabajo hecho. */
+  const mapeoPrevio = limpiarMapeo(padronAntes.mapeo, listaCampos, listaColumnas);
+  const mapeo = { ...mapeoSugerido(listaCampos, listaColumnas), ...mapeoPrevio };
+
+  await supabase.from('eventos').update({
+    page_json: {
+      ...pjActual,
+      padron: {
+        ...padronAntes,
+        columnas: listaColumnas,
+        mapeo,
+        origen: req.body?.origen || null,
+        filas: guardadas,
+        subido_at: new Date().toISOString(),
+      },
+    },
+  }).eq('id', eventoId);
+
+  /* Cuántas filas no llenarían NI UNA pregunta. Es el número que faltaba: sin
+     él, un padrón que no sirve se ve igual que uno bueno. En el caso que lo
+     destapó, 3.624 de 4.124 filas traían sólo nombre y apellidos. */
+  const sinCruce = filasSinCruce(preparadas.map(r => r.datos), listaCampos, mapeo);
 
   res.json({
     guardadas,
     sin_documento: sinDocumento,
-    columnas_sin_pregunta: columnasSinPregunta([...columnas], campos || []),
+    sin_cruce: sinCruce,
+    columnas: listaColumnas,
+    mapeo,
+    columnas_sin_pregunta: columnasSinPregunta(listaColumnas, listaCampos),
   });
+});
+
+/* PUT /eventos/:id/padron/mapeo — qué columna del archivo llena cada pregunta.
+ *
+ * Existe para no obligar a nadie a una plantilla. El cruce por defecto va por
+ * el TEXTO del encabezado contra el enunciado de la pregunta, y eso falla en
+ * cuanto el archivo viene de otro sistema: «ciudad» no es «Ciudad de
+ * residencia». Con esto el organizador conecta sus columnas una vez y sube el
+ * archivo como lo tenga.
+ *
+ * Se guarda por **id** de pregunta, no por etiqueta: así renombrar una
+ * pregunta no rompe el padrón. Antes sí lo rompía, y en silencio. */
+router.put('/:id/padron/mapeo', exige(PERMS_PADRON), async (req, res) => {
+  const permiso = await puedeEditarEvento(req, req.params.id);
+  if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
+
+  const eventoId = req.params.id;
+  const entrante = req.body?.mapeo;
+  if (!entrante || typeof entrante !== 'object' || Array.isArray(entrante)) {
+    return res.status(400).json({ error: 'Falta el mapeo.' });
+  }
+
+  const { data: ev } = await supabase
+    .from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
+  if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
+  const pj = ev.page_json && typeof ev.page_json === 'object' ? ev.page_json : {};
+  const padronAntes = pj.padron && typeof pj.padron === 'object' ? pj.padron : {};
+
+  const { data: campos } = await supabase
+    .from('event_form_fields').select('id, etiqueta')
+    .eq('evento_id', eventoId).is('session_id', null);
+
+  const mapeo = limpiarMapeo(entrante, campos || [], padronAntes.columnas || []);
+
+  const { error } = await supabase.from('eventos')
+    .update({ page_json: { ...pj, padron: { ...padronAntes, mapeo } } })
+    .eq('id', eventoId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json({ mapeo });
 });
 
 /* DELETE /eventos/:id/padron — borra el padrón de este evento. */
@@ -677,7 +758,31 @@ router.get('/:id/padron/estado', exige(PERMS_PADRON), async (req, res) => {
     .from('padron_previo').select('id', { count: 'exact', head: true })
     .eq('evento_id', req.params.id);
   if (error) return res.json({ filas: 0, disponible: false });
-  res.json({ filas: count || 0, disponible: true });
+
+  /* Las columnas del último archivo y el mapeo actual, para que la pantalla de
+     mapeo se pueda abrir sin volver a subir nada. Sin esto, corregir una sola
+     columna obligaría a re-subir el archivo entero. */
+  const { data: ev } = await supabase
+    .from('eventos').select('page_json->padron').eq('id', req.params.id).maybeSingle();
+  const cfg = ev?.padron ?? ev?.page_json?.padron ?? {};
+  const { data: campos } = await supabase
+    .from('event_form_fields').select('id, etiqueta')
+    .eq('evento_id', req.params.id).is('session_id', null).order('orden', { ascending: true });
+  const listaCampos = campos || [];
+  const columnas = Array.isArray(cfg.columnas) ? cfg.columnas : [];
+
+  res.json({
+    filas: count || 0,
+    disponible: true,
+    columnas,
+    /* Se devuelve el mapeo COMPLETO —lo guardado más lo que el cruce por
+       nombre daría para lo que nadie tocó—, así la pantalla enseña de una lo
+       que va a pasar de verdad y no una tabla a medio llenar. */
+    mapeo: { ...mapeoSugerido(listaCampos, columnas), ...limpiarMapeo(cfg.mapeo, listaCampos, columnas) },
+    preguntas: listaCampos,
+    origen: cfg.origen || null,
+    subido_at: cfg.subido_at || null,
+  });
 });
 
 module.exports = router;

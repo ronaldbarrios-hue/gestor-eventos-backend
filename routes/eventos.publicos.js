@@ -18,6 +18,7 @@ const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { conSitio } = require('../lib/eventoSitio.js');
+const { bloqueDeSeccion } = require('../lib/bloquesLanding.js');
 const { authLimiter } = require('../config/security.js');
 const { hashDocumento, emparejar } = require('../lib/padronPrevio.js');
 
@@ -583,6 +584,32 @@ router.get('/slug/:slug', async (req, res) => {
   /* owner_id solo hacía falta para decidir si el dueño puede previsualizar
      su borrador (arriba) — no es dato del público, no viaja en la respuesta. */
   delete evento.owner_id;
+
+  /* ── `?seccion=` — la respuesta recortada para un embed ───────────────────
+     Quien incrusta UNA sección en su web recibía la landing ENTERA y se
+     quedaba con su bloque en el navegador. Todo lo demás —el resto de bloques
+     con su configuración, las otras páginas— seguía ahí, en el DOM de una web
+     ajena, invisible pero legible.
+
+     Se recorta aquí y no en una ruta nueva a propósito: la decisión de quién
+     puede ver este evento (borrador sólo para el dueño, `deleted_at`, los
+     contadores de arriba) ya está resuelta en esta función y no debe existir
+     una segunda copia que se olvide de la mitad.
+
+     El bloque sale de la landing ya validada, así que va tal cual: lo escribió
+     `fallaPaginas` y no hay nada nuevo que sanear. Cuando la sección no es un
+     bloque —el torneo, la agenda, el registro— o no está puesta en la página,
+     se van TODAS las páginas: esas secciones se alimentan del evento y el
+     frontend las pinta con sus valores por defecto. */
+  if (req.query.seccion !== undefined) {
+    const bloque = bloqueDeSeccion(evento.paginas, req.query.seccion);
+    evento.paginas = bloque ? [{ blocks: [bloque] }] : [];
+    if (evento.page_json && typeof evento.page_json === 'object') {
+      /* `blocks` suelto es la forma de antes de que hubiera páginas; se recorta
+         igual, que si no el recorte se salta por la puerta vieja. */
+      evento.page_json = { ...evento.page_json, pages: evento.paginas, blocks: [] };
+    }
+  }
 
   /* `conSitio` devuelve el evento con la marca, las páginas y el navbar
      también dentro de `page_json` (0064). La página pública lleva años

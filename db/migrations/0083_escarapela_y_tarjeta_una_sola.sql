@@ -1,14 +1,19 @@
 -- 0083 · La escarapela impresa y la tarjeta digital dejan de ser dos diseños.
--- PENDIENTE DE APLICAR — y de verdad, no como las otras. Comprobado el
--- 2026-09-02 contra producción: 0 de 33 eventos tienen `wallet.variantes`,
--- y 1 conserva el viejo `credenciales`.
+-- APLICADA el 2026-09-02. Comprobado antes y después contra producción:
 --
--- No rompe nada mientras no corra, y conviene saber por qué:
--- `walletVariantes()` (frontend, `src/lib/wallet.js:127`) siempre devuelve al
--- menos una variante, y si no hay `wallet` pero sí `credenciales` lo traduce en
--- caliente. Es decir, el fallback del código está haciendo el trabajo de esta
--- migración. Aplicarla sigue siendo lo correcto —deja el dato en su forma
--- nueva en vez de traducirlo en cada render—, pero no es urgente.
+--   antes:   33 eventos · 1 con `credenciales` · 0 con `wallet`
+--   tocó:    1 fila (la que el WHERE selecciona)
+--   después: 1 con `wallet.variantes` · 1 conserva `credenciales` · 0 pendientes
+--
+-- Se pudo aplicar sin miedo porque no destruye nada: **no borra
+-- `credenciales`**, así que volver atrás es quitar la clave `wallet` y ya. Eso
+-- y el `WHERE` —que la hace idempotente— eran las dos condiciones.
+--
+-- Y no era urgente, que es por lo que espero tanto: `walletVariantes()`
+-- (frontend, `src/lib/wallet.js:127`) siempre devuelve al menos una variante, y
+-- si no hay `wallet` pero sí `credenciales` lo traduce en caliente. El fallback
+-- del código estaba haciendo el trabajo de esta migración. Lo que se gana es
+-- dejar el dato en su forma nueva en vez de traducirlo en cada render.
 --
 -- Idempotente: se puede correr dos veces.
 --

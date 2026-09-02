@@ -190,6 +190,25 @@ test('sin puntos suficientes no descuenta ni crea el canje', async () => {
   assert.ok(!sim.sql.some(q => q.startsWith('UPDATE puntos_balance')));
 });
 
+test('premio gratis y sin fila de saldo previa no truena', async () => {
+  /* Antes de este fix: sin fila de puntos_balance, `bal` es undefined; con
+     costo_puntos en 0 la comprobación de saldo insuficiente no salta (0 < 0
+     es falso), así que llegaba al UPDATE de más abajo y `bal.id` sobre un
+     `bal` undefined tronaba — justo el único caso donde alguien SIN saldo
+     previo podía canjear algo. */
+  const sim = baseSimulada({
+    'FROM recompensas': { id: 'r1', activo: 1, stock: null, canjeados: 0, costo_puntos: 0, organizador_id: 'o1', audiencia: 'cliente', titulo: 'Sticker' },
+    // Sin entrada para 'FROM puntos_balance': el mock devuelve null, como
+    // haría MySQL real con alguien que nunca tuvo saldo.
+  });
+  const m = cargarContadores(sim);
+  const r = await m.canjearRecompensa('u1', 'r1');
+  assert.equal(r.saldo_restante, 0);
+  assert.ok(!sim.sql.some(q => q.startsWith('UPDATE puntos_balance')),
+    'sin fila que descontar, no debería ni intentar el UPDATE');
+  assert.ok(sim.sql.some(q => q.startsWith('INSERT INTO canjes')), 'el canje sí se crea');
+});
+
 test('una recompensa agotada se rechaza antes de mirar el saldo', async () => {
   const sim = baseSimulada({
     'FROM recompensas': { id: 'r1', activo: 1, stock: 5, canjeados: 5, costo_puntos: 10, organizador_id: 'o1', audiencia: 'cliente' },

@@ -210,10 +210,17 @@ async function canjearRecompensa(userId, recompensaId) {
       throw e;
     }
 
-    await cx.consultar(
-      'UPDATE puntos_balance SET puntos = puntos - ?, updated_at = NOW(6) WHERE id = ?',
-      [rec.costo_puntos, bal.id],
-    );
+    /* Si nunca hubo saldo (`bal` es undefined), la validación de arriba sólo
+       pudo pasar con `costo_puntos === 0` — un premio gratis. En ese caso no
+       hay fila que descontar ni falta hacerla: 0 puntos menos 0 sigue siendo
+       0. Sin este `if`, `bal.id` sobre un `bal` undefined tronaba justo en
+       ese caso, el único donde alguien sin saldo previo podía canjear algo. */
+    if (bal) {
+      await cx.consultar(
+        'UPDATE puntos_balance SET puntos = puntos - ?, updated_at = NOW(6) WHERE id = ?',
+        [rec.costo_puntos, bal.id],
+      );
+    }
     await cx.consultar('UPDATE recompensas SET canjeados = canjeados + 1 WHERE id = ?', [recompensaId]);
 
     const codigo = codigoCanje();

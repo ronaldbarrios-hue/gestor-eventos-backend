@@ -100,3 +100,49 @@ test('sin zonas declaradas no se revienta', () => {
   assert.deepEqual(standsPorZona([{ id: 'f1', zona_id: 'z1' }], []), {});
   assert.deepEqual(conZona(null, null), []);
 });
+
+/* ── Las dos altas de expositor deben coincidir en lo que decide si se VE ──
+ *
+ * Un expositor se puede crear desde dos pantallas y por dos rutas distintas
+ * sobre la misma tabla: «Stands» (`POST /:eventoId/expositores`) y «Rueda de
+ * negocios» (`POST /:eventoId/networking/expositores`). Esa duplicación está
+ * anotada como deuda; mientras exista, lo que NO puede pasar es que las dos
+ * guarden estados distintos.
+ *
+ * Y pasaba. `estado_ficha` nace en `'borrador'` y el directorio y el mapa
+ * PÚBLICOS filtran por `'completa'` (`routes/eventos.publicos.js`), así que un
+ * expositor creado desde Rueda de negocios se veía en el panel y el público no
+ * lo veía nunca. Sin aviso, y sin forma de arreglarlo desde esa pantalla,
+ * porque no tiene PATCH.
+ *
+ * Se comprueba sobre el fuente porque el fallo está en el INSERT, no en una
+ * función que se pueda llamar. Mismo enfoque que `montaje.test.js`. */
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('las dos rutas que crean un expositor lo dejan visible para el público', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'networking.js'), 'utf8');
+
+  /* Los dos manejadores de alta, cortados por su declaración de ruta. Se hace
+     así y no buscando los `.insert()` porque los dos no se parecen: el de
+     Stands arma un objeto `fila` aparte y el de Rueda de negocios inserta un
+     literal. Lo que importa es el manejador entero. */
+  const ALTAS = [
+    "router.post('/:eventoId/expositores'",
+    "router.post('/:eventoId/networking/expositores'",
+  ];
+
+  for (const firma of ALTAS) {
+    const desde = src.indexOf(firma);
+    assert.ok(desde !== -1, `ya no encuentro la ruta ${firma}: revisa la prueba`);
+    /* Hasta la siguiente ruta, que es donde acaba el manejador. */
+    const siguiente = src.indexOf('\nrouter.', desde + 1);
+    const cuerpo = src.slice(desde, siguiente === -1 ? undefined : siguiente);
+
+    assert.match(cuerpo, /estado_ficha\s*:\s*'completa'/,
+      `${firma} no deja la ficha en 'completa'. Un alta hecha por el organizador ` +
+      'debe quedar completa: `borrador` es para las fichas que crea el trigger de ' +
+      'una boleta-stand y completa el propio expositor. En `borrador`, el ' +
+      'directorio y el mapa públicos no la muestran nunca.');
+  }
+});

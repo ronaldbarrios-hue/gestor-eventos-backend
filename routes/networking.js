@@ -598,9 +598,30 @@ router.post('/:eventoId/networking/expositores', exige(PERMS_EXPOSITORES), async
     await assertOwner(eventoId, req.user.id);
     await assertCategoriaPermitida(eventoId);
 
+    /* `estado_ficha: 'completa'` no es un detalle: el directorio y el mapa
+       PÚBLICOS filtran por él (`routes/eventos.publicos.js`, dos consultas), y
+       la columna nace en `'borrador'`. Sin esto, un expositor creado aquí a
+       mano se veía en el panel y el público NO lo veía nunca, sin un solo
+       aviso — y desde esta pantalla tampoco se podía arreglar, porque no tiene
+       PATCH.
+
+       El `'borrador'` por defecto es correcto para el otro camino, que es el
+       que la columna tenía en mente: el trigger de la 0036 crea la ficha
+       cuando se paga una boleta-stand, y la completa el propio expositor desde
+       `/expositor/:codigo` con `marcar_completa` (ver `lib/avisoExpositor.js`).
+       Ahí hay alguien a quien esperar. Cuando la crea el organizador a mano no
+       hay nadie: la escribió él, y ya está completa. Es lo mismo que hace el
+       alta de Stands (`POST /:eventoId/expositores`). */
     const { data, error } = await supabase
       .from('networking_expositores')
-      .insert({ evento_id: eventoId, nombre: nombre.trim(), descripcion: descripcion || null, logo_url: logo_url || null, stand: stand || null })
+      .insert({
+        evento_id: eventoId,
+        nombre: nombre.trim(),
+        descripcion: descripcion || null,
+        logo_url: logo_url || null,
+        stand: stand || null,
+        estado_ficha: 'completa',
+      })
       .select()
       .single();
     if (error) return res.status(500).json({ error: error.message });

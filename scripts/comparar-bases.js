@@ -64,18 +64,65 @@ const clientes = {
   get bd()       { return require('../core/db/mysql.js').bd; },
 };
 
-/* Las tablas que importan, con su clave de orden. El orden tiene que ser
-   DETERMINISTA y el mismo en los dos lados, o la huella difiere sin que haya
-   ninguna diferencia real. `id` sirve en casi todas; las que no lo tienen van
-   con su clave natural. */
+/* TODAS las tablas de `db/esquema/01_tablas.sql` (70 al escribir esto), no un
+   subconjunto. Antes esta lista traía sólo 24 y el script imprimía "Todo
+   cuadra" igual, sin decir que dejaba fuera torneos, oauth_tokens,
+   discount_codes, evento_legal, padron_previo, email_cola y el resto — que es
+   justo el paso que decide si el corte se hace. Si el esquema gana una tabla
+   nueva y esta lista no se actualiza, `verificarCobertura()` (más abajo) lo
+   dice al arrancar en vez de callarlo. */
 const TABLAS = [
-  'eventos', 'profiles', 'tickets', 'ticket_types', 'event_members', 'event_roles',
-  'agenda_sessions', 'sesion_inscripciones', 'event_form_fields',
-  'networking_expositores', 'ticket_interacciones', 'ticket_movimientos',
-  'recompensas', 'canjes', 'puntos_balance', 'points_log',
-  'chat_channels', 'chat_messages', 'tareas', 'vacantes', 'postulaciones',
-  'payment_transactions', 'evento_motivos', 'zona_cortes',
+  'agenda_favoritos', 'agenda_sessions', 'api_tokens', 'audit_log', 'canjes',
+  'catalogo_roles', 'categorias', 'chat_channel_prefs', 'chat_channels', 'chat_messages',
+  'cobros_vacantes', 'discount_codes', 'email_cola', 'email_log', 'event_form_fields',
+  'event_members', 'event_requests', 'event_roles', 'event_views', 'event_waitlist',
+  'evento_alertas', 'evento_anuncios', 'evento_bolsa_puntos', 'evento_email_envios',
+  'evento_email_plantillas', 'evento_legal', 'evento_motivos', 'evento_smtp', 'eventos',
+  'missions', 'networking_citas', 'networking_expositores', 'networking_horarios',
+  'notificaciones', 'oauth_clients', 'oauth_codes', 'oauth_tokens', 'organizador_conexiones',
+  'padron_previo', 'payment_transactions', 'perfil_talento', 'points_log', 'postulaciones',
+  'profiles', 'promociones', 'puntos_balance', 'push_subscriptions', 'recompensas',
+  'recordatorio_inapp_log', 'referral_codes', 'sesion_inscripciones', 'speakers', 'sponsors',
+  'sugerencias_catalogo', 'sugerencias_dinamica', 'talento_resenas', 'tarea_log', 'tareas',
+  'ticket_interacciones', 'ticket_movimientos', 'ticket_types', 'tickets',
+  'torneo_categorias', 'torneo_equipos', 'torneo_partidos', 'torneos',
+  'user_badges', 'vacantes', 'waitlist', 'webhook_deliveries', 'webhooks', 'zona_cortes',
 ];
+
+/* Casi todas las tablas se ordenan y emparejan por `id`. Las que NO lo tienen
+   (comprobado contra `db/esquema/01_tablas.sql`, su `PRIMARY KEY` real) van
+   aquí con su clave natural — sin esto, `ORDER BY id` truena o empareja mal
+   en las seis que quedan fuera del patrón. */
+const CLAVE_POR_TABLA = {
+  chat_channel_prefs: ['channel_id', 'user_id'],
+  organizador_conexiones: ['owner_id', 'tipo'],
+  evento_bolsa_puntos: ['evento_id'],
+  evento_legal: ['evento_id'],
+  oauth_clients: ['client_id'],
+  oauth_codes: ['code_hash'],
+};
+const claveDe = (tabla) => CLAVE_POR_TABLA[tabla] || ['id'];
+const claveFila = (fila, clave) => clave.map(c => String(fila[c])).join('::');
+
+/* Si el esquema real gana una tabla y esta lista no se entera, mejor decirlo
+   fuerte que dejar que "Todo cuadra" hable de menos tablas de las que hay. No
+   se compara contra la base en vivo (eso costaría una conexión más sólo para
+   esto) — se compara contra el propio archivo de esquema, que es la fuente
+   que un humano edita cuando agrega una tabla. */
+function verificarCobertura() {
+  const fs = require('fs');
+  const path = require('path');
+  const ruta = path.join(__dirname, '..', 'db', 'esquema', '01_tablas.sql');
+  let texto;
+  try { texto = fs.readFileSync(ruta, 'utf8'); } catch { return; }   // en cPanel puede no estar
+  const reales = [...texto.matchAll(/CREATE TABLE `([a-z_0-9]+)`/gi)].map(m => m[1]);
+  const conocidas = new Set(TABLAS);
+  const nuevas = reales.filter(t => !conocidas.has(t));
+  if (nuevas.length) {
+    console.log(`\n⚠ ${nuevas.length} tabla(s) en el esquema que este script todavía no compara: ${nuevas.join(', ')}.`);
+    console.log('  Añádelas a TABLAS en scripts/comparar-bases.js antes de fiarte del corte.\n');
+  }
+}
 
 /* ── Normalización ─────────────────────────────────────────────────────── */
 
@@ -133,11 +180,13 @@ function huellaFila(fila, columnas) {
 async function leerSupabase(tabla) {
   /* En páginas: PostgREST devuelve 1.000 filas por defecto y pedir «todo» sin
      paginar es exactamente el fallo que este script existe para cazar. */
+  const clave = claveDe(tabla);
   const filas = [];
   const TAM = 1000;
   for (let desde = 0; ; desde += TAM) {
-    const { data, error } = await clientes.supabase
-      .from(tabla).select('*').order('id', { ascending: true }).range(desde, desde + TAM - 1);
+    let q = clientes.supabase.from(tabla).select('*').range(desde, desde + TAM - 1);
+    for (const c of clave) q = q.order(c, { ascending: true });
+    const { data, error } = await q;
     if (error) throw new Error(`Supabase/${tabla}: ${error.message}`);
     filas.push(...(data || []));
     if (!data || data.length < TAM) break;
@@ -146,7 +195,8 @@ async function leerSupabase(tabla) {
 }
 
 async function leerMysql(tabla) {
-  return clientes.bd('datos').consultar(`SELECT * FROM \`${tabla}\` ORDER BY id ASC`);
+  const orden = claveDe(tabla).map(c => `\`${c}\``).join(', ');
+  return clientes.bd('datos').consultar(`SELECT * FROM \`${tabla}\` ORDER BY ${orden} ASC`);
 }
 
 /* ── La comparación ────────────────────────────────────────────────────── */
@@ -172,16 +222,18 @@ async function compararTabla(tabla, { detalle }) {
     return { tabla, estado: 'DIFIERE', nota: `faltan columnas en MySQL: ${faltan.join(', ')}` };
   }
 
-  const porId = new Map(my.map(f => [String(f.id), f]));
+  const clave = claveDe(tabla);
+  const porId = new Map(my.map(f => [claveFila(f, clave), f]));
   const distintas = [];
   for (const filaPg of pg) {
-    const filaMy = porId.get(String(filaPg.id));
-    if (!filaMy) { distintas.push({ id: filaPg.id, motivo: 'no está en MySQL' }); continue; }
+    const id = claveFila(filaPg, clave);
+    const filaMy = porId.get(id);
+    if (!filaMy) { distintas.push({ id, motivo: 'no está en MySQL' }); continue; }
     if (huellaFila(filaPg, columnas) !== huellaFila(filaMy, columnas)) {
       const campos = detalle
         ? columnas.filter(c => JSON.stringify(normalizar(filaPg[c])) !== JSON.stringify(normalizar(filaMy[c])))
         : null;
-      distintas.push({ id: filaPg.id, motivo: campos ? `difieren: ${campos.join(', ')}` : 'contenido distinto' });
+      distintas.push({ id, motivo: campos ? `difieren: ${campos.join(', ')}` : 'contenido distinto' });
     }
     if (distintas.length >= 20) break;   // con veinte ya se ve el patrón
   }
@@ -205,6 +257,8 @@ async function main() {
     process.exit(1);
   }
 
+  if (!pedidas.length) verificarCobertura();
+
   console.log(`\nComparando ${tablas.length} tabla(s)…\n`);
   const resultados = [];
   for (const t of tablas) {
@@ -222,10 +276,10 @@ async function main() {
     if (!detalle) console.log('Corre otra vez con --detalle para ver qué columnas difieren.\n');
     process.exit(1);
   }
-  console.log('Todo cuadra. Las dos bases dicen lo mismo.\n');
+  console.log(`Todo cuadra en las ${resultados.length} tabla(s) comparadas. Las dos bases dicen lo mismo.\n`);
   process.exit(0);
 }
 
 if (require.main === module) main().catch(e => { console.error('\n', e.message, '\n'); process.exit(1); });
 
-module.exports = { normalizar, ordenarClaves, huellaFila, TABLAS };
+module.exports = { normalizar, ordenarClaves, huellaFila, TABLAS, CLAVE_POR_TABLA, claveDe, claveFila };

@@ -13,7 +13,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { normalizar, ordenarClaves, huellaFila, TABLAS } = require('../scripts/comparar-bases.js');
+const {
+  normalizar, ordenarClaves, huellaFila, TABLAS, CLAVE_POR_TABLA, claveDe, claveFila,
+} = require('../scripts/comparar-bases.js');
 
 /* ── Lo que SÍ tiene que igualar ──────────────────────────────────────── */
 
@@ -121,4 +123,47 @@ test('la lista de tablas no tiene repetidos', () => {
      script que ya es lento. */
   assert.equal(new Set(TABLAS).size, TABLAS.length);
   assert.ok(TABLAS.includes('eventos') && TABLAS.includes('tickets'));
+});
+
+test('la lista de tablas cubre el esquema, no un subconjunto', () => {
+  /* Antes traía sólo 24 de las ~70 y "Todo cuadra" no decía que dejaba fuera
+     torneos, oauth_tokens, discount_codes, evento_legal, padron_previo,
+     email_cola... — justo el paso que decide si el corte se hace. */
+  for (const t of ['torneos', 'oauth_tokens', 'discount_codes', 'evento_legal', 'padron_previo', 'email_cola']) {
+    assert.ok(TABLAS.includes(t), `falta "${t}"`);
+  }
+  assert.ok(TABLAS.length >= 65, `${TABLAS.length} tablas es sospechosamente pocas`);
+});
+
+/* ── La clave natural de las tablas sin `id` ─────────────────────────── */
+
+test('las tablas sin id van con su clave natural, comprobada contra el esquema', () => {
+  assert.deepEqual(claveDe('chat_channel_prefs'), ['channel_id', 'user_id']);
+  assert.deepEqual(claveDe('organizador_conexiones'), ['owner_id', 'tipo']);
+  assert.deepEqual(claveDe('evento_bolsa_puntos'), ['evento_id']);
+  assert.deepEqual(claveDe('evento_legal'), ['evento_id']);
+  assert.deepEqual(claveDe('oauth_clients'), ['client_id']);
+  assert.deepEqual(claveDe('oauth_codes'), ['code_hash']);
+});
+
+test('cualquier otra tabla usa id por defecto', () => {
+  assert.deepEqual(claveDe('eventos'), ['id']);
+  assert.deepEqual(claveDe('una_tabla_que_no_existe'), ['id']);
+});
+
+test('claveFila junta la clave compuesta en un solo string estable', () => {
+  const clave = claveDe('chat_channel_prefs');
+  const a = claveFila({ channel_id: 'c1', user_id: 'u1' }, clave);
+  const b = claveFila({ channel_id: 'c1', user_id: 'u1' }, clave);
+  const distinta = claveFila({ channel_id: 'c1', user_id: 'u2' }, clave);
+  assert.equal(a, b);
+  assert.notEqual(a, distinta);
+});
+
+test('CLAVE_POR_TABLA no declara ninguna tabla que ya no exista en TABLAS', () => {
+  /* Si una tabla de la 0079/0080 se renombra o se quita, esto lo cazaría en
+     vez de dejar una clave natural huérfana apuntando a nada. */
+  for (const tabla of Object.keys(CLAVE_POR_TABLA)) {
+    assert.ok(TABLAS.includes(tabla), `"${tabla}" tiene clave natural pero no está en TABLAS`);
+  }
 });

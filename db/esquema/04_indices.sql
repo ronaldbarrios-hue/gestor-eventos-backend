@@ -17,6 +17,7 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 SET NAMES utf8mb4;
+SET time_zone = '+00:00';
 
 CREATE UNIQUE INDEX `agenda_favoritos_session_id_user_id_key` ON `agenda_favoritos` (`session_id`, `user_id`);
 CREATE INDEX `agenda_evento_idx` ON `agenda_sessions` (`evento_id`);

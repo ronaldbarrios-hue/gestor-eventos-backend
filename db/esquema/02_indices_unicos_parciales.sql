@@ -29,6 +29,9 @@
  * pueden escribir por error desde el código.
  */
 
+SET NAMES utf8mb4;
+SET time_zone = '+00:00';
+
 /* ══ Los cuatro que se traducen solos ════════════════════════════════════ */
 
 /* WHERE dm_key IS NOT NULL — y dm_key está en la clave. */

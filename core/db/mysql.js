@@ -134,6 +134,12 @@ function poolDe(nombre) {
        Con `dateStrings` en false, mysql2 crea objetos Date en la zona del
        proceso y las horas de los eventos se desplazan al pasar por JSON. */
     dateStrings: true,
+    /* Sin esto, `NUMERIC`/`DECIMAL` llegan como texto ("12.50") mientras
+       Supabase/PostgREST da la misma columna como número (12.5) — la misma
+       fila con el mismo valor huellaba distinto en `comparar-bases.js` sólo
+       por cómo la representa el driver, un falso DIFIERE garantizado en
+       cualquier columna de dinero o puntaje. */
+    decimalNumbers: true,
   });
 
   /* La zona de la SESIÓN, en cada conexión nueva del pool. Va aquí y no en una

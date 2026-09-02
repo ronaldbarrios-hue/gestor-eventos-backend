@@ -3,6 +3,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { exige, sesion } = require('../core/permisos');
+const { auditar } = require('../lib/auditar.js');
 
 const router = express.Router();
 
@@ -209,6 +210,11 @@ router.post('/:eventoId/sessions', exige(PERMS_AGENDA), async (req, res) => {
         formulario_modo: formulario_modo || 'ninguno',
       }).select(`*, speaker:speakers!speaker_id(id, nombre, foto_url, empresa)`).single();
     if (error) return res.status(500).json({ error: error.message });
+    /* La agenda no se auditaba, y es de lo que más se toca entre varias
+       personas: quien monta el programa, quien lo corrige y quien mueve una
+       charla de sala son a menudo tres. El `titulo` va en el detalle para que
+       la actividad reciente pueda decir QUÉ sub-evento, no sólo que hubo uno. */
+    auditar(req, eventoId, 'sesion.crear', { entidad: 'sesion', entidadId: data.id, detalle: { titulo: data.titulo } });
     res.status(201).json({ session: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -247,6 +253,10 @@ router.patch('/:eventoId/sessions/:sessionId', exige(PERMS_AGENDA), async (req, 
       .eq('id', sessionId).eq('evento_id', eventoId)
       .select(`*, speaker:speakers!speaker_id(id, nombre, foto_url, empresa)`).single();
     if (error) return res.status(500).json({ error: error.message });
+    auditar(req, eventoId, 'sesion.editar', {
+      entidad: 'sesion', entidadId: sessionId,
+      detalle: { titulo: data.titulo, campos: Object.keys(updates) },
+    });
     res.json({ session: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -257,9 +267,17 @@ router.delete('/:eventoId/sessions/:sessionId', exige(PERMS_AGENDA), async (req,
   const { eventoId, sessionId } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
+    /* El título se lee ANTES de borrar: después ya no hay a quién
+       preguntárselo, y «borró un sub-evento» sin decir cuál no sirve para
+       reconstruir qué pasó. */
+    const { data: previa } = await supabase
+      .from('agenda_sessions').select('titulo').eq('id', sessionId).eq('evento_id', eventoId).maybeSingle();
     const { error } = await supabase
       .from('agenda_sessions').delete().eq('id', sessionId).eq('evento_id', eventoId);
     if (error) return res.status(500).json({ error: error.message });
+    auditar(req, eventoId, 'sesion.borrar', {
+      entidad: 'sesion', entidadId: sessionId, detalle: { titulo: previa?.titulo || null },
+    });
     res.json({ ok: true });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });

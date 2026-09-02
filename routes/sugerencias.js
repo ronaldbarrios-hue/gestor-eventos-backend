@@ -1,4 +1,19 @@
-/* GESTEK — Pedir una dinámica que la plataforma todavía no tiene.
+/* GESTEK — Los dos buzones: «falta esto en la lista» y «falta esta dinámica».
+
+   Son dos cosas distintas y por eso son dos tablas y dos rutas:
+
+     · `sugerencias_catalogo` (0063) — la lista se quedó corta. Una línea, al
+       lado del `<select>` que no tenía lo suyo. Sin mínimo de longitud: quien
+       escribe «feria de adopción» ya dijo todo lo que hacía falta.
+     · `sugerencias_dinamica` (0075) — pedir una mecánica que no existe. Ahí sí
+       se exige explicar cómo funciona, porque sin eso no se puede construir.
+
+   Confundirlas fue un fallo real: el buzón de catálogo llamaba a una ruta que
+   nunca se escribió (`/me/sugerencias`) y devolvía 404 desde el 2026-08-12,
+   en las dos pantallas donde está puesto. La tabla existía, el formulario
+   existía, faltaba esto de en medio.
+
+   ── Pedir una dinámica que la plataforma todavía no tiene ──
 
    La categoría de un espacio la fija la plataforma (charla, taller, competencia,
    stand…) y eso es deliberado: es lo que permite que un torneo active sus
@@ -96,4 +111,77 @@ router.get('/sugerencias/dinamica', verifySupabaseJWT, sesion("Cuelga del usuari
   res.json({ sugerencias: data || [] });
 });
 
+/* ── El otro buzón: la lista se quedó corta ────────────────────────────────
+ *
+ * Monta sobre `sugerencias_catalogo` (0063). A diferencia del de dinámicas,
+ * aquí NO hay mínimo de longitud a propósito: se pregunta al lado del
+ * desplegable, en el segundo en que alguien no encuentra lo suyo, y exigirle
+ * un párrafo ahí es la forma segura de no recibir ninguna respuesta.
+ *
+ * `catalogo` se valida contra la misma lista que el CHECK de la tabla, para
+ * devolver un 400 legible en vez de un error de Postgres.
+ */
+const CATALOGOS = ['evento', 'vacante'];
+const MAX_TEXTO = 400;          // igual que el `maxLength` del formulario
+const MAX_CONTEXTO = 2000;      // serializado; es contexto, no un adjunto
+
+/* Aparte del handler para poder probarla: es la única parte con reglas. */
+function validarCatalogo(body) {
+  const catalogo = String(body?.catalogo || '').trim();
+  const texto = String(body?.texto || '').trim();
+
+  if (!CATALOGOS.includes(catalogo)) return { error: 'No sé de qué lista hablas.' };
+  if (!texto) return { error: 'Escribe qué te faltaba.' };
+  if (texto.length > MAX_TEXTO) return { error: `No puede pasar de ${MAX_TEXTO} caracteres.` };
+
+  /* El contexto llega libre desde el formulario y se guarda tal cual, pero
+     acotado: sirve para entender la sugerencia meses después, no para meter
+     un objeto de cualquier tamaño en la fila. Un array no es contexto. */
+  let contexto = {};
+  const bruto = body?.contexto;
+  if (bruto && typeof bruto === 'object' && !Array.isArray(bruto)) {
+    contexto = JSON.stringify(bruto).length <= MAX_CONTEXTO ? bruto : {};
+  }
+
+  return { ok: true, fila: { catalogo, texto, contexto } };
+}
+
+/* POST /me/sugerencias — y también /sugerencias, porque este router se monta
+   en los dos sitios (index.js). Las dos piden sesión. */
+router.post('/sugerencias', verifySupabaseJWT, sesion('Cuelga del usuario: se guarda a su nombre y sólo él la vuelve a leer.'), async (req, res) => {
+  const v = validarCatalogo(req.body);
+  if (v.error) return res.status(400).json({ error: v.error });
+
+  const { data, error } = await supabase
+    .from('sugerencias_catalogo')
+    .insert({ ...v.fila, user_id: req.user.id })
+    .select('id, catalogo, estado, created_at')
+    .single();
+
+  if (error) {
+    if (/sugerencias_catalogo|does not exist/i.test(error.message)) {
+      return res.status(503).json({ error: 'Falta aplicar la migración 0063.' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json({ ok: true, sugerencia: data });
+});
+
+/* GET /me/sugerencias — las propias. */
+router.get('/sugerencias', verifySupabaseJWT, sesion('Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro.'), async (req, res) => {
+  const { data, error } = await supabase
+    .from('sugerencias_catalogo')
+    .select('id, catalogo, texto, contexto, estado, created_at')
+    .eq('user_id', req.user.id)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) {
+    if (/sugerencias_catalogo|does not exist/i.test(error.message)) return res.json({ sugerencias: [] });
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ sugerencias: data || [] });
+});
+
 module.exports = router;
+module.exports._test = { validar, validarCatalogo, CATALOGOS, MAX_TEXTO };

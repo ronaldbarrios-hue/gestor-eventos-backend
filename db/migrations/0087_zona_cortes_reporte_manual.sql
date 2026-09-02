@@ -1,5 +1,6 @@
 -- 0087 · zona_cortes: tipo (reset/auto/manual), foto y nota del "tomar reporte".
--- Idempotente. PENDIENTE DE APLICAR.
+-- Idempotente. APLICADA — verificado contra produccion el 2026-09-02
+-- (information_schema, solo lectura): existen zona_cortes.tipo y foto_url.
 --
 -- Hasta ahora `zona_cortes` sólo servía para un "limpiar el contador"
 -- (motivo implícito: reset). El Camino unitario del 2026-09-01 agrega el

@@ -1,5 +1,13 @@
 -- 0081 · perfil_talento deja de tener foto, teléfono y ciudad.
--- PENDIENTE DE APLICAR.
+-- PENDIENTE DE APLICAR — y de verdad, no como las otras. Comprobado el
+-- 2026-09-02 contra producción: `perfil_talento.foto_url` SIGUE EXISTIENDO.
+--
+-- Consecuencia de que no se haya corrido: los datos de persona que esta
+-- migración venía a quitar todavía están guardados. No rompe nada funcional,
+-- pero la intención de privacidad no está cumplida hasta que corra.
+--
+-- Y es `DROP COLUMN`: revertirla no devuelve los datos. Antes de aplicarla,
+-- comprobar cuántas filas los tienen rellenos y si hay que exportarlos.
 --
 -- Por qué: los mismos tres datos se editaban en dos sitios que no se hablan —
 -- los metadatos del perfil general (Ajustes → Mi Perfil, vía auth.updateUser

@@ -532,6 +532,7 @@ CREATE TABLE `networking_expositores` (
   `orden` INT NOT NULL DEFAULT 0,
   `cuota_puntos` INT NULL,
   `galeria` JSON NOT NULL DEFAULT (CAST('[]' AS JSON)),
+  `zona_id` VARCHAR(255) NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 

@@ -19,6 +19,9 @@ const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { conSitio } = require('../lib/eventoSitio.js');
 const { bloqueDeSeccion } = require('../lib/bloquesLanding.js');
+const {
+  COLS_TARJETA, COLS_DIRECTORIO, CAMPOS_EDITABLES_EXPOSITOR, conZona,
+} = require('../lib/expositores.js');
 const { authLimiter } = require('../config/security.js');
 const { hashDocumento, emparejar } = require('../lib/padronPrevio.js');
 
@@ -204,7 +207,7 @@ router.get('/ticket/:codigo', async (req, res) => {
       let expos = [];
       if (ids.length) {
         const { data: e } = await supabase.from('networking_expositores')
-          .select('id, nombre, logo_url, stand').in('id', ids);
+          .select(COLS_TARJETA).in('id', ids);
         expos = e || [];
       }
       const meta = Number(pasa.meta) > 0 ? Number(pasa.meta) : ids.length;
@@ -363,10 +366,12 @@ router.get('/expositor/:codigo', async (req, res) => {
 });
 
 /* PUT /eventos/publicos/expositor/:codigo — la empresa edita SU ficha.
-   Nunca puede tocar evento_id, ticket_id ni activo. */
-const CAMPOS_FICHA = ['nombre', 'descripcion', 'logo_url', 'stand', 'tipo_persona',
-  'contacto_nombre', 'contacto_email', 'contacto_telefono', 'sitio_web', 'redes',
-  'categoria_negocio', 'galeria'];
+   Nunca puede tocar evento_id, ticket_id ni activo.
+
+   `zona_id` tampoco: dónde se monta cada stand lo decide el plano del evento,
+   no el expositor. Ver `lib/expositores.js`, donde esa asimetría está escrita
+   junto a la lista del organizador para que se puedan comparar. */
+const CAMPOS_FICHA = CAMPOS_EDITABLES_EXPOSITOR;
 
 router.put('/expositor/:codigo', async (req, res) => {
   const { error, ticket, ficha } = await resolverFichaExpositor(req.params.codigo);
@@ -480,10 +485,15 @@ router.get('/slug/:slug', async (req, res) => {
   try {
     const { data: fichas } = await supabase
       .from('networking_expositores')
-      .select('id, nombre, descripcion, logo_url, galeria, stand, tipo_persona, sitio_web, redes, categoria_negocio, orden')
+      .select(COLS_DIRECTORIO)
       .eq('evento_id', evento.id).eq('activo', true).eq('estado_ficha', 'completa')
       .order('orden', { ascending: true }).order('nombre', { ascending: true });
-    const lista = fichas || [];
+    /* Con el nombre de la zona resuelto: la ficha guarda el id (0088) y quien
+       mira el directorio necesita leer "Zona Gamer", no un identificador. Una
+       zona que ya no existe deja `zona_nombre` en null y la ficha sale igual —
+       el stand sigue estando, lo que caducó es su ubicación. */
+    const zonas = await zonasDelEvento(evento.id).catch(() => []);
+    const lista = conZona(fichas || [], zonas);
     if (lista.length) {
       const { data: franjas } = await supabase
         .from('agenda_sessions').select('id, titulo, inicio, fin, ubicacion, expositor_id')
@@ -799,7 +809,7 @@ router.get('/slug/:slug/ranking', async (req, res) => {
     /* Sólo fichas publicadas: un expositor que aún no completó la suya no
        tiene por qué aparecer con su nombre interno en la web de nadie. */
     const { data: exps } = await supabase.from('networking_expositores')
-      .select('id, nombre, logo_url, stand')
+      .select(COLS_TARJETA)
       .in('id', ids).eq('activo', true).eq('estado_ficha', 'completa');
     fichas = exps || [];
   }

@@ -164,3 +164,72 @@ test('un bloque con claves de más se rechaza, no sólo con campos de más', () 
   assert.ok(f && f.includes('script'), 'tiene que nombrar la clave sobrante');
   assert.equal(fallaBloque({ id: 'b1', type: 'texto', data: {} }), null, 'id sí es suyo');
 });
+
+/* ── Los bloques de sistema y su presentación ──────────────────────────────
+ *
+ * Por qué existe esto: los siete bloques de sistema se declararon con
+ * `campos: {}` —«el contenido sale del evento, no tiene ajustes»— y era falso.
+ * El editor monta `ControlesPresentacion` en el envoltorio COMÚN de todas las
+ * secciones (fondo, aire, alineación, ancho, título), y Boletas además tiene
+ * los suyos (encabezado, columnas, texto del botón).
+ *
+ * Como `fallaBloque` rechaza los campos de más, el resultado era que guardar
+ * la landing devolvía 400 en cuanto alguien tocaba cualquiera de esos
+ * controles. La vista previa funcionaba —el frontend no valida— así que el
+ * fallo aparecía al guardar, hablando de un campo que la persona no sabía que
+ * existía.
+ *
+ * Las pruebas de arriba no lo cazaron porque sólo cubren bloques `custom`
+ * (texto, hero, mapa, faq), que sí declaraban sus campos. */
+
+test('un bloque de sistema acepta los controles de presentación del editor', () => {
+  /* Las cinco perillas que ControlesPresentacion escribe, de golpe. */
+  assert.equal(fallaBloque({
+    id: 'sys_titulo', type: 'titulo',
+    data: { titulo: 'Sobre el evento', fondo: 'suave', espaciado: 'amplio', alineacion: 'centro', ancho: 'ancho' },
+  }), null);
+
+  /* Y en un bloque propio, porque el envoltorio es el mismo para todos. */
+  assert.equal(fallaBloque({ id: 'b1', type: 'faq', data: { fondo: 'contorno' } }), null);
+});
+
+test('las opciones de presentación son las mismas que ofrece el editor', () => {
+  /* Si en el editor se añade una opción y aquí no, guardar vuelve a fallar.
+     Esta prueba es el recordatorio. */
+  for (const v of ['ninguno', 'suave', 'marcado', 'contorno']) {
+    assert.equal(fallaBloque({ id: 'x', type: 'titulo', data: { fondo: v } }), null, `fondo ${v}`);
+  }
+  for (const v of ['compacto', 'normal', 'amplio']) {
+    assert.equal(fallaBloque({ id: 'x', type: 'titulo', data: { espaciado: v } }), null, `espaciado ${v}`);
+  }
+  for (const v of ['izquierda', 'centro']) {
+    assert.equal(fallaBloque({ id: 'x', type: 'titulo', data: { alineacion: v } }), null, `alineacion ${v}`);
+  }
+  for (const v of ['estrecho', 'normal', 'ancho', 'completo']) {
+    assert.equal(fallaBloque({ id: 'x', type: 'titulo', data: { ancho: v } }), null, `ancho ${v}`);
+  }
+  /* Y una que no está: el contrato sigue siendo cerrado. */
+  assert.ok(fallaBloque({ id: 'x', type: 'titulo', data: { fondo: 'neon' } }));
+});
+
+test('el bloque de Boletas acepta lo que su editor deja configurar', () => {
+  assert.equal(fallaBloque({
+    id: 'sys_tickets', type: 'tickets',
+    data: { encabezado: 'Boletas disponibles', columnas: 2, texto_boton: 'Quiero mi entrada' },
+  }), null);
+
+  /* Una y dos columnas, que es lo que ofrece el editor, y nada más. */
+  assert.equal(fallaBloque({ id: 'x', type: 'tickets', data: { columnas: 1 } }), null);
+  assert.ok(fallaBloque({ id: 'x', type: 'tickets', data: { columnas: 5 } }),
+    'el editor sólo ofrece 1 o 2: 5 no debe pasar');
+  assert.ok(fallaBloque({ id: 'x', type: 'tickets', data: { loQueSea: 1 } }),
+    'un campo que nadie lee sigue rechazándose');
+});
+
+test('presentacion y ajustes propios conviven en el mismo bloque', () => {
+  /* El caso real: alguien personaliza Boletas Y le pone fondo. */
+  assert.equal(fallaBloque({
+    id: 'sys_tickets', type: 'tickets',
+    data: { encabezado: 'X', columnas: 1, texto_boton: 'Y', fondo: 'marcado', ancho: 'completo', oculto: false },
+  }), null);
+});

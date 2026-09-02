@@ -13,6 +13,7 @@ const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { COLUMNAS_CAMPO, validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
 const { auditar } = require('../lib/auditar.js');
 const { zonasDelEvento, ocupacion, juntar, agendaPorZona } = require('../lib/aforoZonas.js');
+const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -746,7 +747,19 @@ router.get('/:eventoId/mapa/vivo', sesion('Lo opera quien está en la puerta: la
        hay un día entero de cosas: sin esto, el clic contesta "hay 40 personas"
        y deja sin contestar "¿40 personas viendo qué?". */
     const agenda = await agendaPorZona(eventoId, zonasBase).catch(() => ({}));
-    const zonas = zonasBase.map(z => ({ ...z, ...(agenda[z.id] || { agenda: [], ahora: [], siguiente: null }) }));
+    /* Y quién está montado ahí. La zona no sólo tiene un aforo y una agenda:
+       tiene stands, y hasta ahora para saber cuáles había que ir a otra
+       pantalla y cruzarlo a mano. `standsPorZona` ya existe (lib/expositores.js,
+       migración 0088) — sólo faltaba usarla aquí. */
+    const { data: fichas } = await supabase
+      .from('networking_expositores').select(COLS_TARJETA)
+      .eq('evento_id', eventoId).eq('activo', true);
+    const standsPorZonaId = standsPorZona(fichas || [], zonasBase);
+    const zonas = zonasBase.map(z => ({
+      ...z,
+      ...(agenda[z.id] || { agenda: [], ahora: [], siguiente: null }),
+      stands: standsPorZonaId[z.id] || [],
+    }));
 
     /* Puertas: una cuenta por puerta y no una lectura de todas las boletas.
        Traerlas para sumarlas en JS volvería a chocar con el tope de mil filas

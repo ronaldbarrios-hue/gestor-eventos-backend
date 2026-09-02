@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const {
   normalizarDocumento, hashDocumento, salDelEvento,
   emparejar, columnasSinPregunta, extraerDocumento,
+  limpiarMapeo, mapeoSugerido, filasSinCruce,
 } = require('../lib/padronPrevio.js');
 
 const EV_A = '11111111-1111-1111-1111-111111111111';
@@ -105,4 +106,92 @@ test('columnasSinPregunta dice qué trae el archivo que nadie recoge', () => {
      te falta esta pregunta». */
   const sobran = columnasSinPregunta(['Nombre', 'Empresa', 'Cargo'], [{ etiqueta: 'nombre' }]);
   assert.deepEqual(sobran, ['Empresa', 'Cargo']);
+});
+
+/* ── El mapeo de columnas ──────────────────────────────────────────────────
+ *
+ * De dónde viene: un organizador subió 4.124 personas y el prellenado no
+ * reconoció a nadie. La causa no era el tamaño — era que el cruce va por el
+ * TEXTO del encabezado contra el enunciado de la pregunta, y sus encabezados
+ * eran los nombres internos del sistema de origen: `ciudad` no es «Ciudad de
+ * residencia» y `barrio_vereda` no es «Barrio o vereda». De cinco preguntas
+ * cruzaba una.
+ *
+ * El mapeo lo arregla sin obligar a nadie a renombrar su archivo. Lo que se
+ * prueba aquí es sobre todo que NO rompa el cruce por nombre, que es lo que
+ * usan los eventos que hoy funcionan. */
+
+const CAMPOS_REALES = [
+  { id: 'f_edad',   etiqueta: 'Edad' },
+  { id: 'f_ciudad', etiqueta: 'Ciudad de residencia' },
+  { id: 'f_barrio', etiqueta: 'Barrio o vereda' },
+  { id: 'f_comuna', etiqueta: 'Comuna' },
+];
+/* Los encabezados tal cual venían en el archivo que destapó el problema. */
+const FILA_REAL = {
+  ciudad: 'Ibagué', barrio_vereda: 'El Salado', comuna: '10',
+  fecha_nacimiento: '2004-05-01', 'nombre completo': 'Ana',
+};
+const COLUMNAS_REALES = Object.keys(FILA_REAL);
+
+test('sin mapeo se conserva el cruce por nombre — y sólo cruza lo que coincide', () => {
+  /* Ésta es la prueba que importa: la primera versión del mapeo usaba
+     `mapeo && mapeo[id]`, que da `null` cuando no hay mapeo, y trataba ese
+     `null` como «el archivo no trae esta pregunta». Resultado: sin mapeo no se
+     llenaba NADA, o sea que habría desactivado en silencio el prellenado de
+     todos los eventos que ya funcionaban. */
+  const { respuestas, faltan } = emparejar(FILA_REAL, CAMPOS_REALES);
+  assert.deepEqual(Object.keys(respuestas), ['f_comuna'],
+    'sólo «Comuna» coincide letra por letra con una columna');
+  assert.equal(faltan.length, 3);
+});
+
+test('con mapeo se llenan las preguntas cuyo encabezado NO coincidía', () => {
+  const mapeo = { f_ciudad: 'ciudad', f_barrio: 'barrio_vereda', f_comuna: 'comuna', f_edad: '' };
+  const { respuestas, faltan } = emparejar(FILA_REAL, CAMPOS_REALES, mapeo);
+  assert.deepEqual(respuestas, { f_ciudad: 'Ibagué', f_barrio: 'El Salado', f_comuna: '10' });
+  /* «Edad» sigue faltando, y debe: el archivo trae fecha de nacimiento, que es
+     otro dato. Dejarla en blanco es la respuesta correcta, no un olvido. */
+  assert.deepEqual(faltan.map(f => f.etiqueta), ['Edad']);
+});
+
+test('una pregunta en blanco en el mapeo es una DECISIÓN, no un olvido', () => {
+  /* Si el organizador dice «esta pregunta no la trae mi archivo», no se debe
+     volver a adivinar por nombre a sus espaldas. */
+  const { respuestas } = emparejar(FILA_REAL, CAMPOS_REALES, { f_comuna: '' });
+  assert.equal(respuestas.f_comuna, undefined,
+    'estaba en blanco a propósito: no se cae al cruce por nombre');
+});
+
+test('el mapeo apunta a la columna por su nombre exacto, con espacios y acentos', () => {
+  const campos = [{ id: 'f_nom', etiqueta: 'Cómo te llamas' }];
+  const { respuestas } = emparejar(FILA_REAL, campos, { f_nom: 'nombre completo' });
+  assert.equal(respuestas.f_nom, 'Ana');
+});
+
+test('mapeoSugerido ofrece de partida lo que el cruce por nombre ya daría', () => {
+  assert.deepEqual(mapeoSugerido(CAMPOS_REALES, COLUMNAS_REALES), { f_comuna: 'comuna' });
+});
+
+test('limpiarMapeo descarta preguntas y columnas que no existen', () => {
+  const sucio = {
+    f_ciudad: 'ciudad',                 // válido
+    f_inventado: 'ciudad',              // la pregunta no existe
+    f_barrio: 'columna_que_no_existe',  // la columna no existe
+    f_edad: '',                         // en blanco: se conserva
+    f_comuna: { raro: true },           // ni siquiera es texto
+  };
+  assert.deepEqual(limpiarMapeo(sucio, CAMPOS_REALES, COLUMNAS_REALES),
+    { f_ciudad: 'ciudad', f_edad: '' });
+});
+
+test('filasSinCruce cuenta las filas que no llenarían ni una pregunta', () => {
+  /* El número que faltaba en la subida. En el caso real, 3.624 de 4.124 filas
+     traían sólo nombre y apellidos: la subida decía «4.124 personas en el
+     padrón» y un padrón inútil se veía igual que uno bueno. */
+  const soloNombre = { apellidos: 'Pérez', 'nombre completo': 'Ana' };
+  const mapeo = { f_ciudad: 'ciudad', f_barrio: 'barrio_vereda', f_comuna: 'comuna' };
+  assert.equal(filasSinCruce([FILA_REAL, FILA_REAL, soloNombre, soloNombre], CAMPOS_REALES, mapeo), 2);
+  assert.equal(filasSinCruce([soloNombre], CAMPOS_REALES, mapeo), 1);
+  assert.equal(filasSinCruce([FILA_REAL], CAMPOS_REALES, mapeo), 0);
 });

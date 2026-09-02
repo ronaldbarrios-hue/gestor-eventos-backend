@@ -260,9 +260,22 @@ router.post('/slug/:slug/prellenar', authLimiter, async (req, res) => {
   const doc = req.body?.documento;
   if (!doc) return res.status(400).json({ error: 'Falta el documento.' });
 
+  /* `page_json->padron` y no `page_json` entero: esto se llama cada vez que
+     alguien escribe su documento en el formulario, y la landing completa de un
+     evento grande es mucho jsonb para leer sólo el mapeo de columnas. */
   const { data: ev } = await supabase
-    .from('eventos').select('id').eq('slug', req.params.slug).maybeSingle();
+    .from('eventos').select('id, page_json->padron').eq('slug', req.params.slug).maybeSingle();
   if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
+
+  /* El mapeo que hizo el organizador: qué columna del archivo llena cada
+     pregunta. Si no hay, `emparejar` cae al cruce por nombre de siempre.
+     PostgREST devuelve la proyección con el nombre del último tramo de la
+     ruta (`padron`), pero se acepta también `page_json.padron` por si esa
+     convención cambia: si el mapeo llegara como `undefined` el prellenado
+     volvería en silencio al cruce por nombre, y ese silencio es justo lo que
+     costó descubrir este problema la primera vez. */
+  const cfgPadron = ev.padron ?? ev.page_json?.padron ?? null;
+  const mapeo = cfgPadron?.mapeo && typeof cfgPadron.mapeo === 'object' ? cfgPadron.mapeo : null;
 
   const { data: campos } = await supabase
     .from('event_form_fields').select('id, etiqueta')
@@ -283,7 +296,7 @@ router.post('/slug/:slug/prellenar', authLimiter, async (req, res) => {
     return res.json({ encontrado: false, respuestas: {}, faltan: listaCampos.map(c => ({ id: c.id, etiqueta: c.etiqueta })) });
   }
 
-  const { respuestas, faltan } = emparejar(fila.datos, listaCampos);
+  const { respuestas, faltan } = emparejar(fila.datos, listaCampos, mapeo);
   res.json({ encontrado: Object.keys(respuestas).length > 0, respuestas, faltan });
 });
 

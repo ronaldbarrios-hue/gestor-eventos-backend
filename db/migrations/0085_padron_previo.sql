@@ -1,5 +1,5 @@
 -- 0085 · La base de datos de eventos anteriores, para no volver a preguntarlo todo.
--- PENDIENTE DE APLICAR.
+-- APLICADA. Verificado contra produccion el 2026-09-02 (information_schema, solo lectura).
 --
 -- ── Qué resuelve ──────────────────────────────────────────────────────────
 --

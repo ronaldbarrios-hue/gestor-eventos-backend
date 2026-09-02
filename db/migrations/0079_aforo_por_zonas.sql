@@ -1,5 +1,7 @@
 -- 0079 · Aforo por zonas: entradas/salidas, corte ("limpiar") y reportes.
--- Idempotente. PENDIENTE DE APLICAR.
+-- Idempotente. APLICADA — verificado contra produccion el 2026-09-02
+-- (information_schema, solo lectura): existen ticket_movimientos.zona_id y
+-- la tabla zona_cortes.
 --
 -- Qué cambia y por qué:
 --

@@ -1,6 +1,9 @@
 -- 0084 · Una pregunta puede depender de la respuesta de otra.
--- PENDIENTE DE APLICAR. Sólo añade una columna nullable: sin ella todo sigue
--- funcionando igual, y el código lo comprueba en caliente.
+-- APLICADA — verificado contra producción el 2026-09-02 (`information_schema`,
+-- sólo lectura): existe `event_form_fields.visible_si`.
+--
+-- Sólo añade una columna nullable: sin ella todo sigue funcionando igual, y el
+-- código lo comprueba en caliente.
 --
 -- ── Qué resuelve ──────────────────────────────────────────────────────────
 --

@@ -1,5 +1,16 @@
 -- 0083 · La escarapela impresa y la tarjeta digital dejan de ser dos diseños.
--- PENDIENTE DE APLICAR. Idempotente: se puede correr dos veces.
+-- PENDIENTE DE APLICAR — y de verdad, no como las otras. Comprobado el
+-- 2026-09-02 contra producción: 0 de 33 eventos tienen `wallet.variantes`,
+-- y 1 conserva el viejo `credenciales`.
+--
+-- No rompe nada mientras no corra, y conviene saber por qué:
+-- `walletVariantes()` (frontend, `src/lib/wallet.js:127`) siempre devuelve al
+-- menos una variante, y si no hay `wallet` pero sí `credenciales` lo traduce en
+-- caliente. Es decir, el fallback del código está haciendo el trabajo de esta
+-- migración. Aplicarla sigue siendo lo correcto —deja el dato en su forma
+-- nueva en vez de traducirlo en cada render—, pero no es urgente.
+--
+-- Idempotente: se puede correr dos veces.
 --
 -- ── El problema ───────────────────────────────────────────────────────────
 --

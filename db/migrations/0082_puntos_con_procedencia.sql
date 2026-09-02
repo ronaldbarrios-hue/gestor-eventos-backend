@@ -1,5 +1,8 @@
 -- 0082 · De dónde salió cada punto.
--- PENDIENTE DE APLICAR. Sólo AÑADE columnas y una tabla de reglas: nada de lo
+-- APLICADA — verificado contra producción el 2026-09-02 (`information_schema`,
+-- sólo lectura): existe `points_log.origen_tipo`.
+--
+-- Sólo AÑADE columnas y una tabla de reglas: nada de lo
 -- que hay hoy deja de funcionar sin ella (ver la nota del final).
 --
 -- ── El problema ───────────────────────────────────────────────────────────

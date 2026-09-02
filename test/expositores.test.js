@@ -120,29 +120,23 @@ test('sin zonas declaradas no se revienta', () => {
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('las dos rutas que crean un expositor lo dejan visible para el público', () => {
+test('el alta de expositor deja la ficha visible para el público', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'networking.js'), 'utf8');
 
-  /* Los dos manejadores de alta, cortados por su declaración de ruta. Se hace
-     así y no buscando los `.insert()` porque los dos no se parecen: el de
-     Stands arma un objeto `fila` aparte y el de Rueda de negocios inserta un
-     literal. Lo que importa es el manejador entero. */
-  const ALTAS = [
-    "router.post('/:eventoId/expositores'",
-    "router.post('/:eventoId/networking/expositores'",
-  ];
+  /* Antes esto recorría los DOS manejadores de alta, porque había dos. Ahora
+     hay uno solo, compartido por las dos pantallas, y quien vigila que siga
+     siendo uno es `expositoresRutas.test.js`. Aquí queda lo que esa prueba no
+     mira: que el alta deje la ficha en 'completa'.
 
-  for (const firma of ALTAS) {
-    const desde = src.indexOf(firma);
-    assert.ok(desde !== -1, `ya no encuentro la ruta ${firma}: revisa la prueba`);
-    /* Hasta la siguiente ruta, que es donde acaba el manejador. */
-    const siguiente = src.indexOf('\nrouter.', desde + 1);
-    const cuerpo = src.slice(desde, siguiente === -1 ? undefined : siguiente);
+     Se comprueba sobre el fuente porque el fallo está en el INSERT, no en una
+     función que se pueda llamar. Mismo enfoque que `montaje.test.js`. */
+  const desde = src.indexOf('async function crearExpositor');
+  assert.ok(desde !== -1, 'ya no encuentro crearExpositor: revisa la prueba');
+  const cuerpo = src.slice(desde, src.indexOf('async function editarExpositor'));
 
-    assert.match(cuerpo, /estado_ficha\s*:\s*'completa'/,
-      `${firma} no deja la ficha en 'completa'. Un alta hecha por el organizador ` +
-      'debe quedar completa: `borrador` es para las fichas que crea el trigger de ' +
-      'una boleta-stand y completa el propio expositor. En `borrador`, el ' +
-      'directorio y el mapa públicos no la muestran nunca.');
-  }
+  assert.match(cuerpo, /estado_ficha\s*:\s*'completa'/,
+    'el alta no deja la ficha en «completa». Un alta hecha por el organizador ' +
+    'debe quedar completa: `borrador` es para las fichas que crea el trigger de ' +
+    'una boleta-stand y completa el propio expositor. En `borrador`, el ' +
+    'directorio y el mapa públicos no la muestran nunca.');
 });

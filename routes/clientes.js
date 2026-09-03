@@ -12,20 +12,17 @@ const { correrAutomatizaciones } = require('../lib/automatizaciones.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { COLUMNAS_CAMPO, validarFormulario, normalizarRespuestas } = require('../lib/formularioCampos.js');
 const { auditar } = require('../lib/auditar.js');
+const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { zonasDelEvento, ocupacion, juntar, agendaPorZona } = require('../lib/aforoZonas.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
+const { generarCodigo } = require('../lib/codigos.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
   try { const p = notificar(payload); if (p?.catch) p.catch(() => {}); } catch { /* noop */ }
 }
 
-function generarCodigo() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -202,6 +199,97 @@ async function ajustarAforo(eventoId, ticketTypeId, delta) {
    Body: { ticket_type_id, marcar_pagado, rows: [{ nombre, email, telefono? }] }
    Crea N tickets en estado 'pagado' (si marcar_pagado=true) o 'emitido'.
    Genera codigo + qr_token para cada uno. Reporta éxitos y errores fila por fila. */
+/* POST /eventos/:eventoId/clientes/:ticketId/reenviar
+ *
+ * Volver a mandarle la entrada a quien ya la tiene.
+ *
+ * ── Por qué hacía falta ──────────────────────────────────────────
+ *
+ * El correo de la entrada existe desde siempre y sale UNA vez, cuando la boleta
+ * se paga (`lib/confirmarTicket.js`). Si esa vez falló —buzón lleno, el
+ * proveedor aún sin configurar, la dirección mal escrita y luego corregida— no
+ * había forma de pedirlo otra vez: el organizador acababa mandando una captura
+ * del QR por WhatsApp, que es justamente lo que hace que una entrada acabe
+ * circulando como una imagen suelta.
+ *
+ * No es un correo nuevo: es **el mismo** que se manda al pagar, con la misma
+ * plantilla del evento y su misma marca. Por eso no lleva texto propio.
+ *
+ * ── A dónde va ──────────────────────────────────────────────
+ *
+ * **Al correo registrado en la boleta, y no a uno que venga en la petición.**
+ * Un endpoint del panel que acepta destinatario libre es un formulario de envío
+ * masivo con la marca del evento: quien tenga `gestionar_clientes` podría
+ * mandarle la entrada de otro a cualquier dirección. Si el correo está mal, se
+ * corrige en la boleta —que ya se puede— y se reenvía.
+ */
+router.post('/:eventoId/clientes/:ticketId/reenviar', exige(PERMS_CLIENTES), async (req, res) => {
+  const { eventoId, ticketId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const { data: t } = await supabase
+      .from('tickets')
+      .select('id, codigo, qr_token, estado, guest_nombre, guest_email, ticket_type_id, evento_id')
+      .eq('id', ticketId).eq('evento_id', eventoId).maybeSingle();
+    if (!t) return res.status(404).json({ error: 'Boleta no encontrada.' });
+
+    if (!t.guest_email) {
+      return res.status(409).json({
+        error: 'Esta boleta no tiene correo. Escríbelo en la boleta y vuelve a intentarlo.',
+      });
+    }
+    /* Una entrada cancelada no se reenvía: el QR ya no abre la puerta y mandarlo
+       promete algo que no se va a cumplir. */
+    if (!['emitido', 'pagado', 'usado'].includes(t.estado)) {
+      return res.status(409).json({ error: 'Esta boleta no está activa: no hay nada que reenviar.' });
+    }
+
+    const { data: tt } = t.ticket_type_id
+      ? await supabase.from('ticket_types').select('nombre').eq('id', t.ticket_type_id).maybeSingle()
+      : { data: null };
+
+    const link = await enlaceBoleta(eventoId, t.codigo);
+    const r = await enviarEmailEvento({
+      evento: eventoId,
+      tipo: 'ticket',
+      to: t.guest_email,
+      ctx: {
+        nombre     : t.guest_nombre,
+        tipo_boleta: tt?.nombre || null,
+        codigo     : t.codigo,
+        qr_token   : t.qr_token,
+        enlace     : link,
+      },
+    });
+
+    /* `enviarEmailEvento` no lanza nunca —está pensado para no tumbar la compra
+       si el correo falla—, así que aquí hay que MIRAR lo que devuelve: sin esto,
+       el panel diría «enviado» con el proveedor sin configurar. */
+    if (r && r.ok === false) {
+      /* Los motivos vienen en clave de máquina —`plantilla_desactivada`,
+         `cupo_agotado`— y quien lee esto es alguien con un asistente delante
+         diciendo que no le llegó. Se traducen a lo que hay que HACER. */
+      const PORQUE = {
+        sin_destinatario   : 'La boleta no tiene un correo válido.',
+        sin_evento         : 'No se pudo leer el evento.',
+        plantilla_desactivada: 'La plantilla de este correo está desactivada en Comercial → Correos.',
+        cupo_agotado       : 'Se acabó el cupo de envíos por hora del buzón. Vuelve a intentarlo más tarde.',
+      };
+      return res.status(502).json({
+        error: PORQUE[r.motivo] || r.error || r.motivo || 'El correo no pudo salir.',
+      });
+    }
+
+    auditar(req, eventoId, 'cliente.reenviar', {
+      entidad: 'ticket', entidadId: t.id, detalle: { a: t.guest_email },
+    });
+    res.json({ ok: true, enviado_a: t.guest_email });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const { ticket_type_id, marcar_pagado, rows } = req.body;

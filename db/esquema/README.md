@@ -4,8 +4,14 @@ Volcado del esquema de producción (proyecto Supabase
 `GestorEventosMarcaBlanca` / `yopontbwgdybfsniqawz`, Postgres 17.6, esquema
 `public`) traducido a **MySQL 8**, listo para crear la base en cPanel.
 
-**Generado el 2026-09-01.** El esquema se sigue moviendo: antes de usar esto en
-serio, volver a correr el generador (paso 1 de abajo) y mirar `git diff`.
+**Generado el 2026-09-01, y ya está por detrás.** Entre el 2 y el 3 de
+septiembre se aplicaron las migraciones 0091–0096 y esto no las tiene: falta la
+tabla `zonas` entera, `ticket_types.crea` y `crea_torneo_id`, y
+`torneo_equipos.respuestas`. Antes de usarlo en serio hay que volver a correr el
+generador (paso 1 de abajo) y mirar `git diff`.
+
+El traspaso completo del frente —qué falta, con qué herramientas y qué le va a
+faltar a quien lo retome— está en [`../CAMINO-A.md`](../CAMINO-A.md).
 
 Este carpeta es la vía «MySQL» de la migración. El «por qué» de cada decisión de
 traducción está en [`../migraciones/NOTAS-ESQUEMA.md`](../migraciones/NOTAS-ESQUEMA.md);
@@ -15,9 +21,9 @@ cómo mover las filas, en [`../migraciones/CARGA-DE-DATOS.md`](../migraciones/CA
 
 | Archivo | Qué es | Origen |
 |---|---|---|
-| `01_tablas.sql` | Las 71 `CREATE TABLE` (tipos, defaults, PK). | Generado |
+| `01_tablas.sql` | Las `CREATE TABLE` (tipos, defaults, PK). **72 hoy; en Postgres hay 73** — falta `zonas`, de la 0091. | Generado |
 | `02_indices_unicos_parciales.sql` | Los 8 índices únicos parciales, a mano. | Copia de `../migraciones/003_esquema_indices_parciales.sql` (mismo contenido; `torneo_categorias_unica_hija` va sobre columna generada porque `nombre` es TEXT y MySQL no lo indexa sin prefijo — error 1170) |
-| `03_datos.sql` | El volcado de las filas. **NO generado aún** — ver abajo. | — |
+| `03_datos.sql` | El volcado de las filas. **Generado el 2026-09-01**, y por tanto sin lo que cambió después. | `generar-datos.mjs` |
 | `04_indices.sql` | El resto de índices (147). | Generado |
 | `05_claves_foraneas.sql` | Las 148 FK de `public`. Al final, hay ciclos. | Generado |
 | `06_vistas.sql` | Las 4 vistas. | Copia de `../migraciones/004_vistas.sql` |

@@ -16,14 +16,10 @@ const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlist
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 
 const { sesion, publica } = require('../core/permisos');
+const { generarCodigo } = require('../lib/codigos.js');
 const router = express.Router();
 
 function publicBaseUrl() { return (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0]; }
-function generarCodigo() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let c = ''; for (let i = 0; i < 8; i++) c += chars[Math.floor(Math.random() * chars.length)];
-  return c;
-}
 
 /* ── Conectar / desconectar (organizador) ── */
 router.post('/me/wompi/conectar', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {

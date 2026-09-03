@@ -15,6 +15,7 @@ const { auditar } = require('../lib/auditar.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { zonasDelEvento, ocupacion, juntar, agendaPorZona } = require('../lib/aforoZonas.js');
+const { leerPuerta } = require('../lib/zonasTabla.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
 const { generarCodigo } = require('../lib/codigos.js');
 
@@ -615,14 +616,14 @@ router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la 
   try {
     const evCtx = await assertCheckinAccess(eventoId, req.user.id);
 
-    /* Puerta/acceso (opcional): config en page_json.accesos. Valida qué tipos
-       de boleta admite y registra por dónde entró la persona. */
-    let puerta = null;
-    if (acceso_id) {
-      const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
-      const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
-      puerta = accesos.find(a => a.id === acceso_id) || null;
-    }
+    /* Puerta/acceso (opcional): valida qué tipos de boleta admite y registra por
+       dónde entró la persona.
+
+       Sale de `leerPuerta`, que prefiere `zonas.reglas` (0098) y cae a
+       `page_json.accesos` mientras el original siga ahí. Aquí la vuelta atrás
+       no es cosmética: una lectura vacía sería una puerta que deja pasar a
+       cualquiera. */
+    const puerta = await leerPuerta(eventoId, acceso_id);
 
     /* Resolver el ticket: por qr_token (verificar firma) o por código corto */
     let ticketQuery;
@@ -737,9 +738,7 @@ router.post('/:eventoId/reingreso', sesion('Lo opera quien está en la puerta: l
 
     let accesoNombre = null, zona = null;
     if (acceso_id || zona_id) {
-      const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
-      const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
-      accesoNombre = accesos.find(a => a.id === acceso_id)?.nombre || null;
+      accesoNombre = (await leerPuerta(eventoId, acceso_id))?.nombre || null;
       if (zona_id) {
         const zonas = await zonasDelEvento(eventoId);
         zona = zonas.find(z => z.id === zona_id) || null;

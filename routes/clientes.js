@@ -15,6 +15,7 @@ const { auditar } = require('../lib/auditar.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { zonasDelEvento, ocupacion, juntar, agendaPorZona } = require('../lib/aforoZonas.js');
+const { leerPuerta } = require('../lib/zonasTabla.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
 const { generarCodigo } = require('../lib/codigos.js');
 
@@ -199,6 +200,156 @@ async function ajustarAforo(eventoId, ticketTypeId, delta) {
    Body: { ticket_type_id, marcar_pagado, rows: [{ nombre, email, telefono? }] }
    Crea N tickets en estado 'pagado' (si marcar_pagado=true) o 'emitido'.
    Genera codigo + qr_token para cada uno. Reporta éxitos y errores fila por fila. */
+/* ── El dinero del evento ─────────────────────────────────────
+ *
+ * `ver_pagos` llevaba meses en el catálogo, se podía conceder, la semilla se lo
+ * daba al rol Comercial… y **no existía la pantalla**. «Acceso al dashboard
+ * financiero», decía, sobre un dashboard que no estaba en ninguna parte.
+ *
+ * Los números sí estaban, repartidos: Analítica suma ingresos pero los mezcla
+ * con visitas y conversión, y Facturación lista boletas pero no cuadra nada.
+ * Esto los junta y contesta las cuatro preguntas que se hacen de verdad:
+ * cuánto entró, de qué, qué falta por cobrar y qué se devolvió.
+ *
+ * ── Lo que NO hace, y es deliberado ──────────────────────────────
+ *
+ * No inventa una «caja» ni concilia con el banco. Suma lo que la plataforma
+ * sabe: `precio_pagado` de cada boleta —lo que se cobró de verdad, no el precio
+ * de hoy del tipo— y las transacciones de pasarela registradas. Cuadrar contra
+ * un extracto es otro problema y necesita otros datos.
+ */
+router.get('/:eventoId/dinero', exige(['ver_pagos']), async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id, ['ver_pagos']);
+
+    /* En páginas de mil, que es el tope de PostgREST. Un evento de 7.000
+       personas no cabe de una, y el fallo sería silencioso: sumaría mil boletas
+       y daría un total con toda tranquilidad. */
+    const filas = [];
+    for (let desde = 0; desde < 50000; desde += 1000) {
+      const { data, error } = await supabase
+        .from('tickets')
+        .select('id, estado, precio_pagado, created_at, ticket_type_id, tipo:ticket_types!ticket_type_id(nombre)')
+        .eq('evento_id', eventoId)
+        .order('created_at', { ascending: true })
+        .range(desde, desde + 999);
+      if (error) return res.status(500).json({ error: error.message });
+      filas.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    const COBRADO = new Set(['pagado', 'usado']);
+    const vacio = () => ({ boletas: 0, dinero: 0 });
+    const porTipo = {};
+    const total = { cobrado: vacio(), pendiente: vacio(), devuelto: vacio() };
+
+    for (const t of filas) {
+      const monto = Number(t.precio_pagado) || 0;
+      const nombre = t.tipo?.nombre || 'Sin tipo';
+      const fila = (porTipo[nombre] = porTipo[nombre] || {
+        nombre, cobrado: vacio(), pendiente: vacio(), devuelto: vacio(),
+      });
+
+      const cubo = COBRADO.has(t.estado) ? 'cobrado'
+        : t.estado === 'reembolsado' ? 'devuelto'
+        : t.estado === 'emitido' ? 'pendiente'
+        : null;
+      /* `invalido` no es ninguna de las tres: no se cobró, no se espera cobrar
+         y no se devolvió nada. Meterlo en «pendiente» inflaría lo que falta por
+         cobrar con dinero que nadie va a pagar. */
+      if (!cubo) continue;
+
+      fila[cubo].boletas += 1;
+      fila[cubo].dinero += monto;
+      total[cubo].boletas += 1;
+      total[cubo].dinero += monto;
+    }
+
+    /* Lo que registraron las pasarelas. Va aparte del conteo de arriba a
+       propósito: son dos fuentes distintas, y cuando NO cuadran es justo lo que
+       hay que poder ver. */
+    const { data: tx } = await supabase
+      .from('payment_transactions')
+      .select('id, proveedor, estado, monto, moneda, created_at')
+      .eq('evento_id', eventoId)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    res.json({
+      total,
+      por_tipo: Object.values(porTipo).sort((a, b) => b.cobrado.dinero - a.cobrado.dinero),
+      transacciones: tx || [],
+    });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* POST /eventos/:eventoId/clientes/:ticketId/reembolsar
+ *
+ * ── Lo que hace y lo que NO ───────────────────────────────────
+ *
+ * **No mueve dinero.** Devolverlo se hace en Mercado Pago o en Wompi, con sus
+ * credenciales y sus plazos. Fingir aquí que la plataforma lo devuelve sería
+ * prometer algo que nadie va a cumplir, y el asistente se enteraría una semana
+ * después, cuando el dinero no llegara.
+ *
+ * Lo que SÍ hace, que es lo que faltaba: **dejar constancia**. La boleta pasa a
+ * `reembolsado`, su QR deja de abrir la puerta, el cupo se libera y se le ofrece
+ * a quien esté esperando, y queda escrito quién lo hizo, cuándo y por qué.
+ *
+ * Antes esto se hacía cambiando el estado a mano desde la lista: sin motivo, sin
+ * rastro, y con el mismo gesto que «cancelar», que significa otra cosa.
+ */
+router.post('/:eventoId/clientes/:ticketId/reembolsar', exige(['reembolsar']), async (req, res) => {
+  const { eventoId, ticketId } = req.params;
+  const motivo = String(req.body?.motivo || '').trim();
+  try {
+    await assertOwner(eventoId, req.user.id, ['reembolsar']);
+
+    const { data: t } = await supabase
+      .from('tickets').select('id, estado, precio_pagado, ticket_type_id, guest_email')
+      .eq('id', ticketId).eq('evento_id', eventoId).maybeSingle();
+    if (!t) return res.status(404).json({ error: 'Boleta no encontrada.' });
+
+    if (t.estado === 'reembolsado') {
+      return res.status(409).json({ error: 'Esta boleta ya estaba reembolsada.' });
+    }
+    /* Reembolsar algo que nunca se cobró no significa nada, y dejaría el panel
+       diciendo que se devolvió dinero que no entró. */
+    if (!['pagado', 'usado'].includes(t.estado)) {
+      return res.status(409).json({
+        error: 'Esta boleta no está pagada: no hay nada que devolver. Si quieres anularla, márcala como inválida.',
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('tickets').update({ estado: 'reembolsado' })
+      .eq('id', ticketId).eq('evento_id', eventoId)
+      .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    /* El cupo vuelve a estar libre y se le ofrece a quien espera. Mismo camino
+       que el cambio de estado de la lista: si esto se copiara en vez de
+       reutilizar `ajustarAforo`, un día uno de los dos dejaría de cuadrar. */
+    await ajustarAforo(eventoId, t.ticket_type_id, -1);
+    ofrecerCupoAlSiguiente({ eventoId, ticketTypeId: t.ticket_type_id }).catch(() => {});
+
+    auditar(req, eventoId, 'cliente.reembolsar', {
+      entidad: 'ticket', entidadId: t.id,
+      detalle: { monto: Number(t.precio_pagado) || 0, motivo: motivo || null },
+    });
+
+    res.json({
+      ticket: data,
+      aviso: 'Queda registrado. El dinero se devuelve desde la pasarela: esto no lo mueve.',
+    });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
 /* POST /eventos/:eventoId/clientes/:ticketId/reenviar
  *
  * Volver a mandarle la entrada a quien ya la tiene.
@@ -465,14 +616,14 @@ router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la 
   try {
     const evCtx = await assertCheckinAccess(eventoId, req.user.id);
 
-    /* Puerta/acceso (opcional): config en page_json.accesos. Valida qué tipos
-       de boleta admite y registra por dónde entró la persona. */
-    let puerta = null;
-    if (acceso_id) {
-      const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
-      const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
-      puerta = accesos.find(a => a.id === acceso_id) || null;
-    }
+    /* Puerta/acceso (opcional): valida qué tipos de boleta admite y registra por
+       dónde entró la persona.
+
+       Sale de `leerPuerta`, que prefiere `zonas.reglas` (0098) y cae a
+       `page_json.accesos` mientras el original siga ahí. Aquí la vuelta atrás
+       no es cosmética: una lectura vacía sería una puerta que deja pasar a
+       cualquiera. */
+    const puerta = await leerPuerta(eventoId, acceso_id);
 
     /* Resolver el ticket: por qr_token (verificar firma) o por código corto */
     let ticketQuery;
@@ -587,9 +738,7 @@ router.post('/:eventoId/reingreso', sesion('Lo opera quien está en la puerta: l
 
     let accesoNombre = null, zona = null;
     if (acceso_id || zona_id) {
-      const { data: evCfg } = await supabase.from('eventos').select('page_json').eq('id', eventoId).maybeSingle();
-      const accesos = Array.isArray(evCfg?.page_json?.accesos) ? evCfg.page_json.accesos : [];
-      accesoNombre = accesos.find(a => a.id === acceso_id)?.nombre || null;
+      accesoNombre = (await leerPuerta(eventoId, acceso_id))?.nombre || null;
       if (zona_id) {
         const zonas = await zonasDelEvento(eventoId);
         zona = zonas.find(z => z.id === zona_id) || null;

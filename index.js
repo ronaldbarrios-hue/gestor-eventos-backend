@@ -130,6 +130,10 @@ app.use('/categorias',       require('./routes/categorias.js'));
 /* Panel del expositor (público, auth por código de su boleta-Stand). Antes de
    eventos.publicos para que /expositor/:codigo/* tenga prioridad. */
 app.use('/eventos/publicos/expositor', require('./routes/expositor.js'));
+/* Portal del capitán de un equipo de torneo. Mismo caso y mismo sitio que el
+   del expositor: alguien sin cuenta que edita UNA ficha, identificado por el
+   código de su boleta. Va antes de eventos.publicos por lo mismo. */
+app.use('/eventos/publicos/equipo', require('./routes/equipoTorneo.js'));
 /* Inscripción a sub-eventos: va ANTES del router general de publicos para que
    /slug/:slug/sesiones no lo capture la ruta de /slug/:slug. */
 app.use('/eventos/publicos', require('./routes/sesiones.js').publico);

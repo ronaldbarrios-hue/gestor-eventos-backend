@@ -36,15 +36,20 @@ test('los once roles, en su orden', () => {
   assert.deepEqual(ROLES.map(r => r.orden), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.deepEqual(
     ROLES.map(r => r.nombre),
+    /* Renombrados en la 0090 por lo que hacen: «Speaker» concedía editar la
+       agenda entera y «Expositor» administrar a todos los expositores — y
+       ninguno de los dos es un puesto de trabajo del evento. */
     ['Administrador',
-     'Editor', 'Coordinador', 'Staff · Acceso', 'Staff · Logística', 'Staff · Atención',
-     'VIP host', 'Expositor', 'Speaker', 'Finanzas', 'Moderación'],
+     'Editor', 'Coordinador', 'Puerta', 'Staff · Logística', 'Atención',
+     'VIP host', 'Coordinación de expositores', 'Programación', 'Finanzas', 'Moderación'],
   );
 });
 
 test('los permisos de los roles que más cuestan de reconstruir', () => {
   const de = (n) => ROLES.find(r => r.nombre === n).permissions;
-  assert.deepEqual(de('Staff · Acceso'), ['checkin', 'ver_clientes']);
+  /* «Puerta» desde la 0090: se llamaba «Staff · Acceso». El nombre dice
+     ahora quién es la persona, no en qué cajonón del organigrama está. */
+  assert.deepEqual(de('Puerta'), ['checkin', 'ver_clientes']);
   assert.deepEqual(de('Finanzas'), ['ver_pagos', 'reembolsar', 'ver_clientes', 'ver_analytics']);
   assert.deepEqual(de('Editor'),
     ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda']);

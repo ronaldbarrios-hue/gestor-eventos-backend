@@ -1,5 +1,5 @@
 const express = require('express');
-const { exige, sesion } = require('../core/permisos');
+const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 
@@ -16,11 +16,15 @@ async function assertAcceso(eventoId, userId) {
 
   const { data: m } = await supabase
     .from('event_members')
-    .select('id, rol_id, rol_detail:event_roles!rol_id(permissions)')
+    .select(`id, rol_id, ${SELECT_PERMISOS}`)
     .eq('evento_id', eventoId).eq('user_id', userId).eq('status', 'active')
     .maybeSingle();
   if (!m) throw new Error('No autorizado.');
-  return { ev, isOwner: false, permisos: m.rol_detail?.permissions || [], rol_id: m.rol_id };
+  /* `permisosDeMiembro` y no sólo los del rol: esto leía Únicamente
+     `rol_detail.permissions`, así que a quien se le hubiera dado
+     `crear_canales` o `borrar_mensajes` COMO PERMISO SUELTO no le funcionaban
+     aquí — y no daba error, sólo decía que no podía. */
+  return { ev, isOwner: false, permisos: [...permisosDeMiembro(m)], rol_id: m.rol_id };
 }
 
 function tienePermiso(ctx, permiso) {

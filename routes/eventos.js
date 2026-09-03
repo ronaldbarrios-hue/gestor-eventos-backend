@@ -16,7 +16,7 @@ const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
 const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO, extraerDocumento,
   limpiarMapeo, mapeoSugerido, filasSinCruce } = require('../lib/padronPrevio.js');
-const { exige, sesion } = require('../core/permisos');
+const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
 const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
 /* El padrón es parte de configurar el formulario del evento, así que pide lo
@@ -134,17 +134,14 @@ router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miem
        rol entero —«quien esté en puerta»— y el escáner necesita el id para
        saber cuáles son las suyas. El `rol` de texto es el heredado y no sirve
        para cruzar. */
-    .select('custom_permissions, rol, rol_id, rol_detail:event_roles!rol_id(permissions)')
+    .select(`${SELECT_PERMISOS}, rol, rol_id`)
     .eq('evento_id', data.id)
     .eq('user_id', req.user.id)
     .eq('status', 'active')
     .maybeSingle();
   if (!m) return res.status(404).json({ error: 'Evento no encontrado.' });
 
-  const permisos = [...new Set([
-    ...(m.rol_detail?.permissions || []),
-    ...(m.custom_permissions || []),
-  ])];
+  const permisos = [...permisosDeMiembro(m)];
   res.json({ evento: conSitio(data), soyOwner: false, mi_rol: m.rol, mi_rol_id: m.rol_id || null, permisos });
 });
 
@@ -290,15 +287,12 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
   if (actual.owner_id !== req.user.id) {
     const { data: m } = await supabase
       .from('event_members')
-      .select('custom_permissions, rol_detail:event_roles!rol_id(permissions)')
+      .select(SELECT_PERMISOS)
       .eq('evento_id', actual.id).eq('user_id', req.user.id).eq('status', 'active')
       .maybeSingle();
     if (!m) return res.status(403).json({ error: 'No autorizado.' });
 
-    const perms = new Set([
-      ...(m.rol_detail?.permissions || []),
-      ...(m.custom_permissions || []),
-    ]);
+    const perms = permisosDeMiembro(m);
     camposPermitidos = new Set();
     /* Las tres columnas de la 0064 son la misma cosa que antes iba dentro de
        `page_json`, así que van con el mismo permiso: quien podía editar la

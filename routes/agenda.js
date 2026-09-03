@@ -169,10 +169,26 @@ async function normalizarSubcategoria(eventoId, valor) {
   return existente || limpio;
 }
 
+/* Que el expositor y el tipo de boleta sean DE ESTE EVENTO.
+ *
+ * Las dos columnas existían en `agenda_sessions` desde hace tiempo y ninguna
+ * pantalla las escribía, así que nunca hubo por dónde meter un id ajeno. Al
+ * abrirlas hay que comprobarlo: `assertOwner` dice que mandas en este evento,
+ * no que ese expositor sea suyo. Es el mismo agujero que tenía el borrado de
+ * expositores antes de filtrar por `evento_id`.
+ *
+ * Vacío es válido y quiere decir «ninguno», que es el caso normal. */
+async function ajeno(tabla, id, eventoId) {
+  if (!id) return false;
+  const { data } = await supabase.from(tabla).select('id').eq('id', id).eq('evento_id', eventoId).maybeSingle();
+  return !data;
+}
+
 router.post('/:eventoId/sessions', exige(PERMS_AGENDA), async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, descripcion, inicio, fin, track, ubicacion, speaker_id, tipo, torneo_id,
-          requiere_inscripcion, cupo, formulario_modo, subcategoria, zona_id } = req.body;
+          requiere_inscripcion, cupo, formulario_modo, subcategoria, zona_id,
+          expositor_id, ticket_type_id } = req.body;
   if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido.' });
   if (!inicio) return res.status(400).json({ error: 'Hora de inicio requerida.' });
   if (formulario_modo && !MODOS_FORMULARIO.includes(formulario_modo)) {
@@ -180,6 +196,12 @@ router.post('/:eventoId/sessions', exige(PERMS_AGENDA), async (req, res) => {
   }
   try {
     await assertOwner(eventoId, req.user.id);
+    if (await ajeno('networking_expositores', expositor_id, eventoId)) {
+      return res.status(400).json({ error: 'Ese expositor no es de este evento.' });
+    }
+    if (await ajeno('ticket_types', ticket_type_id, eventoId)) {
+      return res.status(400).json({ error: 'Ese tipo de boleta no es de este evento.' });
+    }
     const { data, error } = await supabase
       .from('agenda_sessions').insert({
         evento_id  : eventoId,
@@ -193,6 +215,12 @@ router.post('/:eventoId/sessions', exige(PERMS_AGENDA), async (req, res) => {
            Zona Gamer pueda contestar qué hay dentro de ella ahora mismo. */
         zona_id    : zona_id || null,
         speaker_id : speaker_id || null,
+        /* Quién la da y con qué boleta se entra. Las dos columnas estaban en la
+           tabla y ninguna pantalla las escribía: se podían leer y no rellenar,
+           igual que le pasaba a `formulario_modo`. Medido antes de abrirlas: 0
+           de 11 sesiones tenían una u otra. */
+        expositor_id  : expositor_id || null,
+        ticket_type_id: ticket_type_id || null,
         tipo       : tipo || 'charla',
         /* Agrupacion libre DENTRO del tipo: competencia -> Deportes -> Futbol. */
         subcategoria: await normalizarSubcategoria(eventoId, subcategoria),
@@ -227,7 +255,7 @@ router.patch('/:eventoId/sessions/:sessionId', exige(PERMS_AGENDA), async (req, 
     await assertOwner(eventoId, req.user.id);
     const allowed = ['titulo', 'descripcion', 'inicio', 'fin', 'track', 'ubicacion', 'speaker_id',
       'orden', 'tipo', 'torneo_id', 'moderacion', 'requiere_inscripcion', 'cupo', 'formulario_modo',
-      'subcategoria', 'zona_id'];
+      'subcategoria', 'zona_id', 'expositor_id', 'ticket_type_id'];
     const updates = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Sin cambios.' });
@@ -238,6 +266,12 @@ router.patch('/:eventoId/sessions/:sessionId', exige(PERMS_AGENDA), async (req, 
        panel por mucho que hubiera un selector. */
     if ('formulario_modo' in updates && !MODOS_FORMULARIO.includes(updates.formulario_modo)) {
       return res.status(400).json({ error: 'formulario_modo debe ser ninguno, propio o evento.' });
+    }
+    if ('expositor_id' in updates && await ajeno('networking_expositores', updates.expositor_id, eventoId)) {
+      return res.status(400).json({ error: 'Ese expositor no es de este evento.' });
+    }
+    if ('ticket_type_id' in updates && await ajeno('ticket_types', updates.ticket_type_id, eventoId)) {
+      return res.status(400).json({ error: 'Ese tipo de boleta no es de este evento.' });
     }
     /* Misma normalizacion que al crear: si no, editar una sesion es la via
        facil de meter la variante en minusculas. */

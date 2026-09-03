@@ -152,6 +152,27 @@ function publica(motivo) {
  * el equipo estén en MySQL, se reescribe esta función y ni las rutas ni
  * `puede()` se enteran.
  */
+/* De qué se compone lo que puede un miembro.
+ *
+ * Son DOS fuentes: los permisos de su rol y los sueltos que se le añadieron a
+ * él en concreto (`custom_permissions`). Esta unión estaba escrita tres veces
+ * —aquí, y dos veces en `routes/eventos.js`— con la misma forma. Tres copias de
+ * una regla de acceso son tres sitios donde alguien puede olvidarse de sumar
+ * `custom_permissions`, y el síntoma sería que a una persona le funcionan sus
+ * permisos extra en unas pantallas y en otras no, sin ningún error.
+ *
+ * Es el mismo patrón que ya costó caro en este repo: el alta de expositores
+ * duplicada, el marcador del mapa, el filtro de zonas. Lo duplicado no se
+ * separa sólo en lo que hace, se separa en lo que protege. */
+const SELECT_PERMISOS = 'custom_permissions, rol_detail:event_roles!rol_id(permissions)';
+
+function permisosDeMiembro(m) {
+  return new Set([
+    ...(m?.rol_detail?.permissions || []),
+    ...(m?.custom_permissions || []),
+  ]);
+}
+
 async function cargarEvento(eventoId, usuarioId) {
   const supabase = require('../../lib/supabase.js');
 
@@ -165,21 +186,17 @@ async function cargarEvento(eventoId, usuarioId) {
 
   const { data: m } = await supabase
     .from('event_members')
-    .select('custom_permissions, rol_detail:event_roles!rol_id(permissions)')
+    .select(SELECT_PERMISOS)
     .eq('evento_id', eventoId).eq('user_id', usuarioId).eq('status', 'active')
     .maybeSingle();
 
-  return {
-    ownerId : ev.owner_id,
-    permisos: new Set([
-      ...(m?.rol_detail?.permissions || []),
-      ...(m?.custom_permissions || []),
-    ]),
-    evento: ev,
-  };
+  return { ownerId: ev.owner_id, permisos: permisosDeMiembro(m), evento: ev };
 }
 
 /* Lee la marca de un middleware. La usa el censo. */
 const marcaDe = (fn) => (typeof fn === 'function' ? fn[MARCA] || null : null);
 
-module.exports = { puede, exige, publica, sesion, cargarEvento, marcaDe, MARCA };
+module.exports = {
+  puede, exige, publica, sesion, cargarEvento, marcaDe, MARCA,
+  permisosDeMiembro, SELECT_PERMISOS,
+};

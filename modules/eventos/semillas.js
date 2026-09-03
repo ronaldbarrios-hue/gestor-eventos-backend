@@ -79,22 +79,29 @@ const ROLES = [
     permissions: ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda'] },
   { nombre: 'Coordinador',       descripcion: 'Coordina al staff y al evento completo', orden: 2,
     permissions: ['editar_evento', 'invitar_staff', 'gestionar_agenda', 'ver_clientes', 'ver_analytics', 'crear_canales'] },
-  { nombre: 'Staff · Acceso',    descripcion: 'Controla entrada y hace check-in con QR', orden: 3,
+  { nombre: 'Puerta',            descripcion: 'Controla el ingreso y escanea las entradas', orden: 3,
     permissions: ['checkin', 'ver_clientes'] },
   { nombre: 'Staff · Logística', descripcion: 'Montaje, técnica y escenario', orden: 4,
     permissions: ['crear_canales', 'gestionar_agenda'] },
-  { nombre: 'Staff · Atención',  descripcion: 'Atiende asistentes durante el evento', orden: 5,
+  { nombre: 'Atención',          descripcion: 'Atiende asistentes durante el evento', orden: 5,
     permissions: ['ver_clientes', 'checkin'] },
   { nombre: 'VIP host',          descripcion: 'Anfitrión de zona VIP', orden: 6,
     permissions: ['vip_zone', 'ver_clientes', 'checkin'] },
-  { nombre: 'Expositor',         descripcion: 'Gestiona su stand, su ficha y sus puntos', orden: 7,
+  /* Quien COORDINA a los expositores, no un expositor: el expositor entra por
+     su propio enlace (`/expositor/:codigo`) y edita SU ficha, no la de los
+     demás. Con el nombre viejo, el rol concedía administrar a todos. */
+  { nombre: 'Coordinación de expositores', descripcion: 'Gestiona los stands y las fichas de los expositores', orden: 7,
     permissions: ['gestionar_expositores'] },
-  { nombre: 'Speaker',           descripcion: 'Ponente: ve su franja y el cronograma', orden: 8,
-    permissions: ['gestionar_agenda'] },
+  /* Quien ARMA el programa. Un ponente no administra nada: su ficha vive en
+     `speakers` y se le engancha a cada actividad desde el Calendario. Con el
+     nombre viejo, un ponente podía editar la agenda entera del evento. */
+  { nombre: 'Programación',      descripcion: 'Arma el calendario: charlas, talleres y competencias', orden: 8,
+    permissions: ['gestionar_agenda', 'gestionar_torneo'] },
   { nombre: 'Finanzas',          descripcion: 'Ve ingresos, facturación y reembolsos', orden: 9,
     permissions: ['ver_pagos', 'reembolsar', 'ver_clientes', 'ver_analytics'] },
-  { nombre: 'Moderación',        descripcion: 'Modera el chat y la agenda pública', orden: 10,
-    permissions: ['borrar_mensajes', 'crear_canales', 'gestionar_agenda'] },
+  /* Sin `gestionar_agenda`: moderar el chat no es programar el evento. */
+  { nombre: 'Moderación',        descripcion: 'Modera el chat del evento', orden: 10,
+    permissions: ['borrar_mensajes', 'crear_canales'] },
 ];
 
 /* ── La página por defecto ────────────────────────────────────────────────

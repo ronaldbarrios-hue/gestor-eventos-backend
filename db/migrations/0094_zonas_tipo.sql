@@ -1,4 +1,5 @@
 -- 0094 · Una puerta es una zona. (Frente Q · Q6)
+-- APLICADA en producción el 2026-09-03.
 --
 -- ⚠️ ORDEN: va DESPUÉS de la 0092. La 0092 quita las zonas de `page_json`, y
 --    esta migración da por hecho que la tabla `zonas` es la fuente. Correrla

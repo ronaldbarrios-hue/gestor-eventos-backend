@@ -1,7 +1,11 @@
 -- 0092 · Las zonas dejan `page_json`. PASO 3 de 3 (contract).
 --
--- ⚠️ NO APLICAR TODAVÍA. Tiene una condición previa que no se puede comprobar
---    desde SQL, así que va escrita aquí y hay que mirarla a mano:
+-- APLICADA el 2026-09-03 — y se corrió ANTES de que el código estuviera
+-- desplegado, aunque el PR ya estuviera fusionado. Cuatro pantallas se quedaron
+-- en blanco durante horas: Zonas del evento, el selector de zona de un
+-- sub-evento, el escáner y el bloque de mapa. Sin un solo error.
+--
+-- Se deja escrito el aviso original, que era correcto y no bastó:
 --
 --    **El código del paso 2 tiene que estar DESPLEGADO y corriendo.**
 --

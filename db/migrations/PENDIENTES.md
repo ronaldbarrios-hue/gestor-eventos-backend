@@ -1,67 +1,72 @@
 # Migraciones pendientes en Supabase
 
-Estado comprobado contra la base de producción el **2026-09-03**. Son cuatro, y
-sólo una tiene condición previa.
+**No queda ninguna.** Comprobado contra la base de producción el **2026-09-03**.
 
-| Nº | Qué hace | ¿Aplicada? | Condición previa |
-|---|---|---|---|
-| 0092 | Las zonas dejan `page_json` (paso 3 de 3) | **No** | Sí — leer abajo |
-| 0093 | Un tipo de boleta declara qué crea al pagarse | **No** | Ninguna |
-| 0094 | Una zona declara qué es (evento / ingreso / evacuación / otra) | **No** | Va después de la 0092 |
-| 0095 | Cada torneo declara qué le pide a un equipo | **No** | Ninguna |
+| Nº | Qué hace | Estado |
+|---|---|---|
+| 0092 | Las zonas dejan `page_json` (paso 3 de 3) | ✅ aplicada el 2026-09-03 |
+| 0093 | Un tipo de boleta declara qué crea al pagarse | ✅ aplicada el 2026-09-03 |
+| 0094 | Una zona declara qué es (evento / ingreso / evacuación / otra) | ✅ aplicada el 2026-09-03 |
+| 0095 | Cada torneo declara qué le pide a un equipo | ✅ aplicada el 2026-09-03 |
+| 0096 | Las puertas pasan a ser zonas de tipo ingreso | ✅ aplicada el 2026-09-03 |
 
-## Lo primero: las tres nuevas se pueden correr ya
+Este archivo se mantiene al día **a propósito**. Una lista de pendientes que
+miente entrena a no creerla, y entonces el día que una haga falta de verdad,
+nadie la cree. Ya pasó en este repo: siete migraciones decían «PENDIENTE DE
+APLICAR» en su cabecera y cinco estaban aplicadas.
 
-**0093, 0094 y 0095 sólo AÑADEN.** No borran nada, no cambian ningún dato
-existente y no alteran lo que hoy ve nadie: los eventos siguen funcionando igual
-hasta que alguien use lo nuevo. El código desplegado funciona con y sin ellas
-—sin ellas, las funciones nuevas simplemente no aparecen—, así que **el orden
-entre desplegar y correr esto da igual**.
+## Lo que se aprendió corriéndolas, y hay que respetar la próxima vez
 
-Todo junto, listo para pegar en **Supabase → SQL Editor → Run**:
+**Fusionar no es desplegar.**
 
-    db/migrations/_pendientes_0093_0094_0095.sql
+La 0092 tiene una condición previa que no se puede comprobar desde SQL: el
+código que lee las zonas de la tabla tiene que estar **sirviendo**. Se corrió
+con el PR ya fusionado… y el despliegue de cPanel iba por detrás, así que la API
+seguía respondiendo con el código anterior.
 
-Es idempotente: correrlo dos veces no hace daño.
+Resultado: cuatro pantallas en blanco a la vez —Zonas del evento, el selector de
+zona de un sub-evento, el escáner y el bloque de mapa de la landing— durante
+horas, **sin un solo error en ninguna parte**. El síntoma de este proyecto,
+otra vez: cuando el dato cambia de sitio y alguien sigue mirando el sitio viejo,
+no falla nada; simplemente no hay nada.
 
-## La 0092 es la única con cuidado
+**Cómo comprobarlo bien**, y son dos minutos:
 
-`db/migrations/0092_zonas_contract.sql`
+```bash
+curl -s https://api.gestekeventost.dpdns.org/eventos/publicos/slug/technova-summit-2026 | grep -o '"zonas"'
+```
 
-**Qué hace:** quita `page_json.zonas` del sitio donde lo busca el código y lo
-guarda en `page_json.zonas_respaldo`. No borra: mueve.
+Si no imprime nada, la API **no** tiene el código nuevo, por más que `main` sí.
+Contra la API desplegada, nunca contra la rama.
 
-**Por qué hay que mirar antes de correrla:** la comprobación no se puede hacer
-desde SQL. Producción sirve el código que ya lee las zonas de la tabla, **o
-no**, y esta migración da por hecho que sí. Si se corre antes de desplegarlo, el
-plano de los eventos desaparece **en el momento**: sin error, sin aviso,
-simplemente no hay zonas.
+## La red de seguridad, mientras exista
 
-**Cómo comprobarlo, y son dos minutos:** entrar al panel desplegado, abrir
-**Zonas del evento → Zonas de interés** y ver que las zonas siguen ahí. Si se
-ven, el código nuevo está sirviendo.
+`page_json.zonas_respaldo` sigue guardado en cada evento. Devuelve las zonas al
+sitio viejo con una consulta, y con eso el código anterior vuelve a
+encontrarlas:
 
-**El estado hoy, medido:** las 11 zonas están en la tabla y las mismas 11 siguen
-en el JSON —4 en TechNova Summit 2026, 7 en FESTECH IBAGUÉ—, así que la copia de
-la 0091 está completa y la 0092 no perdería nada. Ningún evento tiene
-`zonas_respaldo` todavía, que es como se sabe que no se ha corrido.
+```sql
+update public.eventos
+   set page_json = (page_json - 'zonas_respaldo')
+                   || jsonb_build_object('zonas', page_json->'zonas_respaldo')
+ where page_json ? 'zonas_respaldo';
+```
 
-**Deshacerla es una consulta**, y está escrita al final del propio archivo.
+Se borrará en una migración futura, cuando lleve semanas sin hacer falta. Un
+jsonb con once objetos no le pesa a nadie; perder el plano de un evento en
+marcha, sí.
 
-## El orden, si se corre todo el mismo día
+## Lo que sigue esperando una decisión (no son de hoy)
 
-1. `_pendientes_0093_0094_0095.sql` — se puede ahora mismo.
-2. Comprobar en el panel que las zonas se ven.
-3. `0092_zonas_contract.sql`.
+- **0081** — borra columnas de datos de persona en `perfil_talento`. Es
+  `DROP COLUMN`: revertirla **no devuelve los datos**, así que antes hay que ver
+  cuántas filas los tienen rellenos.
+- **0083** — migra `credenciales` → `wallet.variantes`. No corre riesgo, pero
+  toca los 33 eventos. Hoy no rompe nada porque `walletVariantes()` traduce la
+  forma vieja en caliente: **el fallback del código está haciendo el trabajo de
+  la migración**.
 
-La 0094 va antes que la 0092 en esa lista y no pasa nada: sólo añade una columna
-con valor por defecto y no toca `page_json`. Lo que **no** se puede hacer todavía
-es mover las puertas a zonas de tipo ingreso —el paso de datos de Q6—, y ese
-paso no está escrito aún: cada puerta arrastra su conteo de ingresos
-(`ticket_movimientos.zona_id`) y hay que mirar evento por evento. Hoy hay una
-sola puerta, en TechNova.
-
-## Cómo saber si ya están puestas
+## Cómo comprobar el estado en cualquier momento
 
 ```sql
 select
@@ -71,8 +76,6 @@ select
     where table_schema='public' and table_name='zonas' and column_name='tipo')                   as m0094,
   (select count(*) from information_schema.columns
     where table_schema='public' and table_name='event_form_fields' and column_name='torneo_id')  as m0095,
-  (select count(*) from public.eventos where page_json ? 'zonas_respaldo')                       as m0092;
+  (select count(*) from public.eventos where page_json ? 'zonas_respaldo')                       as m0092,
+  (select count(*) from public.zonas where tipo = 'ingreso')                                     as m0096;
 ```
-
-Un `1` en las tres primeras y un número mayor que cero en la última significa que
-está todo aplicado.

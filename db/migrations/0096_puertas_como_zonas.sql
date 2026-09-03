@@ -1,4 +1,5 @@
 -- 0096 · Las puertas pasan a ser zonas de tipo ingreso. (Frente Q · Q6, paso de datos)
+-- APLICADA en producción el 2026-09-03.
 --
 -- Va DESPUÉS de la 0094 (que creó `zonas.tipo`) y de la 0092 (que dejó la tabla
 -- `zonas` como única fuente). Las dos están aplicadas.

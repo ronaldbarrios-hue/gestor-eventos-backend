@@ -1,4 +1,5 @@
 -- 0095 · Un equipo de torneo no cabe en la tabla: que lo diga el organizador.
+-- APLICADA en producción el 2026-09-03.
 --        (Frente Q · Q2)
 --
 -- ── El problema, y por qué no se arregla añadiendo columnas ──────────────

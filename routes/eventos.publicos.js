@@ -474,11 +474,9 @@ router.get('/slug/:slug', async (req, res) => {
     .eq('evento_id', evento.id);
   evento.tiene_networking = (expCount || 0) > 0;
 
-  /* Puede haber VARIOS torneos por evento — contar, no maybeSingle (que
-     lanzaría error con más de una fila). */
-  const { count: torneoCount } = await supabase
-    .from('torneos').select('id', { count: 'exact', head: true }).eq('evento_id', evento.id);
-  evento.tiene_torneo = (torneoCount || 0) > 0;
+  /* `tiene_torneo` se calcula más abajo, junto con la lista que necesita el
+     bloque de la landing: contar aquí y volver a contar allí eran dos consultas
+     para la misma pregunta, y la respuesta la da la lista. */
 
   /* "Espacio del evento": el calendario de sub-eventos aplica a CUALQUIER
      evento (una convención de anime tiene stands, torneos y shows aunque no
@@ -533,6 +531,44 @@ router.get('/slug/:slug', async (req, res) => {
     evento.expositores = lista;
     evento.tiene_expositores = lista.length > 0;
   } catch { evento.expositores = []; evento.tiene_expositores = false; }
+
+  /* Lo que el evento hace, para los bloques «Agenda» y «Torneos» de la landing.
+     Hasta ahora el catálogo de bloques tenía veinticinco tipos y ninguno para
+     lo que el evento ES: quien montaba la página podía poner patrocinadores,
+     galería y testimonios, pero no el programa ni el torneo. La información
+     estaba y vivía sólo en páginas hermanas a las que hay que saber ir.
+
+     Van con tope: una landing enseña lo que viene, no un listado entero. El
+     bloque enlaza a la página completa. */
+  try {
+    const { data: proximas } = await supabase
+      .from('agenda_sessions')
+      .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, requiere_inscripcion')
+      .eq('evento_id', evento.id)
+      .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
+      .order('inicio', { ascending: true })
+      .limit(24);
+    evento.agenda = proximas || [];
+  } catch { evento.agenda = []; }
+
+  try {
+    const { data: torneos } = await supabase
+      .from('torneos').select('id, nombre, disciplina, formato, estado')
+      .eq('evento_id', evento.id)
+      .order('orden', { ascending: true }).order('created_at', { ascending: true });
+    const lista = torneos || [];
+    if (lista.length) {
+      /* Cuántos equipos tiene cada uno: es el dato que dice si el torneo está
+         vivo o es un nombre puesto hace un mes. Una cuenta y no las filas. */
+      const { data: eqs } = await supabase
+        .from('torneo_equipos').select('torneo_id').in('torneo_id', lista.map(t => t.id));
+      const cuenta = {};
+      for (const e of (eqs || [])) cuenta[e.torneo_id] = (cuenta[e.torneo_id] || 0) + 1;
+      for (const t of lista) t.equipos = cuenta[t.id] || 0;
+    }
+    evento.torneos = lista;
+    evento.tiene_torneo = lista.length > 0;
+  } catch { evento.torneos = []; evento.tiene_torneo = false; }
 
   /* Sub-eventos ubicados en el mapa: se resuelven en vivo (título/hora frescos)
      a partir de los marcadores tipo 'sesion' de page_json.mapa. */

@@ -103,6 +103,47 @@ Y de una en una, con Supabase todavía en pie.
 
 ---
 
+## La API: lo que cambia al mover el servidor, y no es sólo la base
+
+Esto no estaba escrito y muerde en el momento del corte, cuando ya no hay tiempo
+de investigar.
+
+**Al cambiar de servidor cambia el origen, y con él dos cosas:**
+
+1. **`CORS_ORIGINS`** — la lista de orígenes que pueden llamar a la API desde un
+   navegador. Si el frontend se queda donde está y el backend se muda, esa lista
+   sigue valiendo; si también se mueve el frontend, hay que añadir el nuevo
+   **antes** de cortar, o la página se queda en blanco sin decir por qué: un
+   rechazo de CORS le llega al navegador como «Failed to fetch» y nada más.
+   Desde el 2026-09-03 el servidor lo deja dicho en el log (`[cors] origen no
+   autorizado: …`), que es dónde hay que mirar.
+
+2. **`FRONTEND_URL`** — la dirección **canónica**, la que va dentro de los
+   correos. Es UNA. Hasta hoy esa misma variable hacía los dos trabajos, y por
+   eso añadir un segundo origen habría mandado enlaces con dos dominios pegados.
+   Ya están separadas (`lib/frontend.js`), pero al mudarse hay que poner las dos.
+
+**Y una que se olvida siempre:** el frontend apunta al backend con
+`VITE_API_URL`, que se compila **dentro** del paquete. Cambiar el backend de
+sitio obliga a **volver a construir y desplegar el frontend**, no sólo a cambiar
+una variable en el servidor. Si el corte se planea como «muevo la base y la API
+un domingo», ese despliegue va en el mismo domingo.
+
+### El orden que evita la ventana en blanco
+
+1. Levantar la API nueva **en paralelo**, con la base ya cargada y comparada.
+2. Añadir el origen del frontend a `CORS_ORIGINS` de la API nueva.
+3. Comprobar contra la API **nueva** con una petición pública, sin sesión:
+
+   ```bash
+   curl -s https://<api-nueva>/eventos/publicos/slug/<un-slug> | head -c 200
+   ```
+
+4. Reconstruir el frontend con `VITE_API_URL` apuntando a la nueva y desplegarlo.
+5. La vieja se apaga **después**, no antes. Igual que Supabase.
+
+---
+
 ## Lo que le va a faltar a quien lo retome
 
 Esto no se resuelve con código:

@@ -164,7 +164,12 @@ function publica(motivo) {
  * Es el mismo patrón que ya costó caro en este repo: el alta de expositores
  * duplicada, el marcador del mapa, el filtro de zonas. Lo duplicado no se
  * separa sólo en lo que hace, se separa en lo que protege. */
-const SELECT_PERMISOS = 'custom_permissions, rol_detail:event_roles!rol_id(permissions)';
+/* `nombre` además de `permissions`: `event_members.rol` es una columna de
+   texto heredada que guarda el nombre del rol TAL COMO ERA al invitar, y la
+   0090 renombró los roles sin tocarla. Quien es «Puerta» seguía saliendo como
+   «Staff · Acceso» en la vista del colaborador. El nombre bueno es el de la
+   tabla de roles, siempre. */
+const SELECT_PERMISOS = 'custom_permissions, rol_detail:event_roles!rol_id(nombre, permissions)';
 
 function permisosDeMiembro(m) {
   return new Set([

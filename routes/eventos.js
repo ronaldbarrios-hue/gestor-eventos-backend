@@ -118,7 +118,12 @@ router.get('/', sesion('Los eventos propios y aquellos donde la persona es miemb
 router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miembro activo del equipo. Se comprueba dentro contra owner_id y event_members.'), async (req, res) => {
   const { data, error } = await supabase
     .from('eventos')
-    .select('*, categoria:categorias(slug, nombre)')
+    /* `ticket_types` tambien: el panel decide con ellos si avisar de que el
+       evento no puede vender. Sin esta linea, `evento.ticket_types` llegaba
+       SIEMPRE indefinido y el aviso «este evento todavia no tiene tipos de
+       boleta» salia en todos los eventos, tuvieran cuatro o ninguno. Un
+       consejero que siempre miente enseña a ignorar los que si aciertan. */
+    .select('*, categoria:categorias(slug, nombre), ticket_types(id, nombre, precio, activo, cupo)')
     .eq('id', req.params.id)
     .is('deleted_at', null)
     .maybeSingle();
@@ -143,7 +148,13 @@ router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miem
   if (!m) return res.status(404).json({ error: 'Evento no encontrado.' });
 
   const permisos = [...permisosDeMiembro(m)];
-  res.json({ evento: conSitio(data), soyOwner: false, mi_rol: m.rol, mi_rol_id: m.rol_id || null, permisos });
+  /* El nombre ACTUAL del rol, y el de texto sólo si no hay fila: la columna
+     heredada se quedó con el nombre viejo tras el renombrado de la 0090. */
+  res.json({
+    evento: conSitio(data), soyOwner: false,
+    mi_rol: m.rol_detail?.nombre || m.rol,
+    mi_rol_id: m.rol_id || null, permisos,
+  });
 });
 
 /* POST /eventos — crear */

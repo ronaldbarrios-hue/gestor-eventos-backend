@@ -24,6 +24,7 @@ const {
 } = require('../lib/expositores.js');
 const { authLimiter } = require('../config/security.js');
 const { hashDocumento, emparejar } = require('../lib/padronPrevio.js');
+const { conZonas } = require('../lib/zonasTabla.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -650,7 +651,10 @@ router.get('/slug/:slug', async (req, res) => {
      también dentro de `page_json` (0064). La página pública lleva años
      leyendo `page_json.branding` y no tiene por qué enterarse de que ahora
      viven en columnas propias. */
-  res.json({ evento: conSitio(evento) });
+  /* Y con sus zonas dentro, que desde la 0092 ya no viven en `page_json`: el
+     bloque de mapa de la landing las busca ahí para poner nombre a cada punto
+     del plano. */
+  res.json({ evento: conSitio(await conZonas(evento)) });
 });
 
 /* Carga pública (solo lectura) de un torneo: equipos + partidos sin datos

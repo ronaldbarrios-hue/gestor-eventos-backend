@@ -17,6 +17,7 @@ const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js'
 const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO, extraerDocumento,
   limpiarMapeo, mapeoSugerido, filasSinCruce } = require('../lib/padronPrevio.js');
 const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
+const { sincronizarZonas } = require('../lib/zonasTabla.js');
 const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
 /* El padrón es parte de configurar el formulario del evento, así que pide lo
@@ -370,6 +371,16 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
     .eq('id', req.params.id)
     .select('*, categoria:categorias(slug, nombre)')
     .single();
+
+  /* Las zonas se guardan en las DOS mientras dure la mudanza (0091 → 0093).
+     Va DESPUES del update y sin `await` bloqueante sobre el resultado: el
+     evento ya quedó guardado, y `sincronizarZonas` no lanza — si fallara, lo
+     que hay en `page_json` sigue siendo correcto y la lectura cae ahí sola.
+     Sólo cuando la peticion trae zonas: el PATCH mezcla por clave, así que
+     guardar el SEO no debe tocar el plano. */
+  if (!error && updatesFinales.page_json && 'zonas' in updatesFinales.page_json) {
+    await sincronizarZonas(req.params.id, updatesFinales.page_json.zonas);
+  }
   if (error) return res.status(500).json({ error: error.message });
 
   auditar(req, data.id, 'evento.editar', { entidad: 'evento', entidadId: data.id, detalle: { campos: Object.keys(updatesFinales) } });

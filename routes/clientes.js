@@ -16,18 +16,13 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { zonasDelEvento, ocupacion, juntar, agendaPorZona } = require('../lib/aforoZonas.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
+const { generarCodigo } = require('../lib/codigos.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
   try { const p = notificar(payload); if (p?.catch) p.catch(() => {}); } catch { /* noop */ }
 }
 
-function generarCodigo() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
 
 const router = express.Router();
 router.use(verifySupabaseJWT);

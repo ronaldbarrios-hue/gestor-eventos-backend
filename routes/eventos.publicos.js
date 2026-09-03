@@ -25,6 +25,7 @@ const {
 const { authLimiter } = require('../config/security.js');
 const { hashDocumento, emparejar } = require('../lib/padronPrevio.js');
 const { conZonas } = require('../lib/zonasTabla.js');
+const { generarCodigo } = require('../lib/codigos.js');
 
 function clientIp(req) {
   return (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').trim();
@@ -90,12 +91,6 @@ router.get('/', async (req, res) => {
   res.json({ eventos: data, total: count ?? 0 });
 });
 
-function generarCodigo() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
 
 /* GET /eventos/publicos/ticket/:codigo
    Incluye `respuestas` (del formulario personalizado, si ya se llenaron) y

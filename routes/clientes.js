@@ -1,5 +1,5 @@
 const express = require('express');
-const { exige, sesion } = require('../core/permisos');
+const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
@@ -47,11 +47,14 @@ async function assertCheckinAccess(eventoId, userId) {
 
   const { data: m } = await supabase
     .from('event_members')
-    .select('id, rol_detail:event_roles!rol_id(permissions)')
+    .select(`id, ${SELECT_PERMISOS}`)
     .eq('evento_id', eventoId).eq('user_id', userId).eq('status', 'active')
     .maybeSingle();
-  const permisos = m?.rol_detail?.permissions || [];
-  if (!permisos.includes('checkin')) throw new Error('No autorizado.');
+  /* Los del rol MÁS los sueltos. Antes sólo miraba el rol, así que dar
+     `checkin` a una persona en concreto —sin cambiarle el rol, que es
+     justamente para lo que existen los permisos sueltos— no servía: el
+     escáner le contestaba «No autorizado». */
+  if (!permisosDeMiembro(m).has('checkin')) throw new Error('No autorizado.');
   return ev;
 }
 

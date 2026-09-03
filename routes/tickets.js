@@ -20,7 +20,13 @@ const CAMPOS_EDITABLES = [
   'nombre', 'descripcion', 'precio', 'currency',
   'cupo', 'early_bird_precio', 'early_bird_hasta', 'venta_hasta',
   'zonas_acceso', 'orden', 'activo', 'es_expositor',
+  /* 0093: qué crea esta boleta al pagarse. `es_expositor` sigue en la lista
+     porque el panel viejo, mientras no se despliegue el nuevo, es quien la
+     escribe —y un trigger mantiene las dos de acuerdo. */
+  'crea', 'crea_torneo_id',
 ];
+
+const CREA_VALIDO = ['nada', 'stand', 'equipo'];
 
 function sanitize(body, defaults = {}) {
   const out = { ...defaults };
@@ -29,8 +35,21 @@ function sanitize(body, defaults = {}) {
       let v = body[k];
       if (v === '' && (k.includes('precio') || k.includes('hasta') || k === 'cupo')) v = null;
       if (k === 'es_expositor') v = Boolean(v);
+      if (k === 'crea_torneo_id' && v === '') v = null;
       out[k] = v;
     }
+  }
+
+  /* Un tipo que crea equipos sin decir en qué torneo es un dato que no
+     significa nada, y la base lo rechaza con una restricción. Se comprueba
+     también aquí para contestar por qué, en vez de devolver el texto de un
+     `check constraint` que no le dice nada a nadie. */
+  if ('crea' in out) {
+    if (!CREA_VALIDO.includes(out.crea)) throw new Error('Ese tipo de boleta no puede crear eso.');
+    if (out.crea !== 'equipo') out.crea_torneo_id = null;
+  }
+  if (out.crea === 'equipo' && !out.crea_torneo_id) {
+    throw new Error('Elige a qué torneo entra el equipo.');
   }
   return out;
 }

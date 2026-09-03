@@ -445,12 +445,18 @@ router.get('/:id/formulario', sesion('Editar el evento: lo comprueba puedeEditar
 
   /* `session_id is null` es lo que separa el formulario del evento de las
      preguntas propias de un sub-evento (migración 0059). Sin este filtro se
-     mezclarían las dos cosas en el mismo editor. */
+     mezclarían las dos cosas en el mismo editor.
+
+     `torneo_id is null` es lo mismo para los campos de un torneo (0095). Si la
+     0095 no está aplicada la columna no existe y el select falla entero: por
+     eso el reintento de abajo, que ya existía para la 0055, sirve también
+     aquí. */
   const { data, error } = await supabase
     .from('event_form_fields')
     .select(COLUMNAS_CAMPO)
     .eq('evento_id', req.params.id)
     .is('session_id', null)
+    .is('torneo_id', null)
     .order('orden', { ascending: true });
   if (error) {
     /* Sin la 0055 no existen `grupo` ni `ayuda`: se reintenta sin ellas para
@@ -499,12 +505,30 @@ router.put('/:id/formulario', sesion('Editar el evento: lo comprueba puedeEditar
   /* OJO: este diff BORRA lo que no venga en el payload. Las preguntas de un
      sub-evento comparten evento_id, así que sin `session_id is null` guardar el
      formulario del evento se las llevaría por delante — el editor del evento no
-     las manda porque no las conoce. */
-  const { data: existentes, error: eGet } = await supabase
+     las manda porque no las conoce.
+
+     Lo mismo, y por lo mismo, con los campos de cada torneo (0095): son la
+     tercera cosa que vive en esta tabla y tampoco se ve desde esta pantalla.
+     Este es exactamente el fallo que se destapó en Q8 con los motivos de los
+     stands —filtrar la lectura y olvidar el borrado—, así que aquí van los dos
+     filtros juntos.
+
+     Si la 0095 no está aplicada, `torneo_id` no existe y el filtro revienta la
+     consulta. En ese caso no hay campos de torneo que proteger, así que se
+     repite sin él: lo que no se puede es guardar a ciegas. */
+  let { data: existentes, error: eGet } = await supabase
     .from('event_form_fields')
     .select('id')
     .eq('evento_id', req.params.id)
-    .is('session_id', null);
+    .is('session_id', null)
+    .is('torneo_id', null);
+  if (eGet && /torneo_id/i.test(eGet.message || '')) {
+    ({ data: existentes, error: eGet } = await supabase
+      .from('event_form_fields')
+      .select('id')
+      .eq('evento_id', req.params.id)
+      .is('session_id', null));
+  }
   if (eGet) return res.status(500).json({ error: eGet.message });
 
   const idsExistentes = new Set((existentes || []).map(c => c.id));
@@ -539,12 +563,24 @@ router.put('/:id/formulario', sesion('Editar el evento: lo comprueba puedeEditar
     if (eIns) return res.status(500).json({ error: eIns.message });
   }
 
-  const { data: final, error: eFinal } = await supabase
+  /* La misma pareja de filtros que arriba: lo que se devuelve es lo que el
+     editor volverá a mandar al guardar, así que colar aquí un campo de torneo
+     es hacer que el editor del evento lo adopte sin querer. */
+  let { data: final, error: eFinal } = await supabase
     .from('event_form_fields')
     .select(COLUMNAS_CAMPO)
     .eq('evento_id', req.params.id)
     .is('session_id', null)
+    .is('torneo_id', null)
     .order('orden', { ascending: true });
+  if (eFinal && /torneo_id/i.test(eFinal.message || '')) {
+    ({ data: final, error: eFinal } = await supabase
+      .from('event_form_fields')
+      .select(COLUMNAS_CAMPO)
+      .eq('evento_id', req.params.id)
+      .is('session_id', null)
+      .order('orden', { ascending: true }));
+  }
   if (eFinal) return res.status(500).json({ error: eFinal.message });
 
   auditar(req, req.params.id, 'evento.formulario.editar', { entidad: 'evento', entidadId: req.params.id, detalle: { total_campos: final.length } });

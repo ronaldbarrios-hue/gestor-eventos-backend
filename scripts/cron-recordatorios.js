@@ -24,11 +24,25 @@
 require('dotenv').config();
 
 const { correrCicloRecordatorios } = require('../lib/recordatorios.js');
+const { barrerOauth } = require('../lib/oauthBarrido.js');
 
 const inicio = Date.now();
 
 correrCicloRecordatorios()
-  .then(() => {
+  .then(async () => {
+    /* De paso, el barrido de OAuth. La 0073 dejó `oauth_barrer()` escrita
+       diciendo que la llamaría «el mismo ciclo que ya corre cada quince
+       minutos», y ese paso nunca se dio: `oauth_codes` y `oauth_tokens`
+       llevan creciendo sin límite desde entonces.
+
+       Va DESPUÉS y en su propio `try`: los recordatorios son lo que la gente
+       nota si falla, y perder un ciclo de correos porque no se pudo borrar un
+       token caducado sería cambiar un problema silencioso por uno visible. */
+    try {
+      await barrerOauth();
+    } catch (e) {
+      console.error(`[cron] recordatorios: el barrido de OAuth falló — ${e.message}`);
+    }
     console.log(`[cron] recordatorios: ciclo completo en ${Date.now() - inicio} ms — ${new Date().toISOString()}`);
     process.exit(0);
   })

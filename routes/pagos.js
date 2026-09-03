@@ -20,6 +20,7 @@ const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { sesion, publica } = require('../core/permisos');
 const { generarCodigo } = require('../lib/codigos.js');
+const { baseFrontend } = require('../lib/frontend.js');
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || null;
 
 /* Sin el secreto el webhook sigue aceptándose, y es a propósito: rechazarlo
@@ -61,7 +62,7 @@ function verifyMPSignature(req) {
 }
 const router = express.Router();
 function publicBaseUrl() {
-  return process.env.FRONTEND_URL || 'http://localhost:5173';
+  return baseFrontend();
 }
 function apiBaseUrl() {
   return process.env.API_PUBLIC_URL || process.env.BACKEND_URL || 'http://localhost:3000';

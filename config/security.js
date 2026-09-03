@@ -20,17 +20,23 @@ const helmet    = require('helmet');
 const cors      = require('cors');
 const rateLimit = require('express-rate-limit');
 const env       = require('./env');
+const { origenesFrontend } = require('../lib/frontend.js');
 
 /* ── CORS ─────────────────────────────────────────────────── */
 const DEV_ORIGINS = ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:4173'];
 
+/* Los orígenes que pueden llamar a la API desde un navegador.
+ *
+ * Sale de `lib/frontend.js`, que junta `CORS_ORIGINS` —la variable explícita
+ * para esto— y `FRONTEND_URL` —la que está puesta hoy—. Antes se leía sólo la
+ * segunda, y esa misma variable arma también los enlaces de los correos: en
+ * cuanto alguien ponía dos orígenes para que CORS dejara pasar al segundo
+ * frontend, los correos empezaban a mandar `https://uno.com,https://dos.com/...`.
+ * Ver el comentario de ese archivo. */
 function buildAllowedOrigins() {
   const origins = [...DEV_ORIGINS];
-  if (env.FRONTEND_URL) {
-    env.FRONTEND_URL.split(',').forEach(u => {
-      const t = u.trim();
-      if (t && !origins.includes(t)) origins.push(t);
-    });
+  for (const u of origenesFrontend()) {
+    if (!origins.includes(u)) origins.push(u);
   }
   return origins;
 }
@@ -42,6 +48,11 @@ const corsOptions = {
        En prod los webhooks de MP llegan sin Origin, así que NO bloqueamos. */
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    /* Se deja dicho en el log. Un rechazo de CORS le llega al navegador como
+       «Failed to fetch» sin más: la página se queda vacía y no hay nada que
+       buscar. Con esta línea, el servidor dice quién llamó y contra qué lista
+       se comparó, que es la diferencia entre diez minutos y una tarde. */
+    console.warn(`[cors] origen no autorizado: ${origin} — permitidos: ${ALLOWED_ORIGINS.join(', ')}`);
     callback(new Error(`CORS: origen no autorizado — ${origin}`));
   },
   credentials   : true,

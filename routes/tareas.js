@@ -5,8 +5,9 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar, notificarVarios } = require('../lib/notificar.js');
 const { otorgarPuntos, otorgarBadge } = require('../lib/gamificacion.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const { baseFrontend } = require('../lib/frontend.js');
 
-const FRONT = process.env.FRONTEND_URL?.split(',')[0] || 'http://localhost:5173';
+const FRONT = baseFrontend();
 
 /* Manda email de tarea a una lista de user_ids (resuelve nombre+email de profiles). */
 /* El título del evento ya no se pasa: lo pone la plantilla con {{evento}}. */

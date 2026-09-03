@@ -7,8 +7,9 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const gc = require('../lib/googleCalendar.js');
 
 const { publica, sesion } = require('../core/permisos');
+const { baseFrontend } = require('../lib/frontend.js');
 const router = express.Router();
-function front() { return (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0]; }
+const front = baseFrontend;
 
 /* Inicia el flujo: devuelve la URL de consentimiento de Google. */
 router.get('/me/google/conectar', verifySupabaseJWT, sesion("La conexión con Google de su propia cuenta."), async (req, res) => {

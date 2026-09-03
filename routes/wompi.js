@@ -17,9 +17,10 @@ const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../
 
 const { sesion, publica } = require('../core/permisos');
 const { generarCodigo } = require('../lib/codigos.js');
+const { baseFrontend } = require('../lib/frontend.js');
 const router = express.Router();
 
-function publicBaseUrl() { return (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0]; }
+const publicBaseUrl = baseFrontend;
 
 /* ── Conectar / desconectar (organizador) ── */
 router.post('/me/wompi/conectar', verifySupabaseJWT, sesion("La cuenta de cobro que el organizador conecta a su perfil."), async (req, res) => {

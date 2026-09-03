@@ -116,16 +116,28 @@ router.get('/ticket/:codigo', async (req, res) => {
   const codigo = req.params.codigo.toUpperCase().trim();
   if (!codigo || codigo.length < 4) return res.status(400).json({ error: 'Código inválido.' });
 
-  const { data, error } = await supabase
-    .from('tickets')
-    .select(`
+  /* `crea` (0093) dice si esta boleta trae un stand o un equipo detrás, y con
+     eso la página ofrece el enlace al portal que toque.
+
+     Con reintento sin esa columna, y no por costumbre: esta es la página donde
+     alguien mira su entrada en la puerta del evento. Si la base de un
+     despliegue no tiene la 0093, el select falla ENTERO y lo que se rompe no es
+     un enlace de más: es la boleta. */
+  const COLS = (extra) => `
       id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
       guest_nombre, guest_email, user_id,
-      tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor),
+      tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor${extra}),
       evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json)
-    `)
-    .eq('codigo', codigo)
-    .maybeSingle();
+    `;
+
+  let { data, error } = await supabase
+    .from('tickets').select(COLS(', crea')).eq('codigo', codigo).maybeSingle();
+
+  if (error && /crea/i.test(error.message || '')) {
+    console.error(`[ticket] sin \`crea\` (¿falta la 0093?): ${error.message}`);
+    ({ data, error } = await supabase
+      .from('tickets').select(COLS('')).eq('codigo', codigo).maybeSingle());
+  }
 
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Boleta no encontrada.' });
@@ -652,7 +664,29 @@ async function cargarTorneoPublico(torneo) {
     .eq('torneo_id', torneo.id)
     .order('ronda', { ascending: true })
     .order('orden', { ascending: true });
-  return { torneo, equipos: equipos || [], partidos: partidos || [] };
+  /* Cuándo y dónde se juega, que sale del sub-evento vinculado.
+
+     La página pública de un torneo enseñaba el nombre, la disciplina, el
+     formato y dos equipos. Ni fecha, ni sede, ni a qué hora — y es la pantalla
+     que abre alguien para decidir si le interesa. El dato existía: la N-Fase 2
+     puso el «¿cuándo se juega?» dentro del alta del torneo, en
+     `agenda_sessions.torneo_id`, y esta consulta nunca lo miró.
+
+     `maybeSingle` no: un torneo puede tener varias sesiones —una por jornada— y
+     lo que interesa es la primera, que es cuando empieza. */
+  const { data: cuando } = await supabase
+    .from('agenda_sessions')
+    .select('id, titulo, inicio, fin, ubicacion, track')
+    .eq('torneo_id', torneo.id)
+    .order('inicio', { ascending: true })
+    .limit(1);
+
+  return {
+    torneo,
+    equipos: equipos || [],
+    partidos: partidos || [],
+    cuando: (cuando && cuando[0]) || null,
+  };
 }
 
 async function eventoPublicado(slug, requesterId) {

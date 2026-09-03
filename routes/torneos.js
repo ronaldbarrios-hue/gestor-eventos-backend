@@ -3,6 +3,10 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { exige, sesion } = require('../core/permisos');
+const {
+  TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  validarFormulario, normalizarRespuestas,
+} = require('../lib/formularioCampos.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -403,7 +407,7 @@ router.post('/:eventoId/torneo/:torneoId/importar-equipos', exige(PERMS_TORNEO),
 /* POST /eventos/:eventoId/torneo/:torneoId/equipos — registrar un equipo manual */
 router.post('/:eventoId/torneo/:torneoId/equipos', exige(PERMS_TORNEO), async (req, res) => {
   const { eventoId, torneoId } = req.params;
-  const { nombre, foto_url, contacto_email } = req.body;
+  const { nombre, foto_url, contacto_email, respuestas } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del equipo es requerido.' });
 
   try {
@@ -413,16 +417,52 @@ router.post('/:eventoId/torneo/:torneoId/equipos', exige(PERMS_TORNEO), async (r
     if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
     if (torneo.estado !== 'armando') return res.status(400).json({ error: 'No se pueden agregar equipos: el torneo ya inició.' });
 
-    const { data, error } = await supabase
+    /* Lo que este torneo pide además del nombre (0095). Se valida con el mismo
+       código que el registro de asistentes: si un torneo declara «rango» como
+       obligatorio, un equipo sin rango no entra, y el mensaje lo explica. */
+    let extra = {};
+    const { data: campos, error: eCampos } = await supabase
+      .from('event_form_fields').select(COLUMNAS_CAMPO)
+      .eq('evento_id', eventoId).eq('torneo_id', torneoId)
+      .order('orden', { ascending: true });
+
+    if (eCampos && !falta0095(eCampos)) return res.status(500).json({ error: eCampos.message });
+
+    if (campos && campos.length) {
+      const falloResp = validarFormulario(campos, respuestas || {});
+      if (falloResp) return res.status(400).json({ error: falloResp });
+      extra = { respuestas: normalizarRespuestas(campos, respuestas || {}) };
+    }
+
+    let { data, error } = await supabase
       .from('torneo_equipos')
       .insert({
         torneo_id: torneoId,
         nombre: nombre.trim(),
         foto_url: foto_url || null,
         contacto_email: contacto_email?.trim() || null,
+        ...extra,
       })
       .select()
       .single();
+
+    /* Sin la 0095 no existe `respuestas` y el insert entero falla. El equipo
+       importa más que sus campos extra: se guarda sin ellos y se dice en el
+       log, en vez de rechazar un alta por una migración que falta. */
+    if (error && falta0095(error)) {
+      console.error(`[torneos] equipo guardado sin \`respuestas\` (¿falta la 0095?): ${error.message}`);
+      ({ data, error } = await supabase
+        .from('torneo_equipos')
+        .insert({
+          torneo_id: torneoId,
+          nombre: nombre.trim(),
+          foto_url: foto_url || null,
+          contacto_email: contacto_email?.trim() || null,
+        })
+        .select()
+        .single());
+    }
+
     if (error) return res.status(500).json({ error: error.message });
     res.status(201).json({ equipo: data });
   } catch (e) {
@@ -804,6 +844,141 @@ router.get('/:eventoId/torneo/:torneoId/posiciones', sesion('Las llaves y la tab
   }
 
   res.json({ por_grupo: false, posiciones: calcularTabla(equipos || [], partidos || []) });
+});
+
+
+
+/* ────────────── El formulario de inscripción de un torneo ──────────────
+ *
+ * `torneo_equipos` tiene nombre, foto, contacto y grupo. Y nada más: ni
+ * jugadores, ni rango, ni nickname, ni país. «Todo el flujo está hecho para un
+ * torneo de fútbol», y es literal.
+ *
+ * Añadir `dorsal` y `posicion` arreglaría el fútbol y dejaría fuera al de
+ * esports, que pide nick, rango y servidor. Así que no se añaden columnas: se
+ * apunta a esta tabla el mismo `event_form_fields` que ya define los campos del
+ * registro de asistentes y los de un sub-evento. Mismo editor, misma
+ * validación, mismo `respuestas`.
+ *
+ * ── El cuidado, que es el de siempre y ya mordió una vez ─────────────────
+ *
+ * Los tres diffs —evento, sub-evento y torneo— BORRAN lo que no viene en el
+ * payload. El filtro es lo único que separa «guardo los míos» de «borro los de
+ * los demás». Aquí se filtra por `torneo_id = :torneoId`; y el formulario del
+ * evento lleva desde hoy su `torneo_id is null`, porque sin él guardar el
+ * formulario de compra se llevaría por delante los campos de todos los torneos
+ * —que ni siquiera se ven en esa pantalla—.
+ */
+
+/* Un torneo pide menos que el registro del evento y más que un sub-evento: hay
+   que describir un equipo entero, no contestar cuatro cosas de una charla. */
+const MAX_CAMPOS_TORNEO = 20;
+
+const AVISO_0095 = 'Falta aplicar la migración 0095 para tener formulario propio por torneo.';
+const falta0095 = (error) => /torneo_id|column .* does not exist/i.test(String(error?.message || ''));
+
+async function torneoDelEvento(eventoId, torneoId) {
+  const { data } = await supabase
+    .from('torneos').select('id, nombre, disciplina')
+    .eq('id', torneoId).eq('evento_id', eventoId).maybeSingle();
+  return data;
+}
+
+router.get('/:eventoId/torneo/:torneoId/formulario', exige(PERMS_TORNEO), async (req, res) => {
+  const { eventoId, torneoId } = req.params;
+  try {
+    await assertGestionaTorneo(eventoId, req.user.id);
+
+    const torneo = await torneoDelEvento(eventoId, torneoId);
+    if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
+
+    const { data, error } = await supabase
+      .from('event_form_fields')
+      .select(COLUMNAS_CAMPO)
+      .eq('evento_id', eventoId)
+      .eq('torneo_id', torneoId)
+      .order('orden', { ascending: true });
+
+    /* Sin la 0095 esto no es «no hay campos»: es que no se pueden tener. Se
+       dice, en vez de enseñar un editor que guardaría en el vacío. */
+    if (error) {
+      if (falta0095(error)) {
+        return res.status(503).json({ error: AVISO_0095, campos: [], tipos: TIPOS_CAMPO, listo: false });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({
+      torneo, campos: data || [], tipos: TIPOS_CAMPO,
+      max_campos: MAX_CAMPOS_TORNEO, listo: true,
+    });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+router.put('/:eventoId/torneo/:torneoId/formulario', exige(PERMS_TORNEO), async (req, res) => {
+  const { eventoId, torneoId } = req.params;
+  try {
+    await assertGestionaTorneo(eventoId, req.user.id);
+
+    const torneo = await torneoDelEvento(eventoId, torneoId);
+    if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
+
+    const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
+    const falloDef = validarDefinicion(campos, { max: MAX_CAMPOS_TORNEO });
+    if (falloDef) return res.status(400).json({ error: falloDef });
+
+    /* Sólo los de ESTE torneo. */
+    const { data: existentes, error: eGet } = await supabase
+      .from('event_form_fields').select('id')
+      .eq('evento_id', eventoId).eq('torneo_id', torneoId);
+    if (eGet) {
+      if (falta0095(eGet)) return res.status(503).json({ error: AVISO_0095 });
+      return res.status(500).json({ error: eGet.message });
+    }
+
+    const idsExistentes = new Set((existentes || []).map(c => c.id));
+    const idsEnviados = new Set(campos.filter(c => c.id && idsExistentes.has(c.id)).map(c => c.id));
+
+    const idsABorrar = [...idsExistentes].filter(id => !idsEnviados.has(id));
+    if (idsABorrar.length) {
+      const { error } = await supabase.from('event_form_fields').delete().in('id', idsABorrar);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    for (let i = 0; i < campos.length; i++) {
+      const c = campos[i];
+      if (!c.id || !idsExistentes.has(c.id)) continue;
+      /* Conserva el id: lo que ya contestó un equipo apunta a él. */
+      const { error } = await supabase
+        .from('event_form_fields').update(filaCampo(c, i)).eq('id', c.id);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    const nuevos = campos.map((c, i) => ({ ...c, _orden: i }))
+      .filter(c => !c.id || !idsExistentes.has(c.id));
+    if (nuevos.length) {
+      const filas = nuevos.map(c => ({
+        evento_id: eventoId,
+        torneo_id: torneoId,
+        /* «Sólo para el tipo VIP» es un filtro del formulario de compra; aquí
+           el filtro ya es el torneo. */
+        ...filaCampo({ ...c, ticket_type_id: null }, c._orden),
+      }));
+      const { error } = await supabase.from('event_form_fields').insert(filas);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    const { data: final } = await supabase
+      .from('event_form_fields').select(COLUMNAS_CAMPO)
+      .eq('evento_id', eventoId).eq('torneo_id', torneoId)
+      .order('orden', { ascending: true });
+
+    res.json({ campos: final || [] });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
 });
 
 module.exports = router;

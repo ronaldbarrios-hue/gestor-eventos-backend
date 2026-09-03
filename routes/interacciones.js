@@ -44,8 +44,21 @@ router.get('/:eventoId/motivos', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
   try {
     await assertEscaneo(eventoId, req.user.id);
+    /* Sólo los motivos DEL EVENTO. `evento_motivos` guarda también los de cada
+       stand —con `expositor_id`— y sin este filtro el escáner del panel los
+       ofrecía todos: el staff podía dar puntos EN NOMBRE de un stand, con su
+       motivo y contra su cuota.
+
+       Un stand da sus puntos por su propio enlace (`/expositor/:codigo`), que
+       es donde se le identifica. Que el panel pudiera hacerlo por él borra esa
+       frontera, y es justo la que separa al evento de un tercero.
+
+       Hoy no había saltado porque no existe ningún motivo de expositor — los
+       cinco que hay son del evento. */
     const { data, error } = await supabase
-      .from('evento_motivos').select('*').eq('evento_id', eventoId)
+      .from('evento_motivos').select('*')
+      .eq('evento_id', eventoId)
+      .is('expositor_id', null)
       .order('orden', { ascending: true }).order('created_at', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ motivos: data || [] });
@@ -70,8 +83,15 @@ router.put('/:eventoId/motivos', exige(PERMS_GESTION), async (req, res) => {
   try {
     await assertGestion(eventoId, req.user.id);
 
+    /* `is('expositor_id', null)` también aquí, y es lo que impide una pérdida
+       de datos: este guardado borra TODO lo que no venga en la lista, y la
+       lista sale del catálogo del evento. Sin el filtro, guardar un motivo
+       desde el panel habría borrado de golpe los motivos de todos los stands
+       — que ni siquiera se ven en esta pantalla. */
     const { data: existentes } = await supabase
-      .from('evento_motivos').select('id').eq('evento_id', eventoId);
+      .from('evento_motivos').select('id')
+      .eq('evento_id', eventoId)
+      .is('expositor_id', null);
     const idsExistentes = new Set((existentes || []).map(m => m.id));
     const idsEnviados = new Set(lista.filter(m => m.id && idsExistentes.has(m.id)).map(m => m.id));
 

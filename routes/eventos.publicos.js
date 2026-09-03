@@ -652,7 +652,29 @@ async function cargarTorneoPublico(torneo) {
     .eq('torneo_id', torneo.id)
     .order('ronda', { ascending: true })
     .order('orden', { ascending: true });
-  return { torneo, equipos: equipos || [], partidos: partidos || [] };
+  /* Cuándo y dónde se juega, que sale del sub-evento vinculado.
+
+     La página pública de un torneo enseñaba el nombre, la disciplina, el
+     formato y dos equipos. Ni fecha, ni sede, ni a qué hora — y es la pantalla
+     que abre alguien para decidir si le interesa. El dato existía: la N-Fase 2
+     puso el «¿cuándo se juega?» dentro del alta del torneo, en
+     `agenda_sessions.torneo_id`, y esta consulta nunca lo miró.
+
+     `maybeSingle` no: un torneo puede tener varias sesiones —una por jornada— y
+     lo que interesa es la primera, que es cuando empieza. */
+  const { data: cuando } = await supabase
+    .from('agenda_sessions')
+    .select('id, titulo, inicio, fin, ubicacion, track')
+    .eq('torneo_id', torneo.id)
+    .order('inicio', { ascending: true })
+    .limit(1);
+
+  return {
+    torneo,
+    equipos: equipos || [],
+    partidos: partidos || [],
+    cuando: (cuando && cuando[0]) || null,
+  };
 }
 
 async function eventoPublicado(slug, requesterId) {

@@ -1,4 +1,10 @@
 -- 0081 · perfil_talento deja de tener foto, teléfono y ciudad.
+-- APLICADA el 2026-09-02. Estuvo parada meses por ser un DROP COLUMN sobre
+-- datos de persona, y al medirla antes de aplicarla la razon habia dejado de
+-- existir: `perfil_talento` tenia CERO filas. No se perdio el dato de nadie,
+-- solo tres columnas vacias. `cv_url` y `cv_nombre` siguen ahi.
+--
+-- Lo que decia antes de aplicarla:
 -- PENDIENTE DE APLICAR — y de verdad, no como las otras. Comprobado el
 -- 2026-09-02 contra producción: `perfil_talento.foto_url` SIGUE EXISTIENDO.
 --

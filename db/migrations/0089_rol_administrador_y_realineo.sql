@@ -1,4 +1,7 @@
 -- 0089 · El rol «Administrador», y los roles viejos realineados con la semilla.
+-- APLICADA el 2026-09-02. Comprobado después contra producción: 273 → 306
+-- roles, «Administrador» en los 33 eventos, los 29 miembros con su rol intacto,
+-- y «Editor» pasó de 2 a 33 pudiendo la agenda.
 --
 -- ── Por qué ──────────────────────────────────────────────────────────────
 --

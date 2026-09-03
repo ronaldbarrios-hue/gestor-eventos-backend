@@ -1,4 +1,7 @@
 -- 0090 · Los roles, llamados por lo que son — y sin conceder de más.
+-- APLICADA el 2026-09-02. Comprobado después: 0 «Speaker», 0 «Expositor», 0
+-- «Staff · Acceso»; 33 «Puerta», 33 «Atención», 18 «Programación» con torneos y
+-- 18 «Moderación» ya sin la agenda. Ningún miembro se quedó sin rol.
 --
 -- Va DESPUÉS de la 0089, que crea «Administrador» y realinea los permisos.
 --

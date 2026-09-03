@@ -1,4 +1,8 @@
 -- 0091 · Las zonas dejan de vivir dentro de un JSON. PASO 1 de 3 (expand).
+-- APLICADA el 2026-09-02. Comprobado después: 7 zonas en la tabla y las MISMAS
+-- 7 siguen en `page_json` — que es lo que hace que revertir siga siendo gratis
+-- hasta el paso 2. Las dos claves foráneas puestas, y las 2 sesiones que tenían
+-- zona la conservan.
 --
 -- ── El problema ──────────────────────────────────────────────────────────
 --

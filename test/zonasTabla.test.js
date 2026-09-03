@@ -43,13 +43,27 @@ test('la lectura conserva la vuelta atrás al JSON', () => {
   assert.match(fn, /if \(filas && filas\.length\) return/, 'la vuelta atrás ya no es «tabla vacía → JSON»');
 });
 
+/* Cada función, sólo su cuerpo.
+
+   Antes esto cortaba «desde `sincronizarZonas` hasta el final del archivo», y
+   el día que apareció `sincronizarPuertas` debajo la prueba empezó a leer las
+   dos como una: un `throw` de la segunda —capturado por su propio `try`— se
+   contaba como que la primera lanzaba. Una prueba que se equivoca de trozo
+   acusa a quien no fue. */
+function cuerpo(nombre) {
+  const desde = TABLA.indexOf(`async function ${nombre}`);
+  const resto = TABLA.slice(desde + 1);
+  const siguiente = resto.indexOf('\nasync function ');
+  return siguiente === -1 ? TABLA.slice(desde) : resto.slice(0, siguiente);
+}
+
 test('sincronizar NO borra todo para volver a insertar', () => {
   /* Ésta es la trampa. Las claves foráneas de la 0091 son `on delete set
      null`: un `delete` de todas las zonas del evento dejaría sin zona a las
      charlas y los stands que sí la tenían, aunque se reinsertaran un
      milisegundo después. El síntoma sería un plano que se vacía solo al
      guardar cualquier cosa, y nada en el log. */
-  const fn = TABLA.slice(TABLA.indexOf('async function sincronizarZonas'));
+  const fn = cuerpo('sincronizarZonas');
   assert.match(fn, /\.upsert\(/, 'ya no se actualiza por upsert');
   assert.match(fn, /\.not\('id', 'in'/, 'el borrado ya no excluye a las zonas que siguen vivas');
 });
@@ -59,9 +73,33 @@ test('sincronizar no puede tumbar el guardado del evento', () => {
      fuente para volver atrás. Si lanzara, perder el guardado entero de la
      landing por no poder escribir una tabla espejo sería cambiar un problema
      invisible por uno muy visible. */
-  const fn = TABLA.slice(TABLA.indexOf('async function sincronizarZonas'));
+  const fn = cuerpo('sincronizarZonas');
   assert.match(fn, /try\s*\{/, 'sincronizarZonas ya no se protege con try');
   assert.ok(!/throw/.test(fn), 'sincronizarZonas lanza');
+});
+
+test('espejar las puertas no se lleva por delante las demás zonas', () => {
+  /* La misma trampa que apareció con los motivos de los stands: un borrado por
+     ausencia contra una lista que no conoce al resto. `sincronizarPuertas`
+     recibe SÓLO las puertas, así que sin el filtro por tipo su `delete`
+     borraría todas las zonas del evento —y las charlas y los stands se
+     quedarían sin sitio por el `on delete set null`—. */
+  const fn = cuerpo('sincronizarPuertas');
+  assert.match(fn, /\.eq\('tipo', 'ingreso'\)/,
+    'el borrado de puertas ya no se limita a las zonas de tipo ingreso');
+  assert.match(fn, /\.not\('id', 'in'/, 'el borrado no excluye a las puertas que siguen vivas');
+  assert.match(fn, /try\s*\{/, 'sincronizarPuertas ya no se protege con try');
+  assert.match(fn, /tipo: 'ingreso'/, 'la puerta ya no se guarda como zona de ingreso');
+  /* Una puerta no declara aforo: no se llena, se cruza. */
+  assert.match(fn, /aforo_max: null/, 'la puerta volvió a declarar aforo');
+});
+
+test('una puerta no cuenta como gente dentro', () => {
+  /* Si contara, el número de gente en el recinto se sumaría dos veces: una al
+     cruzar la puerta y otra en la zona a la que se entra. */
+  const aforo = leer('lib/aforoZonas.js');
+  assert.match(aforo, /z\.tipo !== 'ingreso'/,
+    'ocupacion() ya no deja fuera las zonas de tipo ingreso');
 });
 
 test('sólo se sincroniza cuando la petición trae zonas', () => {
@@ -73,4 +111,22 @@ test('sólo se sincroniza cuando la petición trae zonas', () => {
     ev, /'zonas' in updatesFinales\.page_json/,
     'el PATCH sincroniza las zonas sin comprobar que la petición las traiga',
   );
+});
+
+test('el evento viaja con sus zonas dentro, aunque ya no vivan en page_json', () => {
+  /* Esto es lo que la 0092 rompió y nadie vio venir: en el servidor la mudanza
+     estaba hecha —el aforo lee de la tabla— pero el PANEL y la PÁGINA PÚBLICA
+     leen `evento.page_json.zonas`, y ahí buscan la pantalla de Zonas, el
+     selector de zona de un sub-evento, el escáner y el bloque de mapa.
+
+     Cuatro pantallas en blanco a la vez, sin un solo error, en cuanto la
+     migración corrió. La tabla es la fuente; esto es la traducción. */
+  const tabla = leer('lib/zonasTabla.js');
+  assert.match(tabla, /async function conZonas/, 'ya no existe la traducción tabla → page_json');
+
+  const panel = leer('routes/eventos.js');
+  assert.match(panel, /conSitio\(conTodo\)/, 'el evento del panel ya no lleva sus zonas dentro');
+
+  const publico = leer('routes/eventos.publicos.js');
+  assert.match(publico, /conZonas\(evento\)/, 'el evento público ya no lleva sus zonas dentro');
 });

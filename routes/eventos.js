@@ -17,7 +17,7 @@ const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js'
 const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO, extraerDocumento,
   limpiarMapeo, mapeoSugerido, filasSinCruce } = require('../lib/padronPrevio.js');
 const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
-const { sincronizarZonas } = require('../lib/zonasTabla.js');
+const { sincronizarZonas, sincronizarPuertas, conZonas } = require('../lib/zonasTabla.js');
 const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
 /* El padrón es parte de configurar el formulario del evento, así que pide lo
@@ -130,8 +130,12 @@ router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miem
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Evento no encontrado.' });
 
+  /* Las zonas viajan dentro del evento aunque ya no vivan en `page_json`
+     (0092): el panel las busca ahí en cuatro pantallas. */
+  const conTodo = await conZonas(data);
+
   if (String(data.owner_id) === String(req.user.id)) {
-    return res.json({ evento: conSitio(data), soyOwner: true, permisos: ['*'] });
+    return res.json({ evento: conSitio(conTodo), soyOwner: true, permisos: ['*'] });
   }
 
   const { data: m } = await supabase
@@ -151,7 +155,7 @@ router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miem
   /* El nombre ACTUAL del rol, y el de texto sólo si no hay fila: la columna
      heredada se quedó con el nombre viejo tras el renombrado de la 0090. */
   res.json({
-    evento: conSitio(data), soyOwner: false,
+    evento: conSitio(conTodo), soyOwner: false,
     mi_rol: m.rol_detail?.nombre || m.rol,
     mi_rol_id: m.rol_id || null, permisos,
   });
@@ -391,6 +395,13 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
      guardar el SEO no debe tocar el plano. */
   if (!error && updatesFinales.page_json && 'zonas' in updatesFinales.page_json) {
     await sincronizarZonas(req.params.id, updatesFinales.page_json.zonas);
+  }
+  /* Y las puertas, que desde la 0096 también son zonas —de tipo ingreso—.
+     Mismo trato y por la misma razón: el JSON sigue siendo el dueño de las
+     reglas de la puerta (qué boletas admite, qué staff la atiende) y la fila de
+     `zonas` es el espejo que la pone en el mapa del recinto. */
+  if (!error && updatesFinales.page_json && 'accesos' in updatesFinales.page_json) {
+    await sincronizarPuertas(req.params.id, updatesFinales.page_json.accesos);
   }
   if (error) return res.status(500).json({ error: error.message });
 

@@ -27,12 +27,17 @@ test('los cuatro canales, con su tipo', () => {
   ]);
 });
 
-test('los diez roles, en su orden', () => {
-  assert.equal(ROLES.length, 10);
-  assert.deepEqual(ROLES.map(r => r.orden), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+test('los once roles, en su orden', () => {
+  /* Once desde la 0089: «Administrador» entra el primero (orden 0) porque es el
+     más fuerte y es el que se busca al delegar. Era el que faltaba: el dueño no
+     es un rol sino una columna, así que dar «todo» a alguien obligaba a
+     traspasarle el evento. */
+  assert.equal(ROLES.length, 11);
+  assert.deepEqual(ROLES.map(r => r.orden), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.deepEqual(
     ROLES.map(r => r.nombre),
-    ['Editor', 'Coordinador', 'Staff · Acceso', 'Staff · Logística', 'Staff · Atención',
+    ['Administrador',
+     'Editor', 'Coordinador', 'Staff · Acceso', 'Staff · Logística', 'Staff · Atención',
      'VIP host', 'Expositor', 'Speaker', 'Finanzas', 'Moderación'],
   );
 });
@@ -79,9 +84,11 @@ test('sembrar escribe los canales y los roles, y los roles con INSERT IGNORE', a
   const cx = { consultar: async (q, p) => { sql.push({ q: q.replace(/\s+/g, ' ').trim(), p }); } };
   const r = await sembrarEvento(cx, { id: 'e1', owner_id: 'u1' });
 
-  assert.deepEqual(r, { canales: 4, roles: 10 });
+  /* 11 desde la 0089: entró «Administrador», el rol que faltaba para poder
+     delegar todo sin traspasar el evento. */
+  assert.deepEqual(r, { canales: 4, roles: 11 });
   assert.equal(sql.filter(s => s.q.includes('chat_channels')).length, 4);
-  assert.equal(sql.filter(s => s.q.includes('event_roles')).length, 10);
+  assert.equal(sql.filter(s => s.q.includes('event_roles')).length, 11);
   assert.ok(sql.find(s => s.q.includes('event_roles')).q.startsWith('INSERT IGNORE'));
 });
 

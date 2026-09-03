@@ -1,5 +1,10 @@
 -- 0086 · La funcion de recordatorios in-app insertaba una columna que no existe
 --
+-- APLICADA el 2026-09-02. Comprobado antes con precision —mirar si el cuerpo
+-- menciona «link» daba un FALSO POSITIVO, porque la version arreglada lo dice en
+-- un comentario; hay que mirar la lista de columnas del INSERT— y despues: el
+-- INSERT ya no lleva `link`.
+--
 -- `generar_recordatorios_inapp()` hace INSERT INTO notificaciones (..., link, ...)
 -- y esa tabla NO tiene `link`. Revienta en la primera fila del bucle y se lleva
 -- la transaccion entera, asi que nunca ha creado un solo aviso.

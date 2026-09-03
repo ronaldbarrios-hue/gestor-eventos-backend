@@ -20,7 +20,15 @@ const { ROLES } = require('../modules/eventos/semillas.js');
    no por número: así una 0095 que la vuelva a tocar se coge sola. */
 function semillaSql() {
   const dir = path.join(__dirname, '..', 'db', 'migrations');
-  const archivos = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
+  /* Los que empiezan por `_` son ayudantes, no migraciones: `_all_pendientes`,
+     `_cron_send_reminders`, o el `_aplicar_...` que se genera para pegar
+     varias de golpe en el SQL Editor. Ese ultimo contiene DOS definiciones de
+     la semilla —la de la 0089 y la de la 0090— y ademas ordena DESPUES de los
+     numeros, asi que sin filtrarlo la prueba lo tomaba por la ultima y contaba
+     22 roles. */
+  const archivos = fs.readdirSync(dir)
+    .filter(f => f.endsWith('.sql') && !f.startsWith('_'))
+    .sort();
   let ultima = null;
   for (const f of archivos) {
     const txt = fs.readFileSync(path.join(dir, f), 'utf8');

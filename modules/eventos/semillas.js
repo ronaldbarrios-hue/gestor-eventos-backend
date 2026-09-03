@@ -59,6 +59,22 @@ const CANALES = [
  * que ESE puesto hace, y quitarlos ahora obligaría a acordarse de volver a
  * ponerlos el día que se implementen. Quedan anotados en POR-HACER.md §4. */
 const ROLES = [
+  /* El que faltaba: hasta la 0089 no había ningún rol que pudiera todo. Las
+     pantallas más sensibles se guardan con «sólo el dueño», y el dueño no es un
+     rol sino una columna (`eventos.owner_id`), así que delegar «todo» obligaba
+     a traspasar el evento entero.
+     Lleva también los seis permisos que aún no verifica nadie, por lo mismo que
+     dice el comentario de arriba y con más motivo: el día que se apliquen,
+     quien es administrador tiene que poder hacerlos sin que nadie se acuerde
+     de volver a editar el rol. */
+  { nombre: 'Administrador',     descripcion: 'Puede todo dentro del evento, salvo transferirlo o borrarlo', orden: 0,
+    permissions: ['editar_evento', 'publicar_evento', 'editar_pagina_publica', 'gestionar_imagenes',
+      'gestionar_agenda', 'gestionar_torneo', 'gestionar_expositores',
+      'invitar_staff', 'gestionar_roles', 'remover_miembros',
+      'gestionar_tickets', 'gestionar_descuentos',
+      'ver_clientes', 'gestionar_clientes', 'checkin', 'vip_zone',
+      'crear_canales', 'borrar_mensajes',
+      'ver_pagos', 'reembolsar', 'ver_analytics'] },
   { nombre: 'Editor',            descripcion: 'Edita información, agenda y página pública', orden: 1,
     permissions: ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda'] },
   { nombre: 'Coordinador',       descripcion: 'Coordina al staff y al evento completo', orden: 2,

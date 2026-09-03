@@ -487,13 +487,40 @@ async function zonaInvalida(eventoId, zonaId) {
     : 'El evento todavía no tiene zonas en su plano, así que no se puede ubicar el stand.';
 }
 
-/* POST /eventos/:eventoId/expositores — crear un stand a mano. */
-router.post('/:eventoId/expositores', exige(PERMS_EXPOSITORES), async (req, res) => {
+/* ── Un solo alta, una sola edicion, un solo borrado ───────────────────────
+ *
+ * Habia dos altas de expositor contra ESTA MISMA TABLA: la de Stands, que
+ * escribia los diecisiete campos de `CAMPOS_STAND`, y la de la Rueda de
+ * Negocios, que escribia cuatro. Y la de la Rueda no tenia PATCH, asi que un
+ * expositor creado desde ahi **no se podia editar desde ninguna parte**: ni
+ * corregir el nombre, ni ponerle zona, ni arreglar el contacto.
+ *
+ * Los manejadores viven aqui una sola vez y se montan en las dos rutas. Las
+ * dos URL siguen existiendo porque las usan dos pantallas distintas y romper
+ * una para unificar la otra no arregla nada; lo que deja de estar duplicado es
+ * la logica, que es lo que se separaba.
+ *
+ * Lo unico que NO comparten es el gate: la Rueda de Negocios solo existe para
+ * ciertas categorias de evento (`assertCategoriaPermitida`), y los stands
+ * funcionan para cualquiera. Por eso el gate es un middleware de la ruta y no
+ * una linea dentro del manejador. */
+
+async function crearExpositor(req, res) {
   const { eventoId } = req.params;
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'El nombre del stand es requerido.' });
   try {
     await assertOwner(eventoId, req.user.id);
+    /* `estado_ficha: 'completa'` no es un detalle: el directorio y el mapa
+       PUBLICOS filtran por el (`routes/eventos.publicos.js`, dos consultas), y
+       la columna nace en `'borrador'`. Sin esto, un expositor creado a mano se
+       veia en el panel y el publico NO lo veia nunca, sin un solo aviso.
+
+       El `'borrador'` por defecto es correcto para el otro camino, que es el
+       que la columna tenia en mente: el trigger de la 0036 crea la ficha
+       cuando se paga una boleta-stand, y la completa el propio expositor desde
+       `/expositor/:codigo` con `marcar_completa`. Ahi hay alguien a quien
+       esperar; cuando la crea el organizador a mano no hay nadie. */
     const fila = { evento_id: eventoId, nombre, ticket_id: null, activo: true, estado_ficha: 'completa', tipo_persona: 'empresa' };
     for (const k of CAMPOS_STAND) {
       if (k === 'nombre') continue;
@@ -507,10 +534,9 @@ router.post('/:eventoId/expositores', exige(PERMS_EXPOSITORES), async (req, res)
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
-});
+}
 
-/* PATCH /eventos/:eventoId/expositores/:id — editar un stand. */
-router.patch('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
+async function editarExpositor(req, res) {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
@@ -534,20 +560,45 @@ router.patch('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), async (req,
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
-});
+}
 
-/* DELETE /eventos/:eventoId/expositores/:id — borrar un stand (scoped al evento). */
-router.delete('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
+async function borrarExpositor(req, res) {
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
-    const { error } = await supabase.from('networking_expositores').delete().eq('id', id).eq('evento_id', eventoId);
+    /* El `.eq('evento_id')` no es decoracion. `assertOwner` comprueba que esta
+       persona manda en ESTE evento, no que el expositor sea de este evento: la
+       version de la Rueda de Negocios borraba por `id` a secas, asi que quien
+       organizara un evento cualquiera podia borrar la ficha de otro evento
+       ajeno pasando su id. Filtrar por evento cierra eso. */
+    const { error } = await supabase.from('networking_expositores')
+      .delete().eq('id', id).eq('evento_id', eventoId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
-});
+}
+
+/* El gate de la Rueda de Negocios, como middleware: solo lo llevan sus rutas. */
+async function soloCategoriaNetworking(req, res, next) {
+  try {
+    await assertCategoriaPermitida(req.params.eventoId);
+    next();
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+/* Stands: cualquier evento. */
+router.post('/:eventoId/expositores', exige(PERMS_EXPOSITORES), crearExpositor);
+router.patch('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), editarExpositor);
+router.delete('/:eventoId/expositores/:id', exige(PERMS_EXPOSITORES), borrarExpositor);
+
+/* Rueda de Negocios: mismas operaciones, con el gate de categoría delante. */
+router.post('/:eventoId/networking/expositores', exige(PERMS_EXPOSITORES), soloCategoriaNetworking, crearExpositor);
+router.patch('/:eventoId/networking/expositores/:id', exige(PERMS_EXPOSITORES), soloCategoriaNetworking, editarExpositor);
+router.delete('/:eventoId/networking/expositores/:id', exige(PERMS_EXPOSITORES), soloCategoriaNetworking, borrarExpositor);
 
 /* GET /eventos/:eventoId/networking/admin — expositores + horarios + quién reservó cada uno */
 router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, res) => {
@@ -582,63 +633,6 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
     }));
 
     res.json({ expositores: resultado });
-  } catch (e) {
-    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
-  }
-});
-
-/* POST /eventos/:eventoId/networking/expositores — crear expositor.
-   Solo permitido si la categoría del evento admite este módulo. */
-router.post('/:eventoId/networking/expositores', exige(PERMS_EXPOSITORES), async (req, res) => {
-  const { eventoId } = req.params;
-  const { nombre, descripcion, logo_url, stand } = req.body;
-  if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del expositor es requerido.' });
-
-  try {
-    await assertOwner(eventoId, req.user.id);
-    await assertCategoriaPermitida(eventoId);
-
-    /* `estado_ficha: 'completa'` no es un detalle: el directorio y el mapa
-       PÚBLICOS filtran por él (`routes/eventos.publicos.js`, dos consultas), y
-       la columna nace en `'borrador'`. Sin esto, un expositor creado aquí a
-       mano se veía en el panel y el público NO lo veía nunca, sin un solo
-       aviso — y desde esta pantalla tampoco se podía arreglar, porque no tiene
-       PATCH.
-
-       El `'borrador'` por defecto es correcto para el otro camino, que es el
-       que la columna tenía en mente: el trigger de la 0036 crea la ficha
-       cuando se paga una boleta-stand, y la completa el propio expositor desde
-       `/expositor/:codigo` con `marcar_completa` (ver `lib/avisoExpositor.js`).
-       Ahí hay alguien a quien esperar. Cuando la crea el organizador a mano no
-       hay nadie: la escribió él, y ya está completa. Es lo mismo que hace el
-       alta de Stands (`POST /:eventoId/expositores`). */
-    const { data, error } = await supabase
-      .from('networking_expositores')
-      .insert({
-        evento_id: eventoId,
-        nombre: nombre.trim(),
-        descripcion: descripcion || null,
-        logo_url: logo_url || null,
-        stand: stand || null,
-        estado_ficha: 'completa',
-      })
-      .select()
-      .single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json({ expositor: data });
-  } catch (e) {
-    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
-  }
-});
-
-/* DELETE /eventos/:eventoId/networking/expositores/:id */
-router.delete('/:eventoId/networking/expositores/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
-  const { eventoId, id } = req.params;
-  try {
-    await assertOwner(eventoId, req.user.id);
-    const { error } = await supabase.from('networking_expositores').delete().eq('id', id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

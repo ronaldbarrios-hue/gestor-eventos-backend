@@ -1,4 +1,5 @@
 -- 0093 · Un tipo de boleta dice QUÉ CREA al venderse. (Frente Q · Q1)
+-- APLICADA en producción el 2026-09-03.
 --
 -- ── El problema, medido antes de escribir nada ───────────────────────────
 --

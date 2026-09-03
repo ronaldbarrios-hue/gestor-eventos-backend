@@ -576,7 +576,7 @@ function alertarAforo(eventoId, ev, z) {
   if (avisadosAforo.get(clave) === nivel) return;
   avisadosAforo.set(clave, nivel);
   if (ev?.owner_id) {
-    avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Aforo: ${z.nombre}`, cuerpo: `${z.dentro}/${z.aforo_max} personas.`, link: `/eventos/${eventoId}?s=espacio&t=aforo`, eventoId });
+    avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Aforo: ${z.nombre}`, cuerpo: `${z.dentro}/${z.aforo_max} personas.`, link: `/eventos/${eventoId}?s=zonas&t=aforo`, eventoId });
   }
   correrAutomatizaciones(eventoId, 'aforo_lleno', { zona: z.nombre });
 }
@@ -940,7 +940,7 @@ router.post('/:eventoId/alertas', sesion('Lo opera quien está en la puerta: la 
     }).select('id, tipo, nivel, mensaje, zona, resuelta, created_at').single();
     if (error) return res.status(500).json({ error: error.message });
     if (ev?.owner_id && ev.owner_id !== req.user.id) {
-      avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Alerta: ${tipo}`, cuerpo: mensaje, link: `/eventos/${eventoId}?s=espacio&t=accesos`, eventoId });
+      avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Alerta: ${tipo}`, cuerpo: mensaje, link: `/eventos/${eventoId}?s=zonas&t=accesos`, eventoId });
     }
     res.status(201).json({ alerta: data });
   } catch (e) { res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message }); }

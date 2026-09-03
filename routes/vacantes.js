@@ -228,7 +228,14 @@ router.post('/vacantes/:id/postular', sesion("Se postula uno mismo: la postulaci
       return res.status(500).json({ error: error.message });
     }
     if (vac.owner_id) avisar({ userId: vac.owner_id, tipo: 'vacante', titulo: 'Nueva postulación',
-      cuerpo: `Alguien se postuló a "${vac.titulo}".`, link: `/eventos/${vac.evento_id}?s=vacantes`, eventoId: vac.evento_id });
+      cuerpo: `Alguien se postuló a "${vac.titulo}".`, /* Sección Y pestaña. Antes el enlace nombraba sólo «vacantes», que
+           nunca fue una sección —siempre fue una pestaña—, así que el aviso de
+           que alguien se postuló **no ha llevado nunca a las vacantes**: dejaba
+           al organizador en el Resumen sin decirle por qué.
+           El ejemplo malo no se escribe aquí literal a propósito: la prueba que
+           vigila esto lee el archivo entero y lo tomaría por un enlace de
+           verdad. */
+        link: `/eventos/${vac.evento_id}?s=equipo&t=vacantes`, eventoId: vac.evento_id });
     res.status(201).json({ postulacion: data });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

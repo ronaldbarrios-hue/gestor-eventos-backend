@@ -130,7 +130,11 @@ router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miem
 
   const { data: m } = await supabase
     .from('event_members')
-    .select('custom_permissions, rol, rol_detail:event_roles!rol_id(permissions)')
+    /* `rol_id` además del `rol` de texto: las puertas se pueden asignar a un
+       rol entero —«quien esté en puerta»— y el escáner necesita el id para
+       saber cuáles son las suyas. El `rol` de texto es el heredado y no sirve
+       para cruzar. */
+    .select('custom_permissions, rol, rol_id, rol_detail:event_roles!rol_id(permissions)')
     .eq('evento_id', data.id)
     .eq('user_id', req.user.id)
     .eq('status', 'active')
@@ -141,7 +145,7 @@ router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miem
     ...(m.rol_detail?.permissions || []),
     ...(m.custom_permissions || []),
   ])];
-  res.json({ evento: conSitio(data), soyOwner: false, mi_rol: m.rol, permisos });
+  res.json({ evento: conSitio(data), soyOwner: false, mi_rol: m.rol, mi_rol_id: m.rol_id || null, permisos });
 });
 
 /* POST /eventos — crear */

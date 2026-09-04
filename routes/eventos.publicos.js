@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const supabase = require('../lib/supabase.js');
+const { precioDeCompra, consumirPromocion } = require('../lib/precioTicket.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { ocupacion, zonasDelEvento, agendaPorZona } = require('../lib/aforoZonas.js');
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
@@ -1111,8 +1112,17 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     });
   }
 
-  const hasEarly = tipo.early_bird_precio != null && tipo.early_bird_hasta && new Date(tipo.early_bird_hasta) > new Date();
-  const precioEfectivo = hasEarly ? Number(tipo.early_bird_precio) : Number(tipo.precio);
+  /* La misma función que usan Mercado Pago y Wompi. Aquí importa por algo que
+     antes no se podía hacer: un código del 100 % deja la boleta en cero, y una
+     boleta en cero NO se manda a la pasarela —rechaza cobros de cero—, se
+     reserva por aquí y sale ya pagada. Sin esto, un descuento total era un
+     error en la cara de quien compra. */
+  const cotiz = await precioDeCompra({
+    eventoId: evento.id, tipo, codigo: req.body.promocion_codigo, cantidad: 1,
+  });
+  if (req.body.promocion_codigo && cotiz.motivo)
+    return res.status(400).json({ error: cotiz.motivo });
+  const precioEfectivo = cotiz.precio;
   const esGratis = precioEfectivo === 0;
   const tienePagoSimple = Boolean(evento.pago_llave || evento.pago_qr_url);
 
@@ -1151,6 +1161,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
       guest_nombre  : nombre ? nombre.trim() : null,
       codigo,
       estado,
+      promocion_id  : cotiz.promocion?.id || null,
       precio_pagado : esGratis ? 0 : null,
       pagado_at     : esGratis ? new Date().toISOString() : null,
       respuestas    : Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
@@ -1175,6 +1186,12 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   if (ofertaMia) await consumirOferta(ofertaMia.id);
 
   if (esGratis) {
+    /* Sale ya pagada, así que el uso del código se cuenta aquí: esta boleta no
+       pasa por `confirmarTicketPagado`, que es donde se cuenta en las otras dos
+       pasarelas. Si esto faltara, un código del 100 % con límite de usos sería
+       infinito. */
+    if (cotiz.promocion?.id) await consumirPromocion(cotiz.promocion.id);
+
     await supabase.from('eventos').update({ aforo_vendido: (evento.aforo_vendido || 0) + 1 }).eq('id', evento.id);
 
     enviarEmailEvento({

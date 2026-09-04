@@ -1,6 +1,7 @@
 const express = require('express');
 const { exige, sesion, publica } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
+const { precioDeCompra } = require('../lib/precioTicket.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const router = express.Router();
@@ -93,6 +94,15 @@ router.delete('/eventos/:id/promociones/:pid', verifySupabaseJWT, sesion('El due
 
 /* POST /eventos/publicos/slug/:slug/promocion/validar — checkout público
    body: { codigo, ticket_id, cantidad } → { valida, descuento, tipo, valor } */
+/* Lo que ve quien compra ANTES de pagar.
+ *
+ * Contesta con `precioDeCompra`, que es la MISMA función con la que se cobra
+ * un minuto después. Antes esta ruta tenía su propia copia de las condiciones
+ * —vigencia, límite, tipo de boleta, mínimo— y el cobro no tenía ninguna:
+ * literalmente nadie llamaba a esta ruta y el precio se cobraba entero.
+ *
+ * Con dos copias, un día una diría que el código vale y la otra cobraría como
+ * si no. Con una sola no puede pasar. */
 router.post('/eventos/publicos/slug/:slug/promocion/validar', publica('Validar un código de descuento pasa ANTES de comprar, y comprar no pide cuenta.'), async (req, res) => {
   const { codigo, ticket_id, cantidad } = req.body || {};
   if (!codigo?.trim()) return res.status(400).json({ error: 'codigo requerido.' });
@@ -100,19 +110,34 @@ router.post('/eventos/publicos/slug/:slug/promocion/validar', publica('Validar u
   const { data: ev } = await supabase.from('eventos').select('id').eq('slug', req.params.slug).maybeSingle();
   if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
 
-  const { data: p } = await supabase.from('promociones')
-    .select('*').eq('evento_id', ev.id).eq('codigo', codigo.trim().toUpperCase()).eq('activo', true).maybeSingle();
+  /* `ticket_id` en el cuerpo es en realidad el id del TIPO de boleta —así lo
+     manda la pantalla y así se llama la columna `promociones.ticket_id`, que
+     apunta a `ticket_types` desde la 0029. Se deja el nombre de fuera y se
+     traduce aquí, que romper el contrato de una ruta pública cuesta más que
+     esta línea. */
+  const { data: tipo } = await supabase.from('ticket_types')
+    .select('id, precio, early_bird_precio, early_bird_hasta')
+    .eq('id', ticket_id || '00000000-0000-0000-0000-000000000000')
+    .maybeSingle();
 
-  const ahora = new Date();
-  const valida = p
-    && (!p.vigente_desde || new Date(p.vigente_desde) <= ahora)
-    && (!p.vigente_hasta || new Date(p.vigente_hasta) >= ahora)
-    && (!p.limite_usos || p.usos < p.limite_usos)
-    && (!p.ticket_id || String(p.ticket_id) === String(ticket_id))
-    && ((Number(cantidad) || 1) >= (p.min_cantidad || 1));
+  const cotiz = await precioDeCompra({
+    eventoId: ev.id, tipo: tipo || { id: ticket_id }, codigo, cantidad,
+  });
 
-  if (!valida) return res.json({ valida: false });
-  res.json({ valida: true, promocion_id: p.id, tipo: p.tipo, valor: Number(p.valor), descripcion: p.descripcion || null, min_cantidad: p.min_cantidad });
+  if (!cotiz.promocion) return res.json({ valida: false, motivo: cotiz.motivo });
+
+  res.json({
+    valida      : true,
+    promocion_id: cotiz.promocion.id,
+    tipo        : cotiz.promocion.tipo,
+    valor       : cotiz.promocion.valor,
+    descripcion : cotiz.promocion.descripcion,
+    /* Lo que de verdad se quiere saber: cuánto queda por pagar. Antes se
+       devolvía el `valor` crudo y la cuenta la hacía—o no— quien llamara. */
+    precio_lista: cotiz.lista,
+    precio      : cotiz.precio,
+    ahorro      : cotiz.promocion.ahorro,
+  });
 });
 
 module.exports = router;

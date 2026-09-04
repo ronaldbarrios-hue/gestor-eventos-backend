@@ -7,6 +7,7 @@
    de integridad y de eventos). Inerte hasta entonces. */
 const express = require('express');
 const supabase = require('../lib/supabase.js');
+const { precioDeCompra } = require('../lib/precioTicket.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
@@ -116,9 +117,19 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
     });
   }
 
-  const hasEarly = tipo.early_bird_precio != null && tipo.early_bird_hasta && new Date(tipo.early_bird_hasta) > new Date();
-  const precio = hasEarly ? Number(tipo.early_bird_precio) : Number(tipo.precio);
-  if (precio <= 0) return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usa la reserva directa.' });
+  /* Mismo cálculo que Mercado Pago y que el `validar` público, porque es la
+     misma función: del cuerpo sale el CÓDIGO, el precio lo pone el servidor.
+     Antes esta regla estaba copiada aquí, en `pagos.js` y en la pantalla
+     pública — tres sitios para una sola frase. */
+  const cotiz = await precioDeCompra({
+    eventoId: evento.id, tipo, codigo: req.body.promocion_codigo, cantidad: 1,
+  });
+  const precio = cotiz.precio;
+  if (req.body.promocion_codigo && cotiz.motivo)
+    return res.status(400).json({ error: cotiz.motivo });
+  if (cotiz.lista <= 0) return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usa la reserva directa.' });
+  if (precio <= 0)
+    return res.status(400).json({ error: 'Con ese descuento la boleta queda en cero. Emítela como cortesía desde el panel.' });
   const currency = evento.currency || tipo.currency || 'COP';
 
   /* Campos de formulario obligatorios (globales + de este tipo). `COLUMNAS_CAMPO`
@@ -135,7 +146,8 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   const { data: ticket, error: eT } = await supabase.from('tickets').insert({
     ticket_type_id: tipo.id, evento_id: evento.id,
     guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null,
-    codigo, estado: 'emitido', respuestas: Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
+    codigo, estado: 'emitido', promocion_id: cotiz.promocion?.id || null,
+    respuestas: Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
   }).select().single();
   if (eT) return res.status(500).json({ error: eT.message });
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
@@ -147,6 +159,7 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   await supabase.from('payment_transactions').insert({
     evento_id: evento.id, ticket_id: ticket.id, ticket_type_id: tipo.id,
     gateway: 'wompi', referencia, status: 'pending', monto: precio, currency,
+    promocion_id: cotiz.promocion?.id || null,
     guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null, guest_telefono: telefono || null,
   });
 

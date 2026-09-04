@@ -7,6 +7,7 @@
 const express = require('express');
 const crypto  = require('crypto');
 const supabase = require('../lib/supabase.js');
+const { precioDeCompra } = require('../lib/precioTicket.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
@@ -202,10 +203,24 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
       waitlistAvailable: true,
     });
   }
-  const hasEarly = tipo.early_bird_precio != null && tipo.early_bird_hasta && new Date(tipo.early_bird_hasta) > new Date();
-  const precioEfectivo = hasEarly ? Number(tipo.early_bird_precio) : Number(tipo.precio);
-  if (precioEfectivo <= 0)
+  /* El precio lo pone el servidor, y sale de `precioDeCompra` —la misma
+     función que contesta el `validar` que vio quien compra—. Del cuerpo se
+     coge el CÓDIGO, nunca un importe: si el importe viniera de fuera,
+     cualquiera compraría a mil pesos cambiando un número, porque a la pasarela
+     le decimos nosotros cuánto cobrar. */
+  const cotiz = await precioDeCompra({
+    eventoId: evento.id, tipo, codigo: req.body.promocion_codigo, cantidad: 1,
+  });
+  const precioEfectivo = cotiz.precio;
+  /* Un código que no vale PARA —y se dice por qué—, en vez de cobrar el
+     precio entero calladamente: quien escribió un código espera pagar menos, y
+     enterarse en el extracto es la peor forma de enterarse. */
+  if (req.body.promocion_codigo && cotiz.motivo)
+    return res.status(400).json({ error: cotiz.motivo });
+  if (cotiz.lista <= 0)
     return res.status(400).json({ error: 'Este tipo de boleta es gratis. Usá la reserva directa.' });
+  if (precioEfectivo <= 0)
+    return res.status(400).json({ error: 'Con ese descuento la boleta queda en cero. Emitila como cortesía desde el panel.' });
   /* Validar campos personalizados del formulario aplicables a este tipo de
      boleta (globales + específicos de `tipo`). `COLUMNAS_CAMPO` y
      `validarFormulario` — no una lista de columnas recortada con un loop a
@@ -227,6 +242,7 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
       guest_nombre  : nombre ? nombre.trim() : null,
       codigo,
       estado        : 'emitido',
+      promocion_id  : cotiz.promocion?.id || null,
       respuestas    : Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
     })
     .select().single();
@@ -273,6 +289,7 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
     preference_id : preference.id,
     status        : 'pending',
     monto         : precioEfectivo,
+    promocion_id  : cotiz.promocion?.id || null,
     currency,
     guest_email   : email ? email.toLowerCase().trim() : null,
     guest_nombre  : nombre ? nombre.trim() : null,

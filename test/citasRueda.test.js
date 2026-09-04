@@ -89,3 +89,18 @@ test('la migración está escrita y es reversible', () => {
   }
   assert.match(sql, /Rollback/);
 });
+
+test('el modo se puede guardar desde el panel', () => {
+  /* `eventos.networking_modo` existe en la base y el servidor la consulta en
+     cada reserva. Pero la ruta que edita un evento descarta EN SILENCIO lo que
+     no está en `CAMPOS_EDITABLES` —y hace bien—, así que sin esta línea el
+     selector del panel guardaría en el vacío: la pantalla diría «guardado» y
+     el modo no cambiaría nunca.
+
+     Es la misma trampa de siempre: no falla nada, simplemente no pasa nada. */
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'eventos.js'), 'utf8');
+  const i = src.indexOf('CAMPOS_EDITABLES = [');
+  const bloque = src.slice(i, src.indexOf('];', i));
+  assert.ok(bloque.includes("'networking_modo'"),
+    'el modo de la rueda no se puede guardar: la lista blanca de campos editables no lo incluye');
+});

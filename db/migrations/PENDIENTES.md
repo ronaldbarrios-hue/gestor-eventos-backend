@@ -1,10 +1,10 @@
 # Migraciones pendientes en Supabase
 
-**No queda ninguna.** Comprobado contra la base de producción el
-**2026-09-03**, y contra la base, no contra las cabeceras de los archivos.
+**Queda una: la 0100.**
 
 | Nº | Qué hace | Estado |
 |---|---|---|
+| 0100 | Los descuentos del agente se mudan a donde se cobran | ⛔ **pendiente** |
 | 0097 | Políticas RLS para las tablas que tenían la puerta cerrada y ninguna llave | ✅ aplicada el 2026-09-03 |
 | 0098 | Las reglas de la puerta se mudan con ella (`zonas.reglas`) | ✅ aplicada el 2026-09-03 |
 | 0099 | Que el código de descuento llegue al cobro | ✅ aplicada el 2026-09-03 |
@@ -18,6 +18,14 @@ Este archivo se mantiene al día **a propósito**. Una lista de pendientes que
 miente entrena a no creerla, y entonces el día que una haga falta de verdad,
 nadie la cree. Ya pasó en este repo: siete migraciones decían «PENDIENTE DE
 APLICAR» en su cabecera y cinco estaban aplicadas.
+
+## Qué pasa si no se corre la 0100
+
+Los dos códigos que hay hoy en `discount_codes` —creados por el chat— siguen
+sin descontar nada, que es lo de ahora. Lo que **sí** cambia sin ella es que el
+agente, con el código nuevo, escribirá en `promociones` desde el primer minuto:
+los nuevos funcionan aunque la migración no se haya corrido. La migración es
+para los dos viejos.
 
 ## Lo que quedó comprobado al aplicarlas
 

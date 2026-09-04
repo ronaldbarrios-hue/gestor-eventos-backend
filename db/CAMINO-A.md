@@ -161,6 +161,55 @@ Esto no se resuelve con código:
 
 ---
 
+## Fusionar no es desplegar, y en este frente muerde el doble
+
+Esto ya nos costó horas una vez —la 0092— y va a volver a pasar mientras la
+base y la API se desplieguen por separado.
+
+**El patrón, siempre el mismo:** una migración cambia el dato de sitio. El
+código que lo lee del sitio nuevo está fusionado en `main`. Pero la API
+desplegada todavía sirve el código viejo, que mira el sitio de antes. Y
+entonces **no falla nada**: no hay error, no hay log, no hay pantalla roja.
+Simplemente no hay datos. Cuatro pantallas en blanco a la vez y nadie sabe por
+qué, porque no hay nada que buscar.
+
+Casos medidos en este repo:
+
+| Migración | Lo que pasó mientras la API iba por detrás |
+|---|---|
+| 0092 (zonas salen de `page_json`) | Zonas, selector de zona, escáner y mapa de la landing: **en blanco durante horas, sin un solo error** |
+| 0099 (promociones al cobro) | El código de descuento se acepta, se dice que vale… y **se cobra el precio de lista**. Sin error, sin aviso, y con el dinero ya cobrado |
+
+La 0099 es peor que la 0092 en un punto concreto: la 0092 dejaba una pantalla
+vacía, que se ve. Ésta deja un **cobro correcto por el importe equivocado**, que
+no se ve hasta que alguien reclama.
+
+**La comprobación, y son dos minutos.** Contra la API DESPLEGADA, nunca contra
+la rama:
+
+```bash
+curl -s https://api.gestekeventost.dpdns.org/eventos/publicos/slug/technova-summit-2026 | grep -o '"zonas"'
+```
+
+Si no imprime nada, la API no tiene el código nuevo por más que `main` sí.
+
+**Por qué esto es del Camino A y no una anécdota de despliegue.** Hoy son dos
+despliegues —Supabase por su lado, Render por el suyo— y por eso hay una ventana
+en la que no coinciden. Al mover la base al servidor propio la ventana no
+desaparece: cambia de sitio. En cPanel el `git pull` y el `mysql <` los va a
+correr una persona, seguidos, a mano — y el orden entre los dos va a ser el que
+decida si esa ventana dura diez segundos o toda la tarde.
+
+**La regla que hay que escribir en el procedimiento de despliegue:**
+
+- Migración que **añade** (expand): primero la base, después el código. El
+  código viejo ignora una columna nueva.
+- Migración que **quita o mueve** (contract): primero el código, después la
+  base. Y sólo cuando lleve días sirviéndose el código que ya no la necesita.
+- **Nunca** las dos a la vez confiando en que van rápido.
+
+---
+
 ## Dos cosas que hay que saber antes de tocar
 
 **`modules/aforo/consultas.js` está muerto a propósito.** Es la traducción a

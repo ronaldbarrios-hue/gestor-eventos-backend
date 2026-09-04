@@ -53,7 +53,24 @@ const corsOptions = {
        buscar. Con esta línea, el servidor dice quién llamó y contra qué lista
        se comparó, que es la diferencia entre diez minutos y una tarde. */
     console.warn(`[cors] origen no autorizado: ${origin} — permitidos: ${ALLOWED_ORIGINS.join(', ')}`);
-    callback(new Error(`CORS: origen no autorizado — ${origin}`));
+
+    /* `callback(null, false)` y NO `callback(new Error(...))`.
+     *
+     * Con el Error, el paquete `cors` se lo pasa a Express, que no tiene
+     * manejador para él y contesta **500 Internal Server Error**. Y ahí está el
+     * daño: un origen que falta en una variable de entorno —un problema de
+     * configuración de treinta segundos— se ve exactamente igual que un
+     * servidor reventado.
+     *
+     * Pasó de verdad el 4 de septiembre de 2026: un despliegue del frontend en
+     * un dominio que no estaba en la lista devolvía 500 en todas sus llamadas,
+     * y de ahí se concluyó que producción estaba caída. No lo estaba: la API,
+     * la base, el almacén y el frontend de verdad respondían.
+     *
+     * Con `false` no se ponen las cabeceras de CORS y el navegador bloquea la
+     * respuesta, que es lo que tiene que pasar. El middleware de abajo se
+     * encarga de que además se DIGA por qué. */
+    callback(null, false);
   },
   credentials   : true,
   methods       : ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
@@ -161,10 +178,39 @@ function sanitizeBody(req, _res, next) {
 }
 
 /* ── Aplicar stack a app ──────────────────────────────────── */
+/* Decir por qué, en vez de dejar que el navegador diga «Failed to fetch».
+ *
+ * Sin esto, un origen no autorizado recibe una respuesta normal sin cabeceras
+ * de CORS: el navegador la bloquea y en la consola aparece un mensaje genérico
+ * que no distingue «tu dominio no está en la lista» de «el servidor se cayó».
+ * Quien lo mira desde fuera —con curl, que no manda Origin— ve un 200 y no
+ * entiende nada.
+ *
+ * Un 403 con el motivo dentro convierte eso en una línea que se lee. El
+ * navegador lo sigue bloqueando igual; la diferencia es para la persona.
+ *
+ * No se listan los orígenes permitidos en la respuesta: eso ya está en el log
+ * del servidor, y contárselo a quien llama desde un origen que no autorizamos
+ * es enseñarle el mapa. */
+function explicarCorsRechazado(req, res, next) {
+  const origin = req.headers.origin;
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) return next();
+  return res.status(403).json({
+    error: 'Origen no autorizado para esta API.',
+    origen: origin,
+    pista: 'Añádelo a CORS_ORIGINS (o FRONTEND_URL) en el servidor y reinicia.',
+  });
+}
+
 function applySecurity(app) {
   app.set('trust proxy', 1); // necesario detrás de cloudflared / Vercel / Railway
 
   app.use(helmet(helmetOptions));
+  /* ANTES de `cors`, no después: una petición de sondeo (OPTIONS) la contesta
+     `cors` por su cuenta con un 204 y ya no llega aquí. Delante, el 403 con el
+     motivo sale para todas — que es justo la que se hace a mano al
+     diagnosticar. */
+  app.use(explicarCorsRechazado);
   app.use(cors(corsOptions));
   app.use(apiLimiter);
   app.use(sanitizeBody);
@@ -175,4 +221,4 @@ function applySecurity(app) {
   }
 }
 
-module.exports = { applySecurity, authLimiter, apiLimiter, webhookLimiter, sanitizeBody, ALLOWED_ORIGINS };
+module.exports = { applySecurity, authLimiter, apiLimiter, webhookLimiter, sanitizeBody, ALLOWED_ORIGINS, explicarCorsRechazado };

@@ -447,9 +447,22 @@ router.get('/slug/:slug', async (req, res) => {
      de la landing. Cualquier otra persona (o nadie logueado) sigue viendo
      404 mientras no esté publicado: el borrador no se filtra al público. */
   const esDueño = Boolean(req.user?.id) && req.user.id === evento?.owner_id;
-  if (!evento || (evento.estado !== 'publicado' && !esDueño)) {
+
+  /* Un evento CANCELADO no es un evento que no existe.
+   *
+   * Antes caía en el 404 de abajo junto con los borradores, y eso deja a quien
+   * ya compró mirando «este evento no existe» — con la boleta en el correo y
+   * el dinero cobrado. La pregunta que trae a esa persona a la página es
+   * exactamente «¿sigue en pie?», y un 404 contesta otra cosa.
+   *
+   * Así que el cancelado se sirve igual, con la bandera puesta: la página
+   * pública la mira, lo dice de frente y no deja comprar más. Un borrador sí
+   * sigue siendo 404: ahí no hay nadie a quien avisar. */
+  const cancelado = evento?.estado === 'cancelado';
+  if (!evento || (evento.estado !== 'publicado' && !cancelado && !esDueño)) {
     return res.status(404).json({ error: 'Este evento no existe o no está publicado.' });
   }
+  if (cancelado) evento.cancelado = true;
 
   evento.ticket_types = (evento.ticket_types || [])
     .filter(t => t.activo)

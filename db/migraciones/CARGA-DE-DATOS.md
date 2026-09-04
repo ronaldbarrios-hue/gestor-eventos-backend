@@ -3,6 +3,26 @@
 Instrucciones para quien cree la base en cPanel. Está escrito para poder
 seguirse sin haber estado en las conversaciones anteriores.
 
+> ## ⚠ El volcado está desfasado, y hay un archivo que lo pone al día
+>
+> `db/esquema/` se generó el **30 de agosto de 2026**. Después se aplicaron diez
+> migraciones en Supabase (0092–0101). La diferencia está medida y escrita en
+> **`005_al_dia.sql`**, y el orden es:
+>
+> 1. `003_esquema.sql` — las tablas
+> 2. sus índices y sus claves foráneas
+> 3. **`005_al_dia.sql`** ← esto
+> 4. los datos
+>
+> El paso 3 va **antes** del 4: añade columnas obligatorias, y si los datos
+> entraran primero la carga fallaría fila por fila.
+>
+> Lo más importante que trae: **la tabla `zonas`, que el volcado no tiene**. De
+> ella comen el plano del evento, el selector de zona de un sub-evento, el
+> escáner de ingreso y el bloque de mapa de la página pública. Ya hubo un
+> apagón por esto —cuatro pantallas en blanco durante horas, sin un solo error—
+> y saltárselo lo repite.
+
 Lo medido aquí es del **30 de agosto de 2026** sobre producción. Antes de
 empezar, vuelve a medirlo: los números de abajo son para decidir el método, y
 si han cambiado mucho, la decisión cambia.

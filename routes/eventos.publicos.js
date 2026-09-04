@@ -1037,7 +1037,13 @@ router.get('/slug/:slug/agenda', async (req, res) => {
  * Las horas ocupadas se dicen como ocupadas, sin decir por quien. Que la mesa
  * este llena a las 10 es informacion util; quien esta sentado, no es de nadie.
  */
-router.get('/slug/:slug/rueda', publica('La rueda de negocios es publica: quien recibe, en que mesa y a que horas. Sin datos de contacto salvo los que su dueño publico.'), async (req, res) => {
+/* Sin `publica(...)` propio: este router entero ya lo declara arriba, en el
+   `router.use` de la linea 57. Ponerlo aqui ademas era llamar a un
+   identificador que en este archivo no existe — y eso no lo caza el compilador
+   ni la prueba de contratos entre modulos, que solo mira los require
+   desestructurados. El backend no tiene linter; esta es la clase de fallo que
+   uno tendria. */
+router.get('/slug/:slug/rueda', async (req, res) => {
   const { data: evento } = await supabase
     .from('eventos')
     .select('id, titulo, slug, estado, deleted_at, fecha_inicio, timezone')

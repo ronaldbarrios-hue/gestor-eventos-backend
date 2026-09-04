@@ -1012,6 +1012,109 @@ router.get('/slug/:slug/agenda', async (req, res) => {
   res.json({ evento_id: evento.id, evento, sessions: lista, preguntas, inscripcion_lista: true });
 });
 
+/* GET /eventos/publicos/slug/:slug/rueda
+ *
+ * La rueda de negocios, para quien todavia no es nadie aqui.
+ *
+ * ── Que se ve, y por que es solo lectura ─────────────────────────────────
+ *
+ * Quien recibe, en que mesa, a que horas queda sitio, y un contacto si esa
+ * persona quiso publicarlo. Nada mas.
+ *
+ * No se puede reservar desde aqui a proposito: los vendedores no se registran
+ * solos. Los sienta el gestionador, o se ponen en contacto por fuera. Poner un
+ * boton de «reservar» sin cuenta convertiria la rueda en una lista de nombres
+ * que cualquiera puede llenar.
+ *
+ * ── Los datos de contacto ────────────────────────────────────────────────
+ *
+ * Aqui hay correos y telefonos de personas. Solo salen los de quien lo
+ * autorizo —`contacto_publico`, que nace apagado— y esa comprobacion se hace
+ * en el SERVIDOR: filtrarlos en la pantalla dejaria los datos viajando en la
+ * respuesta, y una respuesta es un archivo de texto que cualquiera abre con la
+ * consola del navegador.
+ *
+ * Las horas ocupadas se dicen como ocupadas, sin decir por quien. Que la mesa
+ * este llena a las 10 es informacion util; quien esta sentado, no es de nadie.
+ */
+/* Sin `publica(...)` propio: este router entero ya lo declara arriba, en el
+   `router.use` de la linea 57. Ponerlo aqui ademas era llamar a un
+   identificador que en este archivo no existe — y eso no lo caza el compilador
+   ni la prueba de contratos entre modulos, que solo mira los require
+   desestructurados. El backend no tiene linter; esta es la clase de fallo que
+   uno tendria. */
+router.get('/slug/:slug/rueda', async (req, res) => {
+  const { data: evento } = await supabase
+    .from('eventos')
+    .select('id, titulo, slug, estado, deleted_at, fecha_inicio, timezone')
+    .eq('slug', req.params.slug)
+    .maybeSingle();
+
+  if (!evento || evento.deleted_at || evento.estado !== 'publicado') {
+    return res.status(404).json({ error: 'Este evento no existe o no está publicado.' });
+  }
+
+  const { data: mesas, error } = await supabase
+    .from('networking_expositores')
+    .select(`
+      id, nombre, stand, logo_url, descripcion, categoria_negocio, sitio_web,
+      contacto_publico, contacto_nombre, contacto_email, contacto_telefono,
+      horarios:networking_horarios!expositor_id(id, inicio, fin)
+    `)
+    .eq('evento_id', evento.id)
+    .eq('rol', 'comprador')
+    .eq('activo', true)
+    .order('orden', { ascending: true });
+
+  /* Se MIRA el error. Sin `rol` —si la 0105 no esta corrida— PostgREST
+     contesta con un error, no con una lista vacia, y sin mirarlo la rueda
+     saldria vacia sin que nadie supiera por que. Ya ha pasado en esta base
+     con `zonas.tipo`. */
+  if (error) {
+    console.error(`[rueda] la consulta fallo (¿falta la 0105?): ${error.message}`);
+    return res.status(503).json({ error: 'La rueda de negocios no está disponible ahora mismo.' });
+  }
+
+  /* Que horas estan tomadas. Una sola consulta para todas las mesas: una por
+     mesa serian veinte peticiones a la base para pintar una tabla. */
+  const idsHorario = (mesas || []).flatMap(m => (m.horarios || []).map(h => h.id));
+  let tomados = new Set();
+  if (idsHorario.length) {
+    const { data: citas } = await supabase
+      .from('networking_citas')
+      .select('horario_id')
+      .in('horario_id', idsHorario)
+      .neq('estado', 'cancelada');
+    tomados = new Set((citas || []).map(c => c.horario_id));
+  }
+
+  const rueda = (mesas || []).map(m => ({
+    id: m.id,
+    nombre: m.nombre,
+    mesa: m.stand || null,
+    logo_url: m.logo_url,
+    descripcion: m.descripcion,
+    categoria: m.categoria_negocio,
+    sitio_web: m.sitio_web,
+    /* El contacto sale entero o no sale. Medio contacto —el nombre sin el
+       correo— no sirve para nada y sigue siendo un dato personal. */
+    contacto: m.contacto_publico
+      ? { nombre: m.contacto_nombre, email: m.contacto_email, telefono: m.contacto_telefono }
+      : null,
+    horarios: (m.horarios || [])
+      .sort((a, b) => new Date(a.inicio) - new Date(b.inicio))
+      .map(h => ({ id: h.id, inicio: h.inicio, fin: h.fin, libre: !tomados.has(h.id) })),
+  }));
+
+  res.json({
+    evento: { id: evento.id, titulo: evento.titulo, slug: evento.slug, fecha_inicio: evento.fecha_inicio },
+    rueda,
+    /* Para que la pantalla pueda decir «todavia no hay mesas» en vez de
+       quedarse en blanco, que es lo que hace una lista vacia sin contexto. */
+    total: rueda.length,
+  });
+});
+
 /* POST /eventos/publicos/invitacion-pendiente { email }
    Por POST y no por GET: el correo iba en la query string y quedaba escrito en
    los logs de acceso del servidor. Lleva authLimiter porque contesta sobre

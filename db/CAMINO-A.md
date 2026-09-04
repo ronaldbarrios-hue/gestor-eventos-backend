@@ -33,6 +33,18 @@ tiene archivo todavía.
 1. `003_esquema.sql` (las tablas del volcado) + sus índices y claves foráneas
 2. **`005_al_dia.sql`** ← el archivo nuevo, ver más abajo
 3. los datos
+4. **`generar-usuarios-mysql.sql`** ← las cuentas, para que `gestek_auth` no
+   esté vacía el día del corte
+
+El paso 4 es un **generador**: se corre en el editor SQL de Supabase y su
+salida se pega en `gestek_auth`. Es un generador y no un archivo con los datos
+dentro porque ahí van hashes de contraseña, y un archivo con hashes se queda en
+el repositorio, en el historial de git y en el portapapeles de quien lo abra.
+
+Medido el 4 de septiembre: **29 cuentas, 10 con contraseña, 22 con Google, y
+cero sin ninguna forma de entrar**. Ese cero es el que decide si se puede
+encender `AUTH_PROPIA` — hay que volver a mirarlo el día del corte, porque la
+gente se sigue registrando.
 
 ## ⚠ El volcado está desfasado — hay un archivo que lo pone al día
 
@@ -106,6 +118,16 @@ el día del evento, cuando ya no hay forma de arreglarlo.
 ## Lo que queda, en el orden en que hay que hacerlo
 
 ### 1. Regenerar el esquema y los datos
+
+> **Los datos están MUY viejos.** Medido el 4 de septiembre: el volcado tiene
+> 2.139 filas y producción 7.148. `tickets` va de 45 a **119** — son 74 boletas
+> vendidas que no están en el archivo. Y hay filas borradas desde entonces, así
+> que cargarlo tal cual además resucita lo que ya no está.
+>
+> El esquema, en cambio, ya tiene la diferencia escrita en `005_al_dia.sql`.
+> Los datos no se pueden arreglar con un delta: hay que volver a generarlos, y
+> **el día del corte**, porque cada día que Supabase siga vivo el volcado se
+> queda corto otra vez.
 
 ```bash
 npm i pg                      # dependencia sólo de estos scripts, a propósito fuera de package.json

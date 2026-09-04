@@ -39,6 +39,12 @@ const CAMPOS_EDITABLES = [
      evento y se borraban entre sí. */
   'branding', 'paginas', 'navbar',
   'modo_publico', 'url_externa',
+  /* Cómo se agenda la rueda de negocios (0104): `auto` confirma al reservar,
+     `solicitud` deja la cita pendiente de aprobación. Sin esta línea el
+     selector del panel guardaría en el vacío — la ruta descarta en silencio
+     lo que no está en esta lista, que es lo correcto y por eso hay que
+     acordarse de venir aquí al añadir una columna. */
+  'networking_modo',
   'pago_llave', 'pago_qr_url', 'pago_instrucciones',
 ];
 

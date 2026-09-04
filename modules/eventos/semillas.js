@@ -66,6 +66,8 @@ const CANALES = [
  *
  * Si se añade un permiso nuevo aquí, la regla es la de siempre: o lo comprueba
  * una ruta, o el rol promete algo que no se cumple. */
+const { TODOS } = require('../../core/permisos/catalogo.js');
+
 const ROLES = [
   /* El que faltaba: hasta la 0089 no había ningún rol que pudiera todo. Las
      pantallas más sensibles se guardan con «sólo el dueño», y el dueño no es un
@@ -75,14 +77,13 @@ const ROLES = [
      dice el comentario de arriba y con más motivo: el día que se apliquen,
      quien es administrador tiene que poder hacerlos sin que nadie se acuerde
      de volver a editar el rol. */
+  /* «Todo» de verdad, no una lista de veintiuno que alguien escribió un
+     martes. Estaba escrita a mano, y eso significa que el día que se añada el
+     permiso número 22 el Administrador no lo tendría — y nadie se enteraría,
+     porque un permiso que falta no da error: da un 403 a alguien que debería
+     poder, en una pantalla que quizá tarda semanas en abrirse. */
   { nombre: 'Administrador',     descripcion: 'Puede todo dentro del evento, salvo transferirlo o borrarlo', orden: 0,
-    permissions: ['editar_evento', 'publicar_evento', 'editar_pagina_publica', 'gestionar_imagenes',
-      'gestionar_agenda', 'gestionar_torneo', 'gestionar_expositores',
-      'invitar_staff', 'gestionar_roles', 'remover_miembros',
-      'gestionar_tickets', 'gestionar_descuentos',
-      'ver_clientes', 'gestionar_clientes', 'checkin', 'vip_zone',
-      'crear_canales', 'borrar_mensajes',
-      'ver_pagos', 'reembolsar', 'ver_analytics'] },
+    permissions: [...TODOS] },
   { nombre: 'Editor',            descripcion: 'Edita información, agenda y página pública', orden: 1,
     permissions: ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda'] },
   { nombre: 'Coordinador',       descripcion: 'Coordina al staff y al evento completo', orden: 2,

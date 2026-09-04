@@ -58,9 +58,15 @@ const OID_BOOL = 16;
  * precisión en numeric/bigint). */
 for (const oid of [...OID_NUM, ...OID_DATE]) pg.types.setTypeParser(oid, v => v);
 
-/* Orden de carga: padres primero. Da igual para la corrección (FK checks off);
- * deja el INSERT legible. Las tablas que no estén aquí van al final, alfabético. */
-const ORDER = ['categorias','profiles','eventos','catalogo_roles','event_roles','ticket_types','discount_codes','promociones','agenda_sessions','speakers','sponsors','networking_expositores','networking_horarios','networking_citas','torneos','torneo_categorias','torneo_equipos','torneo_partidos','tickets','event_members','event_form_fields','chat_channels','chat_messages','chat_channel_prefs','tareas','tarea_log','points_log','puntos_balance','recompensas','canjes','user_badges','missions','referral_codes','notificaciones','event_requests','evento_legal','evento_motivos','evento_alertas','evento_anuncios','evento_bolsa_puntos','evento_email_plantillas','evento_smtp','event_waitlist','waitlist','sesion_inscripciones','agenda_favoritos','payment_transactions','cobros_vacantes','push_subscriptions','api_tokens','webhooks','webhook_deliveries','organizador_conexiones','perfil_talento','postulaciones','talento_resenas','vacantes','sugerencias_dinamica','sugerencias_catalogo','recordatorio_inapp_log','ticket_interacciones','ticket_movimientos','zona_cortes','email_log','email_cola','evento_email_envios','oauth_clients','oauth_codes','oauth_tokens','audit_log','event_views'];
+/* Orden de carga: padres primero. Da igual para la corrección —el volcado sale
+ * con `FOREIGN_KEY_CHECKS = 0`— y sólo deja el INSERT legible. Las tablas que
+ * no estén aquí van al final, en alfabético.
+ *
+ * Se quitaron `missions`, `referral_codes`, `waitlist` y
+ * `recordatorio_inapp_log`: la migración 0101 las tiró porque nunca tuvieron
+ * una fila. El filtro de abajo las habría saltado igual, pero una lista que
+ * nombra tablas muertas hace dudar de si la que falta es un olvido o no. */
+const ORDER = ['categorias','profiles','eventos','zonas','catalogo_roles','event_roles','ticket_types','discount_codes','promociones','agenda_sessions','speakers','sponsors','networking_expositores','networking_horarios','networking_citas','torneos','torneo_categorias','torneo_equipos','torneo_partidos','tickets','event_members','event_form_fields','chat_channels','chat_messages','chat_channel_prefs','tareas','tarea_log','points_log','puntos_balance','recompensas','canjes','user_badges','notificaciones','event_requests','evento_legal','evento_motivos','evento_alertas','evento_anuncios','evento_bolsa_puntos','evento_email_plantillas','evento_smtp','event_waitlist','sesion_inscripciones','agenda_favoritos','payment_transactions','cobros_vacantes','push_subscriptions','api_tokens','webhooks','webhook_deliveries','organizador_conexiones','perfil_talento','postulaciones','talento_resenas','vacantes','sugerencias_dinamica','sugerencias_catalogo','ticket_interacciones','ticket_movimientos','zona_cortes','email_log','email_cola','evento_email_envios','oauth_clients','oauth_codes','oauth_tokens','audit_log','event_views'];
 
 function qstr(s) {
   return "'" + String(s).replace(/[\0\b\t\n\r\x1a\\'"]/g, c => ({

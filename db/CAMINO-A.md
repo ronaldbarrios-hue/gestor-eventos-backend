@@ -12,6 +12,49 @@ falta, con qué herramientas se hace y **qué le va a faltar** cuando llegue.
 
 ---
 
+## Estado al 4 de septiembre de 2026 — el otro desarrollador ya empezó
+
+Hecho por él, y comprobado:
+
+- `gestek_auth` y `gestek_datos` creadas en cPanel, con `gestek_app` y permisos
+  en las dos.
+- Cotejos correctos: `utf8mb4_unicode_ci` en auth, `utf8mb4_0900_as_ci` en datos.
+- `001_identidad.sql` cargado en auth, `002_archivos.sql` en datos.
+- Variables puestas en la app (`MYSQL_*`, `JWT_SECRET`, `AUTH_PROPIA=false`) y
+  la app reiniciada. `/health` responde.
+
+`AUTH_PROPIA=false` es lo correcto ahora mismo: las tablas de identidad existen
+pero **nadie entra todavía por ellas**. Se pone en `true` el día del corte, no
+antes, y ese día hay que haber pasado los usuarios — que es el paso que no
+tiene archivo todavía.
+
+**Lo siguiente que le toca**, en este orden:
+
+1. `003_esquema.sql` (las tablas del volcado) + sus índices y claves foráneas
+2. **`005_al_dia.sql`** ← el archivo nuevo, ver más abajo
+3. los datos
+
+## ⚠ El volcado está desfasado — hay un archivo que lo pone al día
+
+`db/esquema/` se generó el **30 de agosto**. Después entraron diez migraciones
+(0092–0101). Medido contra producción el 4 de septiembre:
+
+| | |
+|---|---|
+| Tablas en Postgres hoy | **69** |
+| Tablas en el volcado | 72 |
+| Tablas del volcado que ya no existen | 4 (`missions`, `referral_codes`, `waitlist`, `recordatorio_inapp_log`) |
+| Tablas que al volcado le **faltan** | **1 — `zonas`, entera** |
+| Tablas con columnas distintas | 9 |
+
+`zonas` es la grave. De ella comen el plano del evento, el selector de zona de
+un sub-evento, el escáner de ingreso y el bloque de mapa de la página pública.
+Cargar el volcado tal cual y arrancar contra él repite el apagón de la 0092:
+cuatro pantallas en blanco, sin un solo error.
+
+Todo eso está en **`db/migraciones/005_al_dia.sql`**, con las 12 filas de zonas
+dentro. Se corre entre el esquema y los datos.
+
 ## Lo primero, porque invalida parte de lo hecho
 
 **El volcado del esquema es de antes de las últimas cinco migraciones.**

@@ -117,6 +117,34 @@ el día del evento, cuando ya no hay forma de arreglarlo.
 
 ## Lo que queda, en el orden en que hay que hacerlo
 
+### 0. Poner al día lo que ya está desplegado — ANTES de mover nada
+
+Esto no parece del Camino A y lo es: **el corte copia lo que haya, incluida la
+diferencia entre lo fusionado y lo desplegado.** Si se corta con la API vieja
+corriendo, se estrena servidor propio arrastrando el mismo desfase — sólo que
+ahora sin poder echarle la culpa a Render.
+
+- [ ] **Desplegar el backend.** `main` va por delante de la API desplegada.
+      Se comprueba contra la API, nunca contra la rama:
+
+      ```bash
+      curl -s https://api.gestekeventost.dpdns.org/promocion/validar -X POST         -H 'content-type: application/json' -d '{}' | grep -o 'precio'
+      ```
+
+      Si no imprime `precio`, la API sigue sirviendo el código anterior: el
+      código de descuento se acepta, se dice que vale y **se cobra el precio de
+      lista**. Está medido más abajo, en «Fusionar no es desplegar».
+
+- [ ] **Correr la 0105** en Supabase. Es la última pendiente. Sin ella la rueda
+      pública contesta 503 a propósito — se prefirió el 503 a una lista vacía,
+      que es como este proyecto ha fallado siempre: sin que nadie se entere.
+
+- [ ] **Volver a mirar que no quedan más.** `db/migrations/PENDIENTES.md` dice
+      cuáles hay; producción dice cuáles corrieron. Manda producción.
+
+Sólo cuando estas tres estén marcadas tiene sentido regenerar el volcado: un
+volcado sacado antes es un volcado que ya nace viejo.
+
 ### 1. Regenerar el esquema y los datos
 
 > **Los datos están MUY viejos.** Medido el 4 de septiembre: el volcado tiene

@@ -49,7 +49,12 @@ Hay que conseguir **una** de las tres. La primera es la que usa producción:
 Y en los tres casos:
 
 - [ ] `EMAIL_FROM` — el remitente que se ve.
-- [ ] `FRONTEND_URL` — **hoy está sin poner.** Sin ella, todos los enlaces de los
+- [ ] **`CORS_ORIGINS`** — nueva, y separa dos cosas que compartían variable: los
+      orígenes que pueden llamar a la API desde un navegador. Admite varios
+      separados por comas. Si no se pone, se sigue usando `FRONTEND_URL` como
+      antes.
+- [ ] `FRONTEND_URL` — **hoy está sin poner**, y ahora es sólo la dirección
+      **canónica** (una): la que va dentro de los correos. Sin ella, todos los enlaces de los
       correos apuntan al dominio por defecto de Vercel en vez del propio. No se
       nota hasta que un asistente hace clic. También la usa CORS.
 

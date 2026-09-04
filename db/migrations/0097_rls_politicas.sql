@@ -20,7 +20,7 @@
 -- esto desde un navegador, hoy?»** — y cuando la respuesta es «nadie», lo
 -- correcto es no escribir nada y decir por qué.
 --
--- Por eso este archivo deja **nueve tablas sin política a propósito**, con su
+-- Por eso este archivo deja **ocho tablas sin política a propósito**, con su
 -- motivo escrito. No están olvidadas: están cerradas.
 --
 -- ── El idioma, copiado del que ya existe ─────────────────────────────────
@@ -185,8 +185,9 @@ create policy catalogo_roles_select on public.catalogo_roles
 --    where n.nspname='public' and c.relkind='r' and c.relrowsecurity
 --    order by politicas, c.relname;
 --
--- Tras aplicar esto, las que sigan en 0 tienen que ser exactamente las nueve de
+-- Tras aplicar esto, las que sigan en 0 tienen que ser exactamente las ocho de
 -- la lista de arriba. Cualquier otra en 0 es una tabla nueva que nadie miró.
+-- Comprobado el 2026-09-03 tras aplicarla: salen esas ocho y ninguna más.
 --
 -- ── Rollback ─────────────────────────────────────────────────────────────
 --

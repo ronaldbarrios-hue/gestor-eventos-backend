@@ -1,0 +1,66 @@
+-- 0101 · Cuatro tablas que nunca se usaron.
+--
+-- ── Cómo se sabe que son basura y no «todavía no» ───────────────────────
+--
+-- Vacías no basta: una tabla puede estar vacía porque se limpió. La prueba es
+-- otra, y la da `pg_stat_user_tables`:
+--
+--   select relname, n_live_tup, n_tup_ins from pg_stat_user_tables ...
+--
+-- Las cuatro tienen **`n_tup_ins = 0`**: cero inserciones en toda su historia.
+-- Nunca entró una fila. Además: ninguna clave foránea apunta a ellas y ningún
+-- archivo de `routes/` ni de `lib/` las nombra.
+--
+--   missions                — piezas de gamificación que nunca se escribieron.
+--   referral_codes          — lo mismo.
+--   waitlist                — DUPLICADA. La lista de espera que funciona es
+--                             `event_waitlist`, y es la que usan
+--                             `routes/waitlist.js`, `lib/waitlistOferta.js` y
+--                             la compra pública. Ésta quedó de antes.
+--   recordatorio_inapp_log  — sólo la usaría la función SQL
+--                             `generar_recordatorios_inapp`, que nunca ha
+--                             funcionado: inserta en `notificaciones` una
+--                             columna `link` que esa tabla no tiene, así que
+--                             revienta en la primera fila.
+--
+-- ── Esto SÍ es contract: no hay vuelta atrás ────────────────────────────
+--
+-- Un `drop table` no se deshace con otra migración: se deshace con una copia
+-- de seguridad. Por eso van sólo estas cuatro y no las otras que también
+-- parecen muertas.
+--
+-- ── Lo que NO se tira todavía, y por qué ────────────────────────────────
+--
+-- `discount_codes` tiene 2 filas y un `n_tup_ins` de 3: se usó. La 0100 se
+-- llevó su contenido a `promociones`, pero la tabla se queda mientras el
+-- despliegue del agente pueda ir por detrás — si se tirara hoy y el servidor
+-- todavía sirviera el código viejo, crear un descuento por el chat reventaría.
+--
+-- Con ella se irá `tickets.discount_code_id`, que tiene la clave foránea a
+-- `discount_codes` y está **en null en las 105 boletas**: nunca lo escribió
+-- nada. Cuando toque, en una 01xx posterior:
+--
+--   alter table public.tickets drop constraint if exists tickets_discount_fk;
+--   alter table public.tickets drop column if exists discount_code_id;
+--   drop table if exists public.discount_codes;
+
+drop table if exists public.missions;
+drop table if exists public.referral_codes;
+drop table if exists public.waitlist;
+drop table if exists public.recordatorio_inapp_log;
+
+-- ── Comprobación ─────────────────────────────────────────────────────────
+--
+--   select table_name from information_schema.tables
+--    where table_schema='public' and table_name in
+--      ('missions','referral_codes','waitlist','recordatorio_inapp_log');
+--
+-- No debe devolver nada. Y `event_waitlist` tiene que seguir ahí:
+--
+--   select count(*) from public.event_waitlist;
+--
+-- ── Rollback ─────────────────────────────────────────────────────────────
+--
+-- No lo hay, y es a propósito: nunca tuvieron una fila, así que no hay nada
+-- que recuperar. Si alguna hiciera falta algún día, se crea de nuevo con la
+-- forma que necesite entonces — que no tiene por qué ser la de ahora.

@@ -78,24 +78,59 @@ router.get('/me/equipo/eventos', sesion("Los eventos donde ESTA persona es miemb
 });
 
 /* ── GET /me/solicitudes — agregado de TODOS mis eventos (dashboard) ── */
-router.get('/me/solicitudes', sesion("Las sugerencias que ha enviado esta persona."), async (req, res) => {
+/* Las solicitudes que me tocan: las que MANDÉ y las que RECIBÍ.
+ *
+ * ── Lo que devolvía antes, y lo que decía que devolvía ──────────────────
+ *
+ * Filtraba por `owner_id`: sólo las **recibidas** en mis propios eventos. Y
+ * sin embargo su descripción decía «las sugerencias que ha enviado esta
+ * persona», y el widget que la pinta en Mi Espacio se anuncia como
+ * «Solicitudes que has enviado».
+ *
+ * O sea que quien colabora en el evento de otro —que es justo quien pide
+ * cosas— pedía y no volvía a ver nunca en qué quedó. Y el dueño veía las
+ * peticiones de los demás bajo el rótulo de las suyas.
+ *
+ * Ahora vienen las dos, y cada fila dice cuál es con `mia`. Devolver sólo las
+ * enviadas habría sido más limpio y le habría quitado al dueño una bandeja que
+ * ya estaba usando: aquí no se quita nada, se marca. */
+router.get('/me/solicitudes', sesion('Las solicitudes que mandó esta persona, más las que recibió en sus propios eventos. Cada fila dice cuál es.'), async (req, res) => {
   const { data: evs } = await supabase
     .from('eventos').select('id, titulo')
     .eq('owner_id', req.user.id).is('deleted_at', null);
   const ids = (evs || []).map(e => e.id);
-  if (ids.length === 0) return res.json({ solicitudes: [] });
   const tit = Object.fromEntries((evs || []).map(e => [e.id, e.titulo]));
 
-  const { data, error } = await supabase
+  /* Dos consultas y no un `or(...)`: PostgREST admite el `or` con `in`, pero
+     leer «autor_id.eq.X,evento_id.in.(…)» seis meses después cuesta más que
+     dos consultas evidentes, y esto no está en ningún camino caliente. */
+  const mias = supabase
     .from('event_requests')
-    .select('*, autor:profiles!autor_id(nombre, avatar_url)')
-    .in('evento_id', ids)
+    .select('*, evento:eventos!evento_id(titulo)')
+    .eq('autor_id', req.user.id)
     .order('created_at', { ascending: false })
     .limit(40);
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({
-    solicitudes: (data || []).map(r => ({ ...r, evento_titulo: tit[r.evento_id] || '—' })),
-  });
+
+  const recibidas = ids.length
+    ? supabase
+        .from('event_requests')
+        .select('*, autor:profiles!autor_id(nombre, avatar_url)')
+        .in('evento_id', ids)
+        .neq('autor_id', req.user.id)
+        .order('created_at', { ascending: false })
+        .limit(40)
+    : Promise.resolve({ data: [] });
+
+  const [rM, rR] = await Promise.all([mias, recibidas]);
+  if (rM.error) return res.status(500).json({ error: rM.error.message });
+  if (rR.error) return res.status(500).json({ error: rR.error.message });
+
+  const lista = [
+    ...(rM.data || []).map(r => ({ ...r, mia: true,  evento_titulo: r.evento?.titulo || tit[r.evento_id] || '—' })),
+    ...(rR.data || []).map(r => ({ ...r, mia: false, evento_titulo: tit[r.evento_id] || '—' })),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  res.json({ solicitudes: lista });
 });
 
 /* ── GET /eventos/:eventoId/solicitudes ───────────────────── */

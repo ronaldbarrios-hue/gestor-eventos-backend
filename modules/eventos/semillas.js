@@ -53,11 +53,19 @@ const CANALES = [
  * sus permisos exactos. Nacen como `is_system` para que se distingan de los
  * que cree el organizador: los suyos se pueden borrar, éstos no.
  *
- * Ojo: seis de estos permisos no los verifica todavía nadie —`vip_zone`,
+ * Ojo: de los seis permisos que aquí no verificaba nadie —`vip_zone`,
  * `crear_canales`, `borrar_mensajes`, `ver_pagos`, `reembolsar` y
- * `gestionar_descuentos`—. Están en la semilla a propósito: el rol describe lo
- * que ESE puesto hace, y quitarlos ahora obligaría a acordarse de volver a
- * ponerlos el día que se implementen. Quedan anotados en POR-HACER.md §4. */
+ * `gestionar_descuentos`— quedan dos: `crear_canales` y `borrar_mensajes`, que
+ * sí los comprueba `routes/chat.js`… y por tanto ya no cuentan. O sea: **no
+ * queda ninguno**.
+ *
+ * Los últimos en caer: `ver_pagos` y `reembolsar` (rutas de dinero en
+ * `routes/clientes.js`), `gestionar_descuentos` (`routes/promociones.js`) y
+ * `vip_zone`, que decide si alguien puede atender una puerta a la que no está
+ * asignado — ver `puedeAtenderPuerta` en `routes/clientes.js`.
+ *
+ * Si se añade un permiso nuevo aquí, la regla es la de siempre: o lo comprueba
+ * una ruta, o el rol promete algo que no se cumple. */
 const ROLES = [
   /* El que faltaba: hasta la 0089 no había ningún rol que pudiera todo. Las
      pantallas más sensibles se guardan con «sólo el dueño», y el dueño no es un

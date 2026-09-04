@@ -18,6 +18,7 @@ const { assertPermiso } = require('../lib/acceso.js');
 const { notificar } = require('../lib/notificar.js');
 
 const { exige, sesion, publica } = require('../core/permisos');
+const { baseFrontend } = require('../lib/frontend.js');
 const router = express.Router();
 
 /* ══════════════════════════════════════════════════════════════════
@@ -173,7 +174,7 @@ router.post('/me/talento/verificacion', sesion("Su perfil de talento: lo edita s
   }
   try {
     const { crearValidacion } = require('../lib/truora.js');
-    const front = (process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app').split(',')[0];
+    const front = baseFrontend();
     const v = await crearValidacion({ apiKey, type: 'face-recognition', accountId: req.user.id, redirectUrl: `${front}/vacantes` });
     const { data } = await supabase.from('perfil_talento')
       .update({ verificacion_estado: 'pendiente', verificacion_ref: v.validationId, updated_at: new Date().toISOString() })

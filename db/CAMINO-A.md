@@ -103,6 +103,47 @@ Y de una en una, con Supabase todavía en pie.
 
 ---
 
+## La API: lo que cambia al mover el servidor, y no es sólo la base
+
+Esto no estaba escrito y muerde en el momento del corte, cuando ya no hay tiempo
+de investigar.
+
+**Al cambiar de servidor cambia el origen, y con él dos cosas:**
+
+1. **`CORS_ORIGINS`** — la lista de orígenes que pueden llamar a la API desde un
+   navegador. Si el frontend se queda donde está y el backend se muda, esa lista
+   sigue valiendo; si también se mueve el frontend, hay que añadir el nuevo
+   **antes** de cortar, o la página se queda en blanco sin decir por qué: un
+   rechazo de CORS le llega al navegador como «Failed to fetch» y nada más.
+   Desde el 2026-09-03 el servidor lo deja dicho en el log (`[cors] origen no
+   autorizado: …`), que es dónde hay que mirar.
+
+2. **`FRONTEND_URL`** — la dirección **canónica**, la que va dentro de los
+   correos. Es UNA. Hasta hoy esa misma variable hacía los dos trabajos, y por
+   eso añadir un segundo origen habría mandado enlaces con dos dominios pegados.
+   Ya están separadas (`lib/frontend.js`), pero al mudarse hay que poner las dos.
+
+**Y una que se olvida siempre:** el frontend apunta al backend con
+`VITE_API_URL`, que se compila **dentro** del paquete. Cambiar el backend de
+sitio obliga a **volver a construir y desplegar el frontend**, no sólo a cambiar
+una variable en el servidor. Si el corte se planea como «muevo la base y la API
+un domingo», ese despliegue va en el mismo domingo.
+
+### El orden que evita la ventana en blanco
+
+1. Levantar la API nueva **en paralelo**, con la base ya cargada y comparada.
+2. Añadir el origen del frontend a `CORS_ORIGINS` de la API nueva.
+3. Comprobar contra la API **nueva** con una petición pública, sin sesión:
+
+   ```bash
+   curl -s https://<api-nueva>/eventos/publicos/slug/<un-slug> | head -c 200
+   ```
+
+4. Reconstruir el frontend con `VITE_API_URL` apuntando a la nueva y desplegarlo.
+5. La vieja se apaga **después**, no antes. Igual que Supabase.
+
+---
+
 ## Lo que le va a faltar a quien lo retome
 
 Esto no se resuelve con código:
@@ -120,6 +161,55 @@ Esto no se resuelve con código:
 
 ---
 
+## Fusionar no es desplegar, y en este frente muerde el doble
+
+Esto ya nos costó horas una vez —la 0092— y va a volver a pasar mientras la
+base y la API se desplieguen por separado.
+
+**El patrón, siempre el mismo:** una migración cambia el dato de sitio. El
+código que lo lee del sitio nuevo está fusionado en `main`. Pero la API
+desplegada todavía sirve el código viejo, que mira el sitio de antes. Y
+entonces **no falla nada**: no hay error, no hay log, no hay pantalla roja.
+Simplemente no hay datos. Cuatro pantallas en blanco a la vez y nadie sabe por
+qué, porque no hay nada que buscar.
+
+Casos medidos en este repo:
+
+| Migración | Lo que pasó mientras la API iba por detrás |
+|---|---|
+| 0092 (zonas salen de `page_json`) | Zonas, selector de zona, escáner y mapa de la landing: **en blanco durante horas, sin un solo error** |
+| 0099 (promociones al cobro) | El código de descuento se acepta, se dice que vale… y **se cobra el precio de lista**. Sin error, sin aviso, y con el dinero ya cobrado |
+
+La 0099 es peor que la 0092 en un punto concreto: la 0092 dejaba una pantalla
+vacía, que se ve. Ésta deja un **cobro correcto por el importe equivocado**, que
+no se ve hasta que alguien reclama.
+
+**La comprobación, y son dos minutos.** Contra la API DESPLEGADA, nunca contra
+la rama:
+
+```bash
+curl -s https://api.gestekeventost.dpdns.org/eventos/publicos/slug/technova-summit-2026 | grep -o '"zonas"'
+```
+
+Si no imprime nada, la API no tiene el código nuevo por más que `main` sí.
+
+**Por qué esto es del Camino A y no una anécdota de despliegue.** Hoy son dos
+despliegues —Supabase por su lado, Render por el suyo— y por eso hay una ventana
+en la que no coinciden. Al mover la base al servidor propio la ventana no
+desaparece: cambia de sitio. En cPanel el `git pull` y el `mysql <` los va a
+correr una persona, seguidos, a mano — y el orden entre los dos va a ser el que
+decida si esa ventana dura diez segundos o toda la tarde.
+
+**La regla que hay que escribir en el procedimiento de despliegue:**
+
+- Migración que **añade** (expand): primero la base, después el código. El
+  código viejo ignora una columna nueva.
+- Migración que **quita o mueve** (contract): primero el código, después la
+  base. Y sólo cuando lleve días sirviéndose el código que ya no la necesita.
+- **Nunca** las dos a la vez confiando en que van rápido.
+
+---
+
 ## Dos cosas que hay que saber antes de tocar
 
 **`modules/aforo/consultas.js` está muerto a propósito.** Es la traducción a
@@ -128,9 +218,21 @@ código olvidado: es de este frente. Su propio comentario lo dice.
 
 **`generar_recordatorios_inapp` nunca ha funcionado.** Inserta en
 `notificaciones` una columna `link` que esa tabla no tiene, así que revienta en
-la primera fila. Medido: **0 filas** en `notificaciones` en toda su historia,
-frente a 28 correos de recordatorio enviados. Al reimplementarla en código, la
-tentación es copiarla tal cual — copiaría el fallo.
+la primera fila. Al reimplementarla en código, la tentación es copiarla tal
+cual — copiaría el fallo.
+
+Corrección del 2026-09-03: aquí ponía «**0 filas** en `notificaciones` en toda
+su historia», y eso ya no es verdad — la tabla tiene 62. Lo que sigue siendo
+verdad es más preciso y más útil: **ninguna es de tipo `recordatorio`**. Las 62
+son `reserva` (61) y `alerta` (2), escritas por otro camino que sí funciona. La
+consulta que no miente:
+
+```sql
+select tipo, count(*) from public.notificaciones group by tipo;
+```
+
+Si algún día sale un `recordatorio`, es que alguien lo arregló y esta nota
+sobra.
 
 ---
 

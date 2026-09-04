@@ -6,6 +6,7 @@ const { notificar } = require('../lib/notificar.js');
 const { auditar } = require('../lib/auditar.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
+const { baseFrontend } = require('../lib/frontend.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -107,7 +108,7 @@ router.post('/:eventoId/equipo', sesion("Cada ruta llama a assertOwner con la li
       ctx: {
         nombre: nombre_invitado || (email || '').split('@')[0],
         rol: rol.nombre,
-        enlace: `${process.env.FRONTEND_URL || 'https://gestor-eventos-frontend.vercel.app'}/eventos/${eventoId}`,
+        enlace: `${baseFrontend()}/eventos/${eventoId}`,
       },
     });
     console.log('[equipo] email invitación resultado:', resultEmail);

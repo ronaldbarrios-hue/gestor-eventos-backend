@@ -52,8 +52,47 @@ async function assertCheckinAccess(eventoId, userId) {
      `checkin` a una persona en concreto —sin cambiarle el rol, que es
      justamente para lo que existen los permisos sueltos— no servía: el
      escáner le contestaba «No autorizado». */
-  if (!permisosDeMiembro(m).has('checkin')) throw new Error('No autorizado.');
-  return ev;
+  const perms = permisosDeMiembro(m);
+  if (!perms.has('checkin')) throw new Error('No autorizado.');
+  /* Los permisos viajan con el contexto para que la puerta pueda mirarlos sin
+     volver a pedirlos: `vip_zone` decide si esta persona puede atender una
+     puerta a la que no está asignada. */
+  return { ...ev, permisos: perms };
+}
+
+/* ¿Puede ESTA persona atender ESTA puerta?
+ *
+ * ── Lo que estaba pasando ────────────────────────────────────────────────
+ *
+ * Una puerta declara qué staff la atiende —`zonas.reglas.staff`, y antes
+ * `page_json.accesos[].staff`—, `leerPuerta` lo devuelve fielmente… y no lo
+ * comprobaba nadie. O sea: se elegía con cuidado quién atiende la puerta VIP y
+ * cualquiera con `checkin` podía marcar entradas por ella.
+ *
+ * ── Y aquí es donde `vip_zone` significa algo ────────────────────────────
+ *
+ * `vip_zone` llevaba en el catálogo de permisos desde siempre con la nota «sin
+ * efecto todavía». Ésta es su función, y compone con la lista en vez de
+ * duplicarla: la lista dice quién atiende esa puerta en concreto, y `vip_zone`
+ * es la llave maestra de quien puede atenderlas todas sin estar apuntado en
+ * ninguna — el jefe de piso que cubre huecos.
+ *
+ * Dos personas pasan siempre: el dueño del evento y quien esté en la lista.
+ * Y una puerta con la lista vacía no restringe a nadie, que es lo que significa
+ * no haber puesto a nadie.
+ *
+ * ── Por qué esto SÍ bloquea, y el filtro de tipos de abajo no ────────────
+ *
+ * Son preguntas distintas. Que la boleta no corresponda a la puerta es un caso
+ * dudoso con una persona delante, y por eso se avisa y decide el staff. Que
+ * quien opera la puerta no tenga por qué estar ahí no es dudoso: es la razón
+ * entera por la que existe la lista. */
+function puedeAtenderPuerta(puerta, userId, evCtx) {
+  const staff = Array.isArray(puerta?.staff) ? puerta.staff : [];
+  if (!staff.length) return true;
+  if (evCtx?.owner_id === userId) return true;
+  if (staff.map(String).includes(String(userId))) return true;
+  return Boolean(evCtx?.permisos?.has?.('vip_zone'));
 }
 
 /* GET /eventos/:eventoId/clientes — listar tickets emitidos del evento */
@@ -624,6 +663,13 @@ router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la 
        no es cosmética: una lectura vacía sería una puerta que deja pasar a
        cualquiera. */
     const puerta = await leerPuerta(eventoId, acceso_id);
+
+    if (puerta && !puedeAtenderPuerta(puerta, req.user.id, evCtx)) {
+      return res.status(403).json({
+        error: `No estás asignado a ${puerta.nombre}.`,
+        sound: 'error',
+      });
+    }
 
     /* Resolver el ticket: por qr_token (verificar firma) o por código corto */
     let ticketQuery;

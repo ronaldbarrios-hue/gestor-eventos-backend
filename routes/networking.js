@@ -75,12 +75,30 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
     return res.status(403).json({ error: e.message });
   }
 
+  /* Sólo los que RECIBEN, y sólo los activos.
+   *
+   * En una rueda se sientan los compradores y rotan los vendedores. Sin este
+   * filtro, quien busca con quién reunirse veía también a los que van a pasar
+   * por las mesas —gente sin horarios que ofrecer— y a los dados de baja. Una
+   * lista donde la mitad no se puede reservar enseña a no fiarse de la lista.
+   *
+   * `rol` nace en `comprador` (0105), así que un evento que no use los tres
+   * papeles sigue viéndolo todo: esto no esconde nada que existiera antes.
+   *
+   * El error se MIRA: sin la 0105 corrida, PostgREST contesta con error y no
+   * con una lista vacía — y sin mirarlo la rueda saldría vacía sin que nadie
+   * supiera por qué. Ya pasó en esta base con `zonas.tipo`. */
   const { data: expositores, error: e1 } = await supabase
     .from('networking_expositores')
     .select(`${COLS_TARJETA}, descripcion`)
     .eq('evento_id', eventoId)
+    .eq('rol', 'comprador')
+    .eq('activo', true)
     .order('nombre', { ascending: true });
-  if (e1) return res.status(500).json({ error: e1.message });
+  if (e1) {
+    console.error(`[networking] la lista de mesas falló (¿falta la 0105?): ${e1.message}`);
+    return res.status(500).json({ error: e1.message });
+  }
 
   const { data: horarios, error: e2 } = await supabase
     .from('networking_horarios')
@@ -89,11 +107,20 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
     .order('inicio', { ascending: true });
   if (e2) return res.status(500).json({ error: e2.message });
 
+  /* Confirmadas Y solicitadas.
+   *
+   * Miraba sólo las confirmadas, y con la rueda en modo «solicitud» eso rompía
+   * el modo entero: pedías una hora, la casilla seguía saliendo libre, y otra
+   * persona la pedía encima. La segunda se llevaba un 409 —o peor, las dos se
+   * presentaban a la misma mesa a la misma hora—.
+   *
+   * Una cancelada sí libera: el índice único deja reservar encima, así que
+   * pintarla ocupada escondería un hueco que existe de verdad. */
   const { data: citas, error: e3 } = await supabase
     .from('networking_citas')
     .select('id, horario_id, user_id, estado')
     .eq('evento_id', eventoId)
-    .eq('estado', 'confirmada');
+    .in('estado', ['confirmada', 'solicitada']);
   if (e3) return res.status(500).json({ error: e3.message });
 
   const citaPorHorario = new Map((citas || []).map(c => [c.horario_id, c]));
@@ -110,6 +137,10 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
           fin: h.fin,
           disponible: !cita,
           esMio: cita?.user_id === req.user.id,
+          /* Si es mía, en qué estado. «Pedida» y «Reservada» no son lo mismo
+             para quien está mirando su agenda del día. Sólo viaja cuando es
+             suya: el estado de la cita de otro no es asunto de nadie. */
+          estado: cita?.user_id === req.user.id ? cita.estado : undefined,
         };
       }),
   }));
@@ -241,60 +272,72 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
     return res.status(500).json({ error: e2.message });
   }
 
-  /* Correo de cita confirmada. La plantilla `cita` existe desde que se unificó
-     el motor de correo y nadie la llamaba: se reservaba una cita y no llegaba
-     nada, así que la persona no tenía dónde consultar a qué hora era.
+  /* El correo que toca, no el de siempre. La plantilla `cita` dice «quedó
+     confirmada»; con el modo en «solicitud» eso sería mentira. */
+  avisarDeLaCita({
+    eventoId, horarioId, userId: req.user.id,
+    plantilla: estadoInicial === 'solicitada' ? 'cita_pedida' : 'cita',
+  });
 
-     Va best-effort y después de responder: la cita ya está guardada, y un fallo
-     de SMTP no debe convertirse en un error de reserva. */
-  (async () => {
-    try {
-      const { data: h } = await supabase
-        .from('networking_horarios')
-        .select('inicio, fin, expositor:networking_expositores!expositor_id(nombre, stand)')
-        .eq('id', horarioId).maybeSingle();
-
-      const { data: perfil } = await supabase
-        .from('profiles').select('nombre, email').eq('id', req.user.id).maybeSingle();
-
-      const destino = perfil?.email || req.user.email;
-      if (!destino) return;
-
-      const { data: ev } = await supabase
-        .from('eventos').select('timezone').eq('id', eventoId).maybeSingle();
-      const tz = ev?.timezone || 'America/Bogota';
-
-      let cuando = '';
-      if (h?.inicio) {
-        const d = new Date(h.inicio);
-        if (!Number.isNaN(d.getTime())) {
-          cuando = d.toLocaleString('es-CO', {
-            weekday: 'long', day: 'numeric', month: 'long',
-            hour: 'numeric', minute: '2-digit', timeZone: tz,
-          });
-        }
-      }
-
-      await enviarEmailEvento({
-        evento: eventoId,
-        tipo: 'cita',
-        to: destino,
-        ctx: {
-          nombre: perfil?.nombre || '',
-          hora: cuando,
-          /* El "lugar" útil aquí es el stand del expositor, no la sede: es a
-             donde tiene que ir esa persona. */
-          lugar: h?.expositor?.stand ? `Stand ${h.expositor.stand}` : '',
-          tipo_boleta: h?.expositor?.nombre || '',
-        },
-      });
-    } catch (e) {
-      console.warn('[networking] no se pudo avisar de la cita:', e.message);
-    }
-  })();
-
-  res.status(201).json({ ok: true, cita_id: cita.id });
+  /* Va el ESTADO, no sólo el id. Sin él la pantalla no puede saber si la cita
+     quedó confirmada o pendiente de aprobación, y decía «¡Cita confirmada!» en
+     los dos casos — la misma mentira que el correo. */
+  res.status(201).json({ ok: true, cita_id: cita.id, estado: cita.estado });
 });
+
+/* El correo de una cita, en un sitio.
+ *
+ * Lo manda tanto quien reserva como el equipo al aprobar, y son dos textos
+ * distintos: en modo «solicitud» la cita nace pendiente y hasta ahora llegaba
+ * igualmente «tu cita quedó confirmada». La persona se presentaba a una hora
+ * que nadie le había dado, y al otro lado no había nadie esperándola.
+ *
+ * Best-effort y siempre después de responder: la cita ya está guardada, y un
+ * fallo de SMTP no puede convertirse en un error de reserva.
+ */
+async function avisarDeLaCita({ eventoId, horarioId, userId, plantilla }) {
+  try {
+    const { data: h } = await supabase
+      .from('networking_horarios')
+      .select('inicio, fin, expositor:networking_expositores!expositor_id(nombre, stand)')
+      .eq('id', horarioId).maybeSingle();
+
+    const { data: perfil } = await supabase
+      .from('profiles').select('nombre, email').eq('id', userId).maybeSingle();
+    if (!perfil?.email) return;
+
+    const { data: ev } = await supabase
+      .from('eventos').select('timezone').eq('id', eventoId).maybeSingle();
+    const tz = ev?.timezone || 'America/Bogota';
+
+    let cuando = '';
+    if (h?.inicio) {
+      const d = new Date(h.inicio);
+      if (!Number.isNaN(d.getTime())) {
+        cuando = d.toLocaleString('es-CO', {
+          weekday: 'long', day: 'numeric', month: 'long',
+          hour: 'numeric', minute: '2-digit', timeZone: tz,
+        });
+      }
+    }
+
+    await enviarEmailEvento({
+      evento: eventoId,
+      tipo: plantilla,
+      to: perfil.email,
+      ctx: {
+        nombre: perfil?.nombre || '',
+        hora: cuando,
+        /* El «lugar» útil aquí es el stand, no la sede: es a donde tiene que
+           ir esa persona. */
+        lugar: h?.expositor?.stand ? `Stand ${h.expositor.stand}` : '',
+        tipo_boleta: h?.expositor?.nombre || '',
+      },
+    });
+  } catch (e) {
+    console.warn(`[networking] no se pudo avisar de la cita (${plantilla}):`, e.message);
+  }
+}
 
 /* DELETE /eventos/:eventoId/networking/citas/:citaId — cancelar mi propia cita.
    Se filtra por user_id, así que ya está implícitamente protegido. */
@@ -829,6 +872,19 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
       cuerpo: 'Míralo en la rueda de negocios del evento.',
       link: `/explorar/${req.params.eventoId}/networking`, eventoId,
     });
+
+    /* Y el correo cuando se APRUEBA, que es la otra mitad del modo
+       «solicitud». Sin esto, quien pidió una cita recibía «la estamos
+       revisando» y ya: nada le decía que se la habían dado. Tenía que volver
+       a entrar a mirar por su cuenta, y quien no vuelve, no va.
+       Sólo al pasar a confirmada — mover de casilla o cancelar ya se cuentan
+       con el aviso de arriba, y un correo por cada toque de la parrilla el día
+       del evento es correo que se deja de leer. */
+    if (updates.estado === 'confirmada' && data.horario_id) {
+      avisarDeLaCita({
+        eventoId, horarioId: data.horario_id, userId: data.user_id, plantilla: 'cita',
+      });
+    }
   }
 
   res.json({ cita: data });

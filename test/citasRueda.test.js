@@ -158,3 +158,28 @@ test('la migración de la rueda deja el contacto APAGADO por defecto', () => {
   assert.match(sql, /rol text not null default 'comprador'/i);
   assert.match(sql, /Rollback/);
 });
+
+test('el papel y el contacto público se pueden guardar de verdad', () => {
+  /* Dos columnas nuevas sin sitio en las listas blancas serían dos ajustes que
+     la pantalla dice haber guardado y que no cambian nunca — la ruta descarta
+     en silencio lo que no está declarado, y hace bien. Ya me pasó con
+     `networking_modo`. */
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'expositores.js'), 'utf8');
+
+  const org = src.slice(src.indexOf('CAMPOS_EDITABLES_ORGANIZADOR'), src.indexOf('CAMPOS_EDITABLES_EXPOSITOR'));
+  assert.ok(org.includes("'rol'"), 'quien organiza no puede decidir quién recibe y quién pasa');
+  assert.ok(org.includes("'contacto_publico'"), 'quien organiza no puede APAGAR un contacto publicado');
+
+  const emp = src.slice(src.indexOf('CAMPOS_EDITABLES_EXPOSITOR'));
+  assert.ok(emp.includes("'contacto_publico'"), 'la empresa no puede decidir sobre sus propios datos');
+
+  /* Y lo que NO puede tocar la empresa: dónde se sienta cada uno en la rueda
+     es del que la arma, igual que `zona_id`. */
+  const listaEmp = emp.slice(0, emp.indexOf('];'));
+  assert.ok(!listaEmp.includes("'rol'"),
+    'una empresa puede cambiarse el papel: se pondría a recibir en una rueda que no armó');
+
+  /* Y que las columnas vuelvan al leerlas: sin esto se guardan y la pantalla
+     las pinta apagadas al recargar. */
+  assert.match(src, /rol, contacto_publico/, 'las columnas nuevas no se leen en COLS_COMPLETAS');
+});

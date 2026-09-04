@@ -167,3 +167,48 @@ test('CLAVE_POR_TABLA no declara ninguna tabla que ya no exista en TABLAS', () =
     assert.ok(TABLAS.includes(tabla), `"${tabla}" tiene clave natural pero no está en TABLAS`);
   }
 });
+
+/* ── La lista contra el esquema de HOY ──────────────────────────────────
+ *
+ * Las dos pruebas de arriba miran que la lista sea larga y que traiga unas
+ * cuantas conocidas. Ninguna cazaba lo que pasó de verdad: la lista y el
+ * volcado `01_tablas.sql` compartían la misma laguna —ninguno conocía
+ * `zonas`— y `verificarCobertura()` comparaba el uno contra el otro y decía
+ * que todo estaba cubierto. Dos cosas viejas coincidiendo no son una
+ * confirmación.
+ *
+ * Estas dos miran contra el esquema completo: el volcado MÁS el delta. */
+
+const fsCob = require('node:fs');
+const pathCob = require('node:path');
+
+function esquemaCompleto() {
+  const raiz = pathCob.join(__dirname, '..');
+  return [
+    pathCob.join(raiz, 'db', 'esquema', '01_tablas.sql'),
+    pathCob.join(raiz, 'db', 'migraciones', '005_al_dia.sql'),
+  ].map((r) => fsCob.readFileSync(r, 'utf8')).join('\n');
+}
+
+test('la lista conoce toda tabla que el esquema crea y no tira', () => {
+  const texto = esquemaCompleto();
+  const creadas = [...texto.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?`([a-z_0-9]+)`/gi)].map((m) => m[1]);
+  const tiradas = new Set([...texto.matchAll(/DROP TABLE IF EXISTS `([a-z_0-9]+)`/gi)].map((m) => m[1]));
+
+  const vivas = [...new Set(creadas.filter((t) => !tiradas.has(t)))];
+  assert.ok(vivas.length > 60, `sólo ${vivas.length} tablas leídas: la expresión dejó de encajar`);
+
+  const faltan = vivas.filter((t) => !TABLAS.includes(t));
+  assert.deepEqual(faltan, [],
+    `la comparación previa al corte no mira estas tablas: ${faltan.join(', ')}`);
+});
+
+test('la lista no nombra tablas que el esquema ya tiró', () => {
+  /* Compararlas da «falta en MySQL» para siempre, y un informe que siempre
+     tiene un fallo conocido es un informe que se deja de leer. */
+  const tiradas = new Set(
+    [...esquemaCompleto().matchAll(/DROP TABLE IF EXISTS `([a-z_0-9]+)`/gi)].map((m) => m[1]),
+  );
+  const fantasmas = TABLAS.filter((t) => tiradas.has(t));
+  assert.deepEqual(fantasmas, [], `la lista nombra tablas que ya no existen: ${fantasmas.join(', ')}`);
+});

@@ -78,15 +78,15 @@ const TABLAS = [
   'event_members', 'event_requests', 'event_roles', 'event_views', 'event_waitlist',
   'evento_alertas', 'evento_anuncios', 'evento_bolsa_puntos', 'evento_email_envios',
   'evento_email_plantillas', 'evento_legal', 'evento_motivos', 'evento_smtp', 'eventos',
-  'missions', 'networking_citas', 'networking_expositores', 'networking_horarios',
+  'networking_citas', 'networking_expositores', 'networking_horarios',
   'notificaciones', 'oauth_clients', 'oauth_codes', 'oauth_tokens', 'organizador_conexiones',
   'padron_previo', 'payment_transactions', 'perfil_talento', 'points_log', 'postulaciones',
   'profiles', 'promociones', 'puntos_balance', 'push_subscriptions', 'recompensas',
-  'recordatorio_inapp_log', 'referral_codes', 'sesion_inscripciones', 'speakers', 'sponsors',
+  'sesion_inscripciones', 'speakers', 'sponsors',
   'sugerencias_catalogo', 'sugerencias_dinamica', 'talento_resenas', 'tarea_log', 'tareas',
   'ticket_interacciones', 'ticket_movimientos', 'ticket_types', 'tickets',
   'torneo_categorias', 'torneo_equipos', 'torneo_partidos', 'torneos',
-  'user_badges', 'vacantes', 'waitlist', 'webhook_deliveries', 'webhooks', 'zona_cortes',
+  'user_badges', 'vacantes', 'webhook_deliveries', 'webhooks', 'zona_cortes', 'zonas',
 ];
 
 /* Casi todas las tablas se ordenan y emparejan por `id`. Las que NO lo tienen
@@ -107,15 +107,36 @@ const claveFila = (fila, clave) => clave.map(c => String(fila[c])).join('::');
 /* Si el esquema real gana una tabla y esta lista no se entera, mejor decirlo
    fuerte que dejar que "Todo cuadra" hable de menos tablas de las que hay. No
    se compara contra la base en vivo (eso costaría una conexión más sólo para
-   esto) — se compara contra el propio archivo de esquema, que es la fuente
-   que un humano edita cuando agrega una tabla. */
+   esto) — se compara contra los archivos de esquema, que es lo que un humano
+   edita cuando agrega una tabla.
+
+   ── Y son DOS archivos, no uno ────────────────────────────────────────────
+
+   `01_tablas.sql` es un volcado del 30 de agosto y `005_al_dia.sql` es lo que
+   le pasó al esquema después. Mirando sólo el primero, esta comprobación
+   decía «todo cubierto» mientras la lista y el volcado **compartían la misma
+   laguna**: ninguno de los dos conocía `zonas`. Dos cosas viejas coincidiendo
+   no son una confirmación. */
 function verificarCobertura() {
   const fs = require('fs');
   const path = require('path');
-  const ruta = path.join(__dirname, '..', 'db', 'esquema', '01_tablas.sql');
-  let texto;
-  try { texto = fs.readFileSync(ruta, 'utf8'); } catch { return; }   // en cPanel puede no estar
-  const reales = [...texto.matchAll(/CREATE TABLE `([a-z_0-9]+)`/gi)].map(m => m[1]);
+  const rutas = [
+    path.join(__dirname, '..', 'db', 'esquema', '01_tablas.sql'),
+    path.join(__dirname, '..', 'db', 'migraciones', '005_al_dia.sql'),
+  ];
+  let texto = '';
+  for (const r of rutas) {
+    try { texto += fs.readFileSync(r, 'utf8'); } catch { /* en cPanel puede no estar */ }
+  }
+  if (!texto) return;
+
+  /* `CREATE TABLE` y `CREATE TABLE IF NOT EXISTS`: el delta usa la segunda
+     forma, y sin contemplarla su tabla no se veía. */
+  const reales = [...texto.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?`([a-z_0-9]+)`/gi)].map(m => m[1]);
+
+  /* Las que el delta tira dejan de contar como reales: el volcado las crea y
+     `005_al_dia.sql` las borra tres pantallas después. */
+  const tiradas = new Set([...texto.matchAll(/DROP TABLE IF EXISTS `([a-z_0-9]+)`/gi)].map(m => m[1]));
   const conocidas = new Set(TABLAS);
   const nuevas = reales.filter(t => !conocidas.has(t));
   if (nuevas.length) {

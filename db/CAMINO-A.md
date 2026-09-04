@@ -218,9 +218,21 @@ código olvidado: es de este frente. Su propio comentario lo dice.
 
 **`generar_recordatorios_inapp` nunca ha funcionado.** Inserta en
 `notificaciones` una columna `link` que esa tabla no tiene, así que revienta en
-la primera fila. Medido: **0 filas** en `notificaciones` en toda su historia,
-frente a 28 correos de recordatorio enviados. Al reimplementarla en código, la
-tentación es copiarla tal cual — copiaría el fallo.
+la primera fila. Al reimplementarla en código, la tentación es copiarla tal
+cual — copiaría el fallo.
+
+Corrección del 2026-09-03: aquí ponía «**0 filas** en `notificaciones` en toda
+su historia», y eso ya no es verdad — la tabla tiene 62. Lo que sigue siendo
+verdad es más preciso y más útil: **ninguna es de tipo `recordatorio`**. Las 62
+son `reserva` (61) y `alerta` (2), escritas por otro camino que sí funciona. La
+consulta que no miente:
+
+```sql
+select tipo, count(*) from public.notificaciones group by tipo;
+```
+
+Si algún día sale un `recordatorio`, es que alguien lo arregló y esta nota
+sobra.
 
 ---
 

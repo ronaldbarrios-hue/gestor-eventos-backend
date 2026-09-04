@@ -1,10 +1,11 @@
 # Migraciones pendientes en Supabase
 
-**Queda una: la 0100.**
+**Quedan dos: la 0100 y la 0101.**
 
 | Nº | Qué hace | Estado |
 |---|---|---|
 | 0100 | Los descuentos del agente se mudan a donde se cobran | ⛔ **pendiente** |
+| 0101 | Tirar cuatro tablas que nunca se usaron | ⛔ **pendiente** |
 | 0097 | Políticas RLS para las tablas que tenían la puerta cerrada y ninguna llave | ✅ aplicada el 2026-09-03 |
 | 0098 | Las reglas de la puerta se mudan con ella (`zonas.reglas`) | ✅ aplicada el 2026-09-03 |
 | 0099 | Que el código de descuento llegue al cobro | ✅ aplicada el 2026-09-03 |
@@ -26,6 +27,13 @@ sin descontar nada, que es lo de ahora. Lo que **sí** cambia sin ella es que el
 agente, con el código nuevo, escribirá en `promociones` desde el primer minuto:
 los nuevos funcionan aunque la migración no se haya corrido. La migración es
 para los dos viejos.
+
+## La 0101 es la primera *contract* de la serie
+
+Las anteriores sólo añadían. Ésta **borra tablas**, y un `drop table` no se
+deshace con otra migración: se deshace con una copia de seguridad. Va igualmente
+porque la prueba de que sobran es dura — `n_tup_ins = 0`, cero inserciones en
+toda su historia— y no «están vacías», que no significa lo mismo.
 
 ## Lo que quedó comprobado al aplicarlas
 

@@ -3,7 +3,38 @@
 Instrucciones para quien cree la base en cPanel. Está escrito para poder
 seguirse sin haber estado en las conversaciones anteriores.
 
-> ## ⚠ El volcado está desfasado, y hay un archivo que lo pone al día
+> ## 🚨 `03_datos.sql` NO se puede cargar tal cual: le faltan 74 boletas
+>
+> Medido el **4 de septiembre de 2026** contra producción:
+>
+> | | volcado (30 ago) | hoy | |
+> |---|---|---|---|
+> | **`tickets`** | **45** | **119** | **+74 boletas vendidas** |
+> | `padron_previo` | 0 | 4.124 | +4.124 |
+> | `event_views` | 947 | 1.409 | +462 |
+> | `notificaciones` | 2 | 78 | +76 |
+> | `zonas` | 0 | 12 | la tabla ni existía |
+> | **total** | **2.139** | **7.148** | **+5.009** |
+>
+> Y hay filas que se **borraron** desde entonces (`categorias` 9→0,
+> `recompensas` 5→0, `user_badges` 10→4): cargar el volcado viejo no sólo
+> pierde lo nuevo, también resucita lo borrado.
+>
+> **Hay que regenerarlo antes de cargarlo.** El script está y funciona:
+>
+> ```bash
+> npm i pg
+> export PG_URL='postgresql://postgres:<PASS>@<HOST>:5432/postgres?sslmode=require'
+> node db/esquema/generar-datos.mjs
+> ```
+>
+> La contraseña se pide — no está en el repositorio y no debe estarlo. Y se
+> regenera **el día del corte**, no antes: mientras Supabase siga vivo, cada
+> día que pasa el volcado vuelve a quedarse corto.
+>
+> El esquema es otra cosa y sí tiene arreglo escrito: sigue leyendo.
+
+> ## ⚠ El volcado de ESQUEMA está desfasado, y hay un archivo que lo pone al día
 >
 > `db/esquema/` se generó el **30 de agosto de 2026**. Después se aplicaron diez
 > migraciones en Supabase (0092–0101). La diferencia está medida y escrita en

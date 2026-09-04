@@ -119,6 +119,16 @@ el día del evento, cuando ya no hay forma de arreglarlo.
 
 ### 1. Regenerar el esquema y los datos
 
+> **Los datos están MUY viejos.** Medido el 4 de septiembre: el volcado tiene
+> 2.139 filas y producción 7.148. `tickets` va de 45 a **119** — son 74 boletas
+> vendidas que no están en el archivo. Y hay filas borradas desde entonces, así
+> que cargarlo tal cual además resucita lo que ya no está.
+>
+> El esquema, en cambio, ya tiene la diferencia escrita en `005_al_dia.sql`.
+> Los datos no se pueden arreglar con un delta: hay que volver a generarlos, y
+> **el día del corte**, porque cada día que Supabase siga vivo el volcado se
+> queda corto otra vez.
+
 ```bash
 npm i pg                      # dependencia sólo de estos scripts, a propósito fuera de package.json
 export PG_URL='postgresql://postgres:<PASS>@<HOST>:5432/postgres?sslmode=require'

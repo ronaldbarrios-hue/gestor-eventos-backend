@@ -1,10 +1,10 @@
 # Migraciones pendientes en Supabase
 
-**Queda una: la 0102.**
+**No queda ninguna.**
 
 | Nº | Qué hace | Estado |
 |---|---|---|
-| 0102 | Una notificación que lleva a algún sitio (`notificaciones.link`) | ⛔ **pendiente** |
+| 0102 | Una notificación que lleva a algún sitio (`notificaciones.link`) | ✅ aplicada el 2026-09-04 |
 | 0100 | Los descuentos del agente se mudan a donde se cobran | ✅ aplicada el 2026-09-04 |
 | 0101 | Tirar cuatro tablas que nunca se usaron | ✅ aplicada el 2026-09-04 |
 | 0097 | Políticas RLS para las tablas que tenían la puerta cerrada y ninguna llave | ✅ aplicada el 2026-09-03 |
@@ -20,17 +20,6 @@ Este archivo se mantiene al día **a propósito**. Una lista de pendientes que
 miente entrena a no creerla, y entonces el día que una haga falta de verdad,
 nadie la cree. Ya pasó en este repo: siete migraciones decían «PENDIENTE DE
 APLICAR» en su cabecera y cinco estaban aplicadas.
-
-## Qué pasa si no se corre la 0102
-
-Nada se rompe. `lib/notificar.js` mira el error, ve que la columna no está y
-reintenta sin ella: el aviso se crea igual, sin destino, y queda dicho en el
-log. Es lo de hoy.
-
-Va con reintento **a propósito**: si el código llegara antes que la migración y
-no lo tuviera, el INSERT fallaría por una columna que no existe y se dejarían
-de crear TODAS las notificaciones — que es exactamente el fallo que este
-archivo tardó meses en descubrir la primera vez.
 
 ## Qué pasaba si no se corría la 0100
 

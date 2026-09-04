@@ -175,6 +175,23 @@ router.delete('/:eventoId/chat/channels/:channelId', sesion('Es del equipo del e
     if (!tienePermiso(ctx, 'crear_canales')) {
       return res.status(403).json({ error: 'No tienes permiso para borrar canales.' });
     }
+
+    /* El canal general no se borra.
+     *
+     * Es el que se crea con el evento y al que cae todo el mundo por defecto:
+     * sin él, el equipo entra al chat y no hay dónde escribir, y no hay forma
+     * de volver a crearlo desde el panel —`crearChannel` hace canales
+     * normales, no el general—. Un borrado que no se puede deshacer y que deja
+     * la pantalla vacía tiene que decir que no aquí, no confiar en que el
+     * botón no exista: el botón es una sugerencia, esto es la regla. */
+    const { data: canal } = await supabase
+      .from('chat_channels').select('tipo')
+      .eq('id', channelId).eq('evento_id', eventoId).maybeSingle();
+    if (!canal) return res.status(404).json({ error: 'Canal no encontrado.' });
+    if (canal.tipo === 'general') {
+      return res.status(400).json({ error: 'El canal general no se puede borrar: es donde cae el equipo por defecto.' });
+    }
+
     const { error } = await supabase
       .from('chat_channels').delete()
       .eq('id', channelId).eq('evento_id', eventoId);

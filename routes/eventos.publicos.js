@@ -124,7 +124,8 @@ router.get('/ticket/:codigo', async (req, res) => {
       id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
       guest_nombre, guest_email, user_id,
       tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor${extra}),
-      evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json)
+      evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json,
+                               modalidad, url_virtual, timezone)
     `;
 
   let { data, error } = await supabase
@@ -552,12 +553,23 @@ router.get('/slug/:slug', async (req, res) => {
   try {
     const { data: proximas } = await supabase
       .from('agenda_sessions')
-      .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, requiere_inscripcion')
+      .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, inscritos, requiere_inscripcion')
       .eq('evento_id', evento.id)
       .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
       .order('inicio', { ascending: true })
       .limit(24);
-    evento.agenda = proximas || [];
+    /* `libres` y `lleno` calculados aquí y no en la pantalla, igual que en
+       `mapa_sesiones` y por la misma razón: la resta se hace en UN sitio. Dos
+       pantallas restando por su cuenta acaban discrepando —una cuenta las
+       canceladas y la otra no— y entonces la misma actividad dice «quedan 3»
+       en el mapa y «completo» en la agenda.
+       Es el dato que cambia lo que hace quien lo lee: «me apunto luego» y «me
+       apunto ya» no son la misma decisión. */
+    evento.agenda = (proximas || []).map(s => ({
+      ...s,
+      libres: s.cupo == null ? null : Math.max(0, s.cupo - (s.inscritos || 0)),
+      lleno : s.cupo != null && (s.inscritos || 0) >= s.cupo,
+    }));
   } catch { evento.agenda = []; }
 
   try {

@@ -1,6 +1,7 @@
 const express = require('express');
 const { exige, sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
+const { notificar } = require('../lib/notificar.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
@@ -129,17 +130,64 @@ router.get('/:eventoId/networking/mis-citas', sesion('Rueda de negocios: hace fa
   const { data, error } = await supabase
     .from('networking_citas')
     .select(`
-      id, estado, created_at,
+      id, estado, created_at, notas, creada_por,
       horario:networking_horarios!horario_id(id, inicio, fin,
         expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
     `)
     .eq('evento_id', eventoId)
     .eq('user_id', req.user.id)
-    .eq('estado', 'confirmada');
+    /* Antes sólo las `confirmada`. Con eso, una cita PEDIDA y todavía sin
+       aprobar no aparecía en ningún sitio: la persona la solicitaba y la
+       pantalla se quedaba igual que antes de pedirla. Lo único que no se
+       enseña es lo cancelado, que ya no es una cita. */
+    .neq('estado', 'cancelada');
   if (error) return res.status(500).json({ error: error.message });
 
   const citas = (data || []).sort((a, b) => new Date(a.horario?.inicio) - new Date(b.horario?.inicio));
   res.json({ citas });
+});
+
+/* PATCH /eventos/:eventoId/networking/citas/:citaId/notas
+ *
+ * Lo que anotó quien asistió, sobre su propia cita.
+ *
+ * ── Por qué esto importa más de lo que parece ────────────────────────────
+ *
+ * Una rueda son quince reuniones de veinte minutos. Al día siguiente no hay
+ * forma de saber cuál era cuál, y la libreta de papel que todo el mundo saca
+ * es exactamente el hueco. Aquí la nota vive pegada a la cita: con la empresa,
+ * la hora y el stand al lado.
+ *
+ * ── El filtro que no se puede quitar ─────────────────────────────────────
+ *
+ * `.eq('user_id', req.user.id)`. Sin él, cualquiera con una boleta del evento
+ * podría escribir en la cita de otro con sólo cambiar el id de la URL — y las
+ * notas de una rueda de negocios son de lo más sensible que se guarda aquí:
+ * con quién hablaste y qué te pareció.
+ */
+router.patch('/:eventoId/networking/citas/:citaId/notas', sesion('Rueda de negocios: hace falta tener una boleta del evento, no un permiso. Y la cita tiene que ser suya.'), async (req, res) => {
+  const { eventoId, citaId } = req.params;
+
+  try {
+    await assertPuedeParticipar(eventoId, req.user);
+  } catch (e) {
+    return res.status(403).json({ error: e.message });
+  }
+
+  const notas = typeof req.body?.notas === 'string' ? req.body.notas.slice(0, 4000) : null;
+
+  const { data, error } = await supabase
+    .from('networking_citas')
+    .update({ notas })
+    .eq('id', citaId)
+    .eq('evento_id', eventoId)
+    .eq('user_id', req.user.id)
+    .select('id, notas')
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data)  return res.status(404).json({ error: 'Esa cita no es tuya.' });
+  res.json({ cita: data });
 });
 
 /* POST /eventos/:eventoId/networking/horarios/:horarioId/reservar
@@ -163,10 +211,29 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
     return res.status(404).json({ error: 'Horario no encontrado.' });
   }
 
+  /* El modo lo decide el evento, no quien reserva.
+   *
+   * `auto` —lo de siempre y el valor por omisión— confirma en el acto.
+   * `solicitud` deja la cita pendiente de que el equipo la apruebe, que es
+   * como funcionan las ruedas donde las agendas se cruzan.
+   *
+   * Se lee aquí y no se cachea: son cuatro bytes y el modo puede cambiar a
+   * mitad de un evento, que es justo cuando cambiarlo sirve de algo. */
+  const { data: evModo } = await supabase
+    .from('eventos').select('networking_modo').eq('id', eventoId).maybeSingle();
+  const estadoInicial = evModo?.networking_modo === 'solicitud' ? 'solicitada' : 'confirmada';
+
   const { data: cita, error: e2 } = await supabase
     .from('networking_citas')
-    .insert({ horario_id: horarioId, evento_id: eventoId, user_id: req.user.id, estado: 'confirmada' })
-    .select('id')
+    .insert({
+      horario_id: horarioId, evento_id: eventoId, user_id: req.user.id,
+      estado: estadoInicial,
+      /* Quién la creó. Sin esto, una agenda armada a mano por el equipo y una
+         reservada por la persona se ven idénticas — y al reclamar «yo no pedí
+         esto» no hay a qué mirar. */
+      creada_por: req.user.id,
+    })
+    .select('id, estado')
     .single();
 
   if (e2) {
@@ -642,6 +709,176 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
    Body: { inicio, fin, duracion_min } — genera bloques consecutivos de
    `duracion_min` minutos entre `inicio` y `fin`, todo en un solo llamado
    (así el organizador no crea horario por horario a mano). */
+/* ═══════════ Las citas, desde el panel ═══════════════════════════════════
+ *
+ * El formato real de una rueda es una compradora sentada y vendedores que
+ * rotan por hora. Quien organiza tiene que poder ver la parrilla entera,
+ * aprobar lo pedido y mover a alguien de casilla cuando una empresa no llega —
+ * hasta ahora una cita sólo la podía soltar quien la había reservado, así que
+ * un hueco se quedaba muerto toda la jornada.
+ */
+
+const ESTADOS_CITA = ['solicitada', 'confirmada', 'cancelada', 'realizada'];
+
+/* GET /eventos/:eventoId/networking/citas — la parrilla completa. */
+router.get('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, res) => {
+  const { eventoId } = req.params;
+  const { data, error } = await supabase
+    .from('networking_citas')
+    .select(`
+      id, estado, notas, nota_gestor, creada_por, created_at, user_id,
+      persona:profiles!user_id(id, nombre, email, avatar_url),
+      horario:networking_horarios!horario_id(id, inicio, fin,
+        expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
+    `)
+    .eq('evento_id', eventoId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  /* Por hora, que es como se mira una parrilla. Las que se quedaron sin
+     horario —porque alguien borró la franja— van al final en vez de romper la
+     comparación de fechas. */
+  const citas = (data || []).sort((a, b) => {
+    const x = a.horario?.inicio, y = b.horario?.inicio;
+    if (!x) return 1;
+    if (!y) return -1;
+    return new Date(x) - new Date(y);
+  });
+
+  /* `notas` viaja porque el equipo necesita saber si la reunión dejó algo
+     escrito, pero se manda RECORTADA: son apuntes personales sobre con quién
+     se habló y qué pareció. La parrilla es para operar, no para leerlos. */
+  res.json({
+    citas: citas.map((c) => ({
+      ...c,
+      notas: c.notas ? `${c.notas.slice(0, 140)}${c.notas.length > 140 ? '…' : ''}` : null,
+      tiene_notas: Boolean(c.notas),
+    })),
+  });
+});
+
+/* PATCH /eventos/:eventoId/networking/citas/:citaId — aprobar, mover, anotar.
+ *
+ * Tres cosas en una ruta porque son la misma acción desde la parrilla: tocar
+ * una casilla. Separarlas obligaría a la pantalla a decidir a cuál llamar
+ * según qué cambió, que es una decisión que no le toca.
+ */
+router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), async (req, res) => {
+  const { eventoId, citaId } = req.params;
+  const updates = {};
+
+  if (req.body?.estado) {
+    if (!ESTADOS_CITA.includes(req.body.estado)) {
+      return res.status(400).json({ error: `Estado inválido. Usa: ${ESTADOS_CITA.join(', ')}.` });
+    }
+    updates.estado = req.body.estado;
+  }
+
+  /* La nota del equipo, aparte de la de quien asistió. No se pisan: son de
+     dueños distintos y se escriben en momentos distintos. */
+  if ('nota_gestor' in (req.body || {})) {
+    updates.nota_gestor = typeof req.body.nota_gestor === 'string'
+      ? req.body.nota_gestor.slice(0, 4000) : null;
+  }
+
+  /* Mover de casilla. El horario nuevo tiene que ser de ESTE evento: sin
+     comprobarlo, un id de otro evento movería la cita fuera de su rueda y
+     dejaría de aparecer en las dos. */
+  if (req.body?.horario_id) {
+    const { data: h } = await supabase
+      .from('networking_horarios')
+      .select('id, expositor:networking_expositores!expositor_id(evento_id)')
+      .eq('id', req.body.horario_id)
+      .maybeSingle();
+    if (!h || h.expositor?.evento_id !== eventoId) {
+      return res.status(400).json({ error: 'Ese horario no es de este evento.' });
+    }
+    updates.horario_id = req.body.horario_id;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Sin cambios.' });
+  }
+
+  const { data, error } = await supabase
+    .from('networking_citas')
+    .update(updates)
+    .eq('id', citaId)
+    .eq('evento_id', eventoId)
+    .select('id, estado, horario_id, nota_gestor, user_id')
+    .maybeSingle();
+
+  /* El horario está tomado por otra cita. Es un caso normal al reorganizar
+     —se arrastra a alguien a una casilla ocupada— y merece un mensaje, no un
+     500 que se lee como que la aplicación se rompió. */
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Esa casilla ya está ocupada.' });
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'Cita no encontrada.' });
+
+  /* Avisar a quien va a la cita. Es lo mínimo: le acaban de cambiar la hora o
+     de aprobar algo que pidió, y hasta ahora se enteraba abriendo la pantalla
+     por su cuenta. */
+  if (data.user_id && data.user_id !== req.user.id) {
+    const que = updates.horario_id ? 'Te cambiaron la hora de una cita'
+      : updates.estado === 'confirmada' ? 'Te confirmaron una cita'
+      : updates.estado === 'cancelada' ? 'Te cancelaron una cita'
+      : 'Hay novedades en una de tus citas';
+    notificar({
+      userId: data.user_id, tipo: 'networking', titulo: que,
+      cuerpo: 'Míralo en la rueda de negocios del evento.',
+      link: `/explorar/${req.params.eventoId}/networking`, eventoId,
+    });
+  }
+
+  res.json({ cita: data });
+});
+
+/* POST /eventos/:eventoId/networking/citas — armar la agenda a mano.
+ *
+ * Quien organiza sienta a alguien en una casilla. Es la otra mitad de «tanto
+ * autogestionado como por solicitud»: hay ruedas donde la agenda la arma el
+ * equipo entera y el asistente sólo la recibe.
+ */
+router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, res) => {
+  const { eventoId } = req.params;
+  const { horario_id, user_id } = req.body || {};
+  if (!horario_id || !user_id) return res.status(400).json({ error: 'Falta el horario o la persona.' });
+
+  const { data: h } = await supabase
+    .from('networking_horarios')
+    .select('id, expositor:networking_expositores!expositor_id(evento_id)')
+    .eq('id', horario_id).maybeSingle();
+  if (!h || h.expositor?.evento_id !== eventoId) {
+    return res.status(400).json({ error: 'Ese horario no es de este evento.' });
+  }
+
+  const { data, error } = await supabase
+    .from('networking_citas')
+    .insert({
+      horario_id, evento_id: eventoId, user_id,
+      /* Puesta por el equipo: nace confirmada. Pedirle a alguien que apruebe
+         una cita que le acaban de poner sería devolverle el trabajo. */
+      estado: 'confirmada',
+      creada_por: req.user.id,
+    })
+    .select('id, estado')
+    .single();
+
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Esa casilla ya está ocupada.' });
+    return res.status(500).json({ error: error.message });
+  }
+
+  notificar({
+    userId: user_id, tipo: 'networking', titulo: 'Te agendaron una cita',
+    cuerpo: 'Míralo en la rueda de negocios del evento.',
+    link: `/explorar/${eventoId}/networking`, eventoId,
+  });
+
+  res.status(201).json({ cita: data });
+});
+
 router.post('/:eventoId/networking/expositores/:id/horarios', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId, id } = req.params;
   const { inicio, fin, duracion_min = 15 } = req.body;

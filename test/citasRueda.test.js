@@ -104,3 +104,57 @@ test('el modo se puede guardar desde el panel', () => {
   assert.ok(bloque.includes("'networking_modo'"),
     'el modo de la rueda no se puede guardar: la lista blanca de campos editables no lo incluye');
 });
+
+/* ── La rueda pública ─────────────────────────────────────────────────── */
+
+const PUB = fs.readFileSync(path.join(__dirname, '..', 'routes', 'eventos.publicos.js'), 'utf8');
+const PUB_LIMPIO = PUB.replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+test('la rueda pública no reparte contactos que nadie autorizó', () => {
+  /* Aquí hay correos y teléfonos de personas. Filtrarlos en la pantalla los
+     dejaría viajando en la respuesta — y una respuesta se abre con la consola
+     del navegador. La comprobación va en el servidor o no va. */
+  const i = PUB_LIMPIO.indexOf("'/slug/:slug/rueda'");
+  assert.ok(i > 0, 'no existe la rueda pública');
+  const bloque = PUB_LIMPIO.slice(i, i + 4000);
+  assert.match(bloque, /m\.contacto_publico\s*\n?\s*\?/,
+    'el contacto sale sin comprobar `contacto_publico`');
+});
+
+test('la rueda pública no dice quién ocupa cada hora', () => {
+  /* Que la mesa esté llena a las diez es útil. Quién está sentado, no es de
+     nadie. */
+  const i = PUB_LIMPIO.indexOf("'/slug/:slug/rueda'");
+  const bloque = PUB_LIMPIO.slice(i, i + 4000);
+  assert.match(bloque, /libre: !tomados\.has\(h\.id\)/, 'no se dice qué horas quedan libres');
+  assert.ok(!/user_id/.test(bloque), 'la rueda pública está mandando quién reservó cada hora');
+});
+
+test('la rueda pública sólo enseña eventos publicados', () => {
+  const i = PUB_LIMPIO.indexOf("'/slug/:slug/rueda'");
+  const bloque = PUB_LIMPIO.slice(i, i + 1600);
+  assert.match(bloque, /estado !== 'publicado'/,
+    'un borrador enseñaría su rueda a cualquiera');
+});
+
+test('si falta la 0105, se dice; no se contesta una rueda vacía', () => {
+  /* Sin `rol`, PostgREST contesta con un error y no con una lista vacía. Sin
+     mirarlo, la rueda saldría vacía y nadie sabría por qué — es exactamente lo
+     que pasó con `zonas.tipo`. */
+  const i = PUB_LIMPIO.indexOf("'/slug/:slug/rueda'");
+  const bloque = PUB_LIMPIO.slice(i, i + 4000);
+  assert.match(bloque, /if \(error\)/, 'no se mira el error de la consulta');
+  assert.match(bloque, /0105/, 'el aviso no dice de qué migración depende');
+});
+
+test('la migración de la rueda deja el contacto APAGADO por defecto', () => {
+  /* Encender la publicación de contactos que nadie autorizó no se deshace:
+     una vez indexado, ya está fuera. */
+  const sql = fs.readFileSync(
+    path.join(__dirname, '..', 'db', 'migrations', '0105_rueda_publica_y_roles.sql'), 'utf8');
+  assert.match(sql, /contacto_publico boolean not null default false/i,
+    'el contacto se publicaría por defecto');
+  assert.match(sql, /rol text not null default 'comprador'/i);
+  assert.match(sql, /Rollback/);
+});

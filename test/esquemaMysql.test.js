@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DIR = path.join(__dirname, '..', 'db', 'migraciones');
+const RAIZ_DB = path.join(__dirname, '..', 'db');
 const sqls = fs.readdirSync(DIR).filter((f) => f.endsWith('.sql') && /^\d/.test(f));
 
 /* Sin comentarios: estos archivos EXPLICAN la sintaxis que no se puede usar, y
@@ -148,4 +149,31 @@ test('el generador es de sólo lectura', () => {
     assert.doesNotMatch(src, peligro,
       'el generador escribe en la base de origen: tiene que poder correrse sin miedo tantas veces como haga falta');
   }
+});
+
+/* ── La reescritura de URLs de Storage ────────────────────────────────────
+ *
+ * El día que los archivos dejen de servirse desde Supabase, cada URL guardada
+ * dentro de una fila tiene que cambiar de prefijo. Una columna que falte en
+ * esa lista es una imagen rota para siempre — y no avisa: la fila sigue ahí,
+ * con una dirección que ya no responde. */
+const REESCRIBIR = path.join(RAIZ_DB, 'migraciones', 'postgres', '001_reescribir_urls.sql');
+
+test('la reescritura cubre las columnas de imagen que se parecen entre sí', () => {
+  const src = fs.readFileSync(REESCRIBIR, 'utf8');
+  /* `eventos.gallery` está en inglés y `networking_expositores.galeria` en
+     español. Leyendo la lista, las dos se ven como «ya está esa» — y por eso
+     faltaba la segunda, con una imagen dentro. */
+  for (const col of ['gallery', 'galeria', 'logo_url', 'foto_url', 'avatar_url', 'cover_url', 'page_json']) {
+    assert.ok(src.includes(`SET ${col} =`), `la reescritura no toca \`${col}\``);
+  }
+});
+
+test('cada reescritura deja constancia de cuántas filas tocó', () => {
+  /* Sin el conteo, «se ejecutó sin error» y «cambió cero filas» se ven igual.
+     Es la comprobación que decide si se puede apagar el origen. */
+  const updates = (fs.readFileSync(REESCRIBIR, 'utf8').match(/UPDATE \w+ SET/g) || []).length;
+  const conteos = (fs.readFileSync(REESCRIBIR, 'utf8').match(/INSERT INTO _hechas/g) || []).length;
+  assert.equal(conteos, updates,
+    `${updates} reescrituras y ${conteos} conteos: alguna cambia filas sin dejar rastro`);
 });

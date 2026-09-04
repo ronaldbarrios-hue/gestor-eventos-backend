@@ -1,5 +1,5 @@
 -- 001_reescribir_urls.sql — cambiar el host de Supabase por el nuestro en las
--- 13 columnas donde la URL está guardada dentro de la fila.
+-- 14 columnas donde la URL está guardada dentro de la fila.
 --
 -- ⚠ Esto corre contra POSTGRES (Supabase), no contra MySQL. Va aparte por eso.
 --
@@ -107,7 +107,20 @@ WITH s AS (SELECT * FROM _sust), u AS (
    WHERE logo_url LIKE '%/storage/v1/object/public/%' RETURNING 1)
 INSERT INTO _hechas SELECT 'networking_expositores', 'logo_url', count(*), 1 FROM u;
 
--- ── Las cinco de JSON ─────────────────────────────────────────────────────
+-- `galeria`, no `gallery`. Faltaba, y el nombre es justo por qué: la lista se
+-- armó buscando columnas de imagen y `eventos.gallery` está en inglés mientras
+-- que la del expositor está en español. Al leer la lista los dos se ven como
+-- «ya está esa».
+--
+-- Medido el 4 de septiembre: 1 fila. Una sola imagen, en la galería de un
+-- stand — de las que nadie mira hasta que un expositor abre su página el día
+-- del evento y la ve rota.
+WITH s AS (SELECT * FROM _sust), u AS (
+  UPDATE networking_expositores SET galeria = replace(galeria::text, (SELECT viejo FROM s), (SELECT nuevo FROM s))::jsonb
+   WHERE galeria::text LIKE '%/storage/v1/object/public/%' RETURNING 1)
+INSERT INTO _hechas SELECT 'networking_expositores', 'galeria', count(*), 1 FROM u;
+
+-- ── Las de JSON ───────────────────────────────────────────────────────────
 -- Por texto y de vuelta. La URL puede estar a cualquier profundidad —`page_json`
 -- es el constructor de páginas y la imagen puede vivir en cualquier bloque—, así
 -- que no hay forma de llegar a ella por clave.

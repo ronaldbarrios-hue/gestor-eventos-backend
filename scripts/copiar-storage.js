@@ -10,7 +10,7 @@
  *    es pagar el trabajo dos veces. Por defecto sólo se traen los que alguien
  *    usa; `scripts/barrer-huerfanos.js` se lleva el resto.
  * 2. **Copiar conservando la ruta**, `carpeta/archivo` tal cual. Es lo que
- *    convierte la reescritura de las 13 columnas en un cambio de prefijo.
+ *    convierte la reescritura de las 14 columnas en un cambio de prefijo.
  * 3. **Servir las dos copias en paralelo** mientras dure la ventana. Las URLs
  *    viejas tienen que seguir respondiendo hasta que la reescritura esté
  *    verificada, o cada portada sin migrar es un hueco en una página pública.

@@ -1,9 +1,17 @@
 # Migraciones pendientes en Supabase
 
-**No queda ninguna.** Comprobado contra la base de producción el **2026-09-03**.
+**Quedan tres.** Comprobado contra la base de producción el **2026-09-03**, no
+contra las cabeceras de los archivos: ninguna de las nueve políticas de la 0097
+existe, `zonas.reglas` no está y `tickets.promocion_id` tampoco.
+
+Van **en orden**. La 0099 depende de que `promociones` exista — existe, con una
+fila ya creada, que es exactamente el código que hoy no descuenta nada.
 
 | Nº | Qué hace | Estado |
 |---|---|---|
+| 0097 | Políticas RLS para las 23 tablas que tenían la puerta cerrada y ninguna llave | ⛔ **pendiente** |
+| 0098 | Las reglas de la puerta se mudan con ella (`zonas.reglas`) | ⛔ **pendiente** |
+| 0099 | Que el código de descuento llegue al cobro | ⛔ **pendiente** |
 | 0092 | Las zonas dejan `page_json` (paso 3 de 3) | ✅ aplicada el 2026-09-03 |
 | 0093 | Un tipo de boleta declara qué crea al pagarse | ✅ aplicada el 2026-09-03 |
 | 0094 | Una zona declara qué es (evento / ingreso / evacuación / otra) | ✅ aplicada el 2026-09-03 |
@@ -14,6 +22,21 @@ Este archivo se mantiene al día **a propósito**. Una lista de pendientes que
 miente entrena a no creerla, y entonces el día que una haga falta de verdad,
 nadie la cree. Ya pasó en este repo: siete migraciones decían «PENDIENTE DE
 APLICAR» en su cabecera y cinco estaban aplicadas.
+
+## Qué pasa si NO se corren
+
+Ninguna de las tres rompe nada por esperar, y las tres dejan algo a medias:
+
+- **0097** — hoy no hay fuga: RLS sin políticas deniega todo y el backend entra
+  con la service key. Lo que falla es el día que alguien consulte desde el
+  navegador: lista vacía **sin error**, y una tarde perdida buscándolo en el
+  código.
+- **0098** — una puerta vive en dos sitios: su nombre y su sitio en la tabla,
+  sus reglas en `page_json`. El que se quede atrás será el que decide quién
+  entra.
+- **0099** — las promociones se siguen creando y **siguen sin descontar**, que
+  es exactamente lo de hoy. El código nuevo cae al precio de lista si la
+  columna no está.
 
 ## Lo que se aprendió corriéndolas, y hay que respetar la próxima vez
 

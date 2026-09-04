@@ -1,17 +1,13 @@
 # Migraciones pendientes en Supabase
 
-**Quedan tres.** Comprobado contra la base de producción el **2026-09-03**, no
-contra las cabeceras de los archivos: ninguna de las nueve políticas de la 0097
-existe, `zonas.reglas` no está y `tickets.promocion_id` tampoco.
-
-Van **en orden**. La 0099 depende de que `promociones` exista — existe, con una
-fila ya creada, que es exactamente el código que hoy no descuenta nada.
+**No queda ninguna.** Comprobado contra la base de producción el
+**2026-09-03**, y contra la base, no contra las cabeceras de los archivos.
 
 | Nº | Qué hace | Estado |
 |---|---|---|
-| 0097 | Políticas RLS para las 23 tablas que tenían la puerta cerrada y ninguna llave | ⛔ **pendiente** |
-| 0098 | Las reglas de la puerta se mudan con ella (`zonas.reglas`) | ⛔ **pendiente** |
-| 0099 | Que el código de descuento llegue al cobro | ⛔ **pendiente** |
+| 0097 | Políticas RLS para las tablas que tenían la puerta cerrada y ninguna llave | ✅ aplicada el 2026-09-03 |
+| 0098 | Las reglas de la puerta se mudan con ella (`zonas.reglas`) | ✅ aplicada el 2026-09-03 |
+| 0099 | Que el código de descuento llegue al cobro | ✅ aplicada el 2026-09-03 |
 | 0092 | Las zonas dejan `page_json` (paso 3 de 3) | ✅ aplicada el 2026-09-03 |
 | 0093 | Un tipo de boleta declara qué crea al pagarse | ✅ aplicada el 2026-09-03 |
 | 0094 | Una zona declara qué es (evento / ingreso / evacuación / otra) | ✅ aplicada el 2026-09-03 |
@@ -23,20 +19,20 @@ miente entrena a no creerla, y entonces el día que una haga falta de verdad,
 nadie la cree. Ya pasó en este repo: siete migraciones decían «PENDIENTE DE
 APLICAR» en su cabecera y cinco estaban aplicadas.
 
-## Qué pasa si NO se corren
+## Lo que quedó comprobado al aplicarlas
 
-Ninguna de las tres rompe nada por esperar, y las tres dejan algo a medias:
-
-- **0097** — hoy no hay fuga: RLS sin políticas deniega todo y el backend entra
-  con la service key. Lo que falla es el día que alguien consulte desde el
-  navegador: lista vacía **sin error**, y una tarde perdida buscándolo en el
-  código.
-- **0098** — una puerta vive en dos sitios: su nombre y su sitio en la tabla,
-  sus reglas en `page_json`. El que se quede atrás será el que decide quién
-  entra.
-- **0099** — las promociones se siguen creando y **siguen sin descontar**, que
-  es exactamente lo de hoy. El código nuevo cae al precio de lista si la
-  columna no está.
+- **0097** — las 9 políticas nombradas y las del bucle están puestas. Quedan
+  **ocho** tablas con RLS y sin política, y son exactamente las ocho que el
+  archivo deja cerradas a propósito: `cobros_vacantes`, `email_cola`,
+  `evento_smtp`, `oauth_clients`, `oauth_codes`, `oauth_tokens`,
+  `organizador_conexiones`, `recordatorio_inapp_log`. Ninguna de más.
+- **0098** — `zonas.reglas` existe y la puerta «entrada inicial» salió con sus
+  `tipos` y su `staff`, los mismos que tenía en `page_json.accesos`. El JSON
+  sigue intacto: esto sólo copió.
+- **0099** — `promocion_id` en las dos tablas y la función
+  `promocion_consumir`. Ojo: **fusionar no es desplegar**. El descuento no
+  empieza a aplicarse hasta que la API sirva el código nuevo; hasta entonces
+  cae al precio de lista, sin error.
 
 ## Lo que se aprendió corriéndolas, y hay que respetar la próxima vez
 

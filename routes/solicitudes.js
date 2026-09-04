@@ -12,11 +12,32 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificar } = require('../lib/notificar.js');
 
-const { sesion } = require('../core/permisos');
+const { sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-const TIPOS   = ['sugerencia', 'solicitud', 'mensaje', 'reporte'];
+const TIPOS   = ['sugerencia', 'solicitud', 'mensaje', 'reporte', 'cambio'];
+
+/* Los campos de la ficha de equipo que alguien puede pedir que le cambien.
+ *
+ * ── Por qué una lista blanca y por qué vive aquí ─────────────────────────
+ *
+ * Sin ella, `campo` viaja desde el navegador y acaba en un `update` — o sea,
+ * cualquiera del equipo podría pedir que le cambien `status` a 'active' o
+ * `custom_permissions` a lo que quisiera, y bastaría con que quien organiza
+ * pulsara «aplicar» sin leer.
+ *
+ * Vive en el código y no en la base porque la comprobación depende de QUIÉN
+ * pide y sobre qué evento, y eso una restricción de columna no lo sabe.
+ *
+ * `rol` es la etiqueta de texto —cómo se llama el puesto— y NO `rol_id`, que
+ * es el rol de verdad con sus permisos. Ese no se pide: se concede. La
+ * diferencia importa porque el segundo cambia lo que la persona puede tocar.
+ */
+const CAMPOS_PEDIBLES = {
+  nombre_invitado: 'Cómo aparece tu nombre',
+  rol            : 'El nombre de tu puesto',
+};
 const ESTADOS = ['abierta', 'en_revision', 'resuelta', 'descartada'];
 
 /* owner OR miembro activo */
@@ -35,9 +56,15 @@ async function assertAccess(eventoId, userId) {
 /* ── GET /me/equipo/eventos ───────────────────────────────── */
 router.get('/me/equipo/eventos', sesion("Los eventos donde ESTA persona es miembro del equipo."), async (req, res) => {
   /* Eventos donde soy miembro activo */
+  /* La ficha ENTERA, no sólo el nombre del rol.
+     *
+     * Antes se pedía `rol` y ya: quien colabora veía una etiqueta y no sabía
+     * qué podía hacer ni cómo figuraba su nombre en las listas y en la
+     * escarapela. «Ver toda la información» empieza por mandarla. */
   const { data: miembros, error } = await supabase
     .from('event_members')
-    .select('rol, evento:eventos!evento_id(id, titulo, slug, estado, fecha_inicio, owner_id, deleted_at)')
+    .select(`id, rol, nombre_invitado, email, ${SELECT_PERMISOS},
+             evento:eventos!evento_id(id, titulo, slug, estado, fecha_inicio, owner_id, deleted_at)`)
     .eq('user_id', req.user.id)
     .eq('status', 'active');
   if (error) return res.status(500).json({ error: error.message });
@@ -45,7 +72,23 @@ router.get('/me/equipo/eventos', sesion("Los eventos donde ESTA persona es miemb
   const mapa = new Map();
   for (const m of miembros || []) {
     if (m.evento && !m.evento.deleted_at) {
-      mapa.set(m.evento.id, { ...m.evento, mi_rol: m.rol });
+      mapa.set(m.evento.id, {
+        ...m.evento,
+        mi_rol: m.rol,
+        /* La ficha tal y como la ve quien organiza, para poder pedir que se
+           corrija lo que esté mal. `miembro_id` va porque es lo que identifica
+           la fila que se cambiaría. */
+        mi_ficha: {
+          miembro_id     : m.id,
+          rol            : m.rol,
+          nombre_invitado: m.nombre_invitado,
+          email          : m.email,
+          rol_nombre     : m.rol_detail?.nombre || null,
+          /* Los del rol MÁS los sueltos, resueltos aquí: quien mira su ficha
+             quiere saber qué puede hacer, no de dónde le viene cada permiso. */
+          permisos       : [...permisosDeMiembro(m)],
+        },
+      });
     }
   }
 
@@ -153,18 +196,42 @@ router.get('/eventos/:eventoId/solicitudes', sesion('Es del equipo del evento: l
 
 /* ── POST /eventos/:eventoId/solicitudes ──────────────────── */
 router.post('/eventos/:eventoId/solicitudes', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto.'), async (req, res) => {
-  const { tipo, titulo, contenido } = req.body || {};
+  const { tipo, titulo, contenido, cambio } = req.body || {};
   if (!contenido?.trim()) return res.status(400).json({ error: 'El contenido es requerido.' });
   try {
     const { ev } = await assertAccess(req.params.eventoId, req.user.id);
+
+    /* Una solicitud de cambio lleva el cambio dentro, y se comprueba aquí:
+       el campo tiene que estar en la lista blanca y el valor tiene que ser
+       texto. Si no encaja, se guarda como solicitud normal en vez de
+       rechazarla — lo que la persona escribió no se pierde por un campo mal
+       puesto, y quien organiza lo lee igual. */
+    let filaCambio = null;
+    let tipoFinal = TIPOS.includes(tipo) ? tipo : 'sugerencia';
+    if (tipoFinal === 'cambio') {
+      const campo = String(cambio?.campo || '');
+      const propuesto = typeof cambio?.valor_propuesto === 'string' ? cambio.valor_propuesto.trim() : '';
+      if (!CAMPOS_PEDIBLES[campo] || !propuesto) {
+        tipoFinal = 'solicitud';
+      } else {
+        filaCambio = {
+          campo,
+          etiqueta       : CAMPOS_PEDIBLES[campo],
+          valor_actual   : typeof cambio.valor_actual === 'string' ? cambio.valor_actual : null,
+          valor_propuesto: propuesto.slice(0, 200),
+        };
+      }
+    }
+
     const { data, error } = await supabase
       .from('event_requests')
       .insert({
         evento_id: ev.id,
         autor_id : req.user.id,
-        tipo     : TIPOS.includes(tipo) ? tipo : 'sugerencia',
+        tipo     : tipoFinal,
         titulo   : titulo?.trim() || null,
         contenido: contenido.trim(),
+        cambio   : filaCambio,
       })
       .select('*, autor:profiles!autor_id(id, nombre, avatar_url)')
       .single();
@@ -194,7 +261,47 @@ router.patch('/eventos/:eventoId/solicitudes/:id', sesion('Es del equipo del eve
     const updates = { updated_at: new Date().toISOString() };
     if (req.body.estado && ESTADOS.includes(req.body.estado)) updates.estado = req.body.estado;
     if ('respuesta' in req.body) updates.respuesta = req.body.respuesta || null;
-    if (Object.keys(updates).length === 1) return res.status(400).json({ error: 'Sin cambios válidos.' });
+    if (Object.keys(updates).length === 1 && !req.body.aplicar) {
+      return res.status(400).json({ error: 'Sin cambios válidos.' });
+    }
+
+    /* Aplicar el cambio pedido.
+     *
+     * Va ANTES de tocar la solicitud: si la escritura en `event_members`
+     * falla, la solicitud se queda abierta y se puede reintentar. Al revés
+     * quedaría marcada como resuelta con el cambio sin hacer — y nadie
+     * volvería a mirarla.
+     *
+     * Se vuelve a comprobar la lista blanca aquí. El `cambio` se guardó
+     * validado, pero entre que se pidió y se aprueba puede haber pasado un
+     * despliegue que quite un campo de la lista, y aplicar algo que ya no se
+     * acepta por venir de una fila vieja es la puerta de atrás clásica. */
+    if (req.body.aplicar) {
+      const { data: sol } = await supabase
+        .from('event_requests')
+        .select('id, tipo, cambio, autor_id, estado')
+        .eq('id', req.params.id).eq('evento_id', ev.id).maybeSingle();
+
+      if (!sol) return res.status(404).json({ error: 'No encontrada.' });
+      if (sol.tipo !== 'cambio' || !sol.cambio?.campo) {
+        return res.status(400).json({ error: 'Esta solicitud no lleva ningún cambio que aplicar.' });
+      }
+      if (sol.cambio.aplicado_at) {
+        return res.status(409).json({ error: 'Ese cambio ya se aplicó.' });
+      }
+      if (!CAMPOS_PEDIBLES[sol.cambio.campo]) {
+        return res.status(400).json({ error: `«${sol.cambio.campo}» ya no es un campo que se pueda cambiar así.` });
+      }
+
+      const { error: eApl } = await supabase
+        .from('event_members')
+        .update({ [sol.cambio.campo]: sol.cambio.valor_propuesto })
+        .eq('evento_id', ev.id).eq('user_id', sol.autor_id);
+      if (eApl) return res.status(500).json({ error: `No se pudo aplicar: ${eApl.message}` });
+
+      updates.cambio = { ...sol.cambio, aplicado_at: new Date().toISOString() };
+      if (!updates.estado) updates.estado = 'resuelta';
+    }
 
     const { data, error } = await supabase
       .from('event_requests')

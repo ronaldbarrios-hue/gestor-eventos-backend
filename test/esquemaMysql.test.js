@@ -107,3 +107,45 @@ test('los procedimientos de usar y tirar se tiran', () => {
     assert.ok(borrados >= 2, `${p} se queda en la base del cliente después de correr el archivo`);
   }
 });
+
+/* ── El generador de cuentas ──────────────────────────────────────────────
+ *
+ * No es un archivo de datos: es una consulta que se corre en Supabase y cuya
+ * salida se pega en `gestek_auth`. Va aparte porque ahí dentro van hashes de
+ * contraseña, y un archivo con hashes se queda en el repositorio, en el
+ * historial de git y en el portapapeles de quien lo abra. */
+const GEN = path.join(DIR, 'generar-usuarios-mysql.sql');
+
+test('el generador de cuentas no lleva ni un dato dentro', () => {
+  const src = fs.readFileSync(GEN, 'utf8');
+  assert.doesNotMatch(src, /\$2[aby]\$\d\d\$/,
+    'hay un hash bcrypt escrito en el archivo: eso no puede vivir en el repositorio');
+  assert.doesNotMatch(sinComentarios(src), /^\s*INSERT\s+IGNORE\s+INTO\s+usuarios\s+\(id[^']*\)\s*VALUES\s*\('/im,
+    'hay filas de datos escritas a mano: esto tiene que generarlas, no traerlas');
+});
+
+test('el generador escapa las barras invertidas, que MySQL sí interpreta', () => {
+  /* Postgres lee `\` dentro de una cadena como una barra y ya; MySQL la lee
+     como un escape y se la come. Sin duplicarlas, un nombre o un JSON con una
+     barra dentro llegan distintos a los dos lados — y el fallo sale en una
+     fila de mil, que es la peor forma de descubrirlo. */
+  const src = sinComentarios(fs.readFileSync(GEN, 'utf8'));
+  const valores = src.match(/quote_literal\([^)]*\)/g) || [];
+  assert.ok(valores.length >= 5, `sólo ${valores.length} valores citados: la consulta cambió de forma`);
+
+  /* Los que vienen de texto libre son los que pueden traer una barra. Las
+     fechas y los uuid no. */
+  for (const campo of ['u.email', 'u.encrypted_password', 'raw_user_meta_data', 'i.provider_id', 'i.email']) {
+    const linea = src.split('\n').find((l) => l.includes(campo));
+    assert.ok(linea && /replace\(/.test(linea),
+      `\`${campo}\` viaja sin escapar las barras invertidas`);
+  }
+});
+
+test('el generador es de sólo lectura', () => {
+  const src = sinComentarios(fs.readFileSync(GEN, 'utf8'));
+  for (const peligro of [/\bdelete\s+from\b/i, /\bupdate\s+\w+\s+set\b/i, /\bdrop\s+/i, /\btruncate\b/i]) {
+    assert.doesNotMatch(src, peligro,
+      'el generador escribe en la base de origen: tiene que poder correrse sin miedo tantas veces como haga falta');
+  }
+});

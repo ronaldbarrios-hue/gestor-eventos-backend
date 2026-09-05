@@ -807,13 +807,25 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
       ? await supabase.from('networking_horarios').select('id, expositor_id, inicio, fin').in('expositor_id', ids).order('inicio', { ascending: true })
       : { data: [] };
 
-    const { data: citas } = await supabase
+    /* El error SE MIRA. Antes no: la consulta fallaba por la relacion que no
+       existe, `citas` volvia null, y la pantalla pintaba todas las casillas
+       libres. Una agenda llena que se ve vacia es peor que un error. */
+    const { data: citas, error: eCitas } = await supabase
       .from('networking_citas')
-      .select('id, horario_id, estado, usuario:profiles!user_id(nombre, email)')
+      .select('id, horario_id, estado, user_id, guest_email, guest_nombre')
       .eq('evento_id', eventoId)
       .eq('estado', 'confirmada');
+    if (eCitas) return res.status(500).json({ error: eCitas.message });
 
-    const citaPorHorario = new Map((citas || []).map(c => [c.horario_id, c]));
+    const personas = await personasDeLasCitas(citas);
+    const citaPorHorario = new Map((citas || []).map(c => [
+      c.horario_id,
+      {
+        ...c,
+        usuario: personas.get(c.user_id)
+          || (c.guest_email ? { nombre: c.guest_nombre || null, email: c.guest_email } : null),
+      },
+    ]));
     const resultado = (expositores || []).map(exp => ({
       ...exp,
       horarios: (horarios || []).filter(h => h.expositor_id === exp.id).map(h => ({
@@ -844,13 +856,42 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
 const ESTADOS_CITA = ['solicitada', 'confirmada', 'cancelada', 'realizada'];
 
 /* GET /eventos/:eventoId/networking/citas — la parrilla completa. */
+/* ── Quién es cada persona de una cita ─────────────────────────────────
+ *
+ * NO se puede pedir con un `profiles!user_id(...)` dentro del select, y esto
+ * costó una pantalla entera: `networking_citas.user_id` apunta a
+ * `auth.users`, no a `public.profiles` —comprobado en produccion—, asi que
+ * PostgREST no encuentra la relacion y contesta:
+ *
+ *   Could not find a relationship between 'networking_citas' and 'profiles'
+ *
+ * En la parrilla eso salia en la cara. En la vista de gestion era peor: el
+ * error no se miraba, `citas` volvia null, y TODAS las casillas se pintaban
+ * libres — una agenda llena que se ve vacia.
+ *
+ * Se resuelve con una segunda consulta y un mapa. Es una consulta mas y a
+ * cambio no depende de una relacion que la base no declara.
+ */
+async function personasDeLasCitas(citas) {
+  const ids = [...new Set((citas || []).map(c => c.user_id).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const { data, error } = await supabase
+    .from('profiles').select('id, nombre, email, avatar_url').in('id', ids);
+  if (error) {
+    /* Sin los nombres la parrilla sigue sirviendo —las casillas ocupadas se
+       ven igual—, asi que se avisa y se sigue en vez de tumbar la pantalla. */
+    console.warn('[networking] no se pudieron cargar las personas de las citas:', error.message);
+    return new Map();
+  }
+  return new Map((data || []).map(p => [p.id, p]));
+}
+
 router.get('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const { data, error } = await supabase
     .from('networking_citas')
     .select(`
-      id, estado, notas, nota_gestor, creada_por, created_at, user_id,
-      persona:profiles!user_id(id, nombre, email, avatar_url),
+      id, estado, notas, nota_gestor, creada_por, created_at, user_id, guest_email, guest_nombre,
       horario:networking_horarios!horario_id(id, inicio, fin,
         expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
     `)
@@ -870,9 +911,16 @@ router.get('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, 
   /* `notas` viaja porque el equipo necesita saber si la reunión dejó algo
      escrito, pero se manda RECORTADA: son apuntes personales sobre con quién
      se habló y qué pareció. La parrilla es para operar, no para leerlos. */
+  const personas = await personasDeLasCitas(citas);
+
   res.json({
     citas: citas.map((c) => ({
       ...c,
+      /* Con cuenta o sin ella, la parrilla enseña UNA persona. Sin este
+         respaldo, a quien el equipo sentó por correo se le veía la casilla
+         ocupada y el nombre en blanco: imposible saber a quién llamar. */
+      persona: personas.get(c.user_id)
+        || (c.guest_email ? { nombre: c.guest_nombre || null, email: c.guest_email, sin_cuenta: true } : null),
       notas: c.notas ? `${c.notas.slice(0, 140)}${c.notas.length > 140 ? '…' : ''}` : null,
       tiene_notas: Boolean(c.notas),
     })),
@@ -992,8 +1040,57 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
  */
 router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
-  const { horario_id, user_id } = req.body || {};
-  if (!horario_id || !user_id) return res.status(400).json({ error: 'Falta el horario o la persona.' });
+  const { horario_id } = req.body || {};
+  if (!horario_id) return res.status(400).json({ error: 'Falta el horario.' });
+
+  /* ── A quién se sienta: una cuenta, o un correo ──────────────────────
+   *
+   * Pedir `user_id` obligaba a que esa persona YA tuviera cuenta en GESTEK, y
+   * la mayoria de quien compra una boleta no la tiene: la compra es anonima a
+   * proposito y lo unico que queda de ella es su correo en la boleta. Con esa
+   * regla, armar la agenda a mano —que es como funcionan muchas ruedas— era
+   * imposible para casi todos los asistentes.
+   *
+   * Si el correo tiene cuenta, se guarda como cuenta: asi esa persona ve la
+   * cita en «Mis citas» al entrar, que es mejor que tener dos agendas para el
+   * mismo humano. */
+  const correo = String(req.body?.email || '').trim().toLowerCase();
+  let user_id = req.body?.user_id || null;
+  let guest_email = null;
+  let guest_nombre = req.body?.nombre ? String(req.body.nombre).trim().slice(0, 120) : null;
+
+  if (!user_id) {
+    if (!correo.includes('@')) {
+      return res.status(400).json({ error: 'Escribe el correo de la persona, o elígela de la lista.' });
+    }
+
+    /* Tiene que ir al evento. Sin esta comprobacion se podria sentar a
+       cualquier correo del mundo en una mesa, y quien llega a la puerta no
+       tiene boleta: la mesa se queda vacia y el hueco ya no se puede dar a
+       otro. */
+    const { data: boleta, error: eB } = await supabase
+      .from('tickets')
+      .select('id, guest_nombre, user_id')
+      .eq('evento_id', eventoId)
+      .eq('guest_email', correo)
+      .limit(1).maybeSingle();
+    if (eB) return res.status(500).json({ error: eB.message });
+
+    const { data: perfil } = await supabase
+      .from('profiles').select('id, nombre').eq('email', correo).maybeSingle();
+
+    if (!boleta && !perfil) {
+      return res.status(404).json({
+        error: `Nadie con el correo ${correo} está registrado en este evento. Revisa el correo, o emítele una boleta primero desde Asistentes.`,
+      });
+    }
+
+    if (perfil?.id) user_id = perfil.id;
+    else {
+      guest_email = correo;
+      guest_nombre = guest_nombre || boleta?.guest_nombre || null;
+    }
+  }
 
   const { data: h } = await supabase
     .from('networking_horarios')
@@ -1006,7 +1103,7 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
   const { data, error } = await supabase
     .from('networking_citas')
     .insert({
-      horario_id, evento_id: eventoId, user_id,
+      horario_id, evento_id: eventoId, user_id, guest_email, guest_nombre,
       /* Puesta por el equipo: nace confirmada. Pedirle a alguien que apruebe
          una cita que le acaban de poner sería devolverle el trabajo. */
       estado: 'confirmada',
@@ -1026,7 +1123,7 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
        la cita anterior. */
     const { data: revividas } = await supabase
       .from('networking_citas')
-      .update({ user_id, estado: 'confirmada', creada_por: req.user.id, notas: null, nota_gestor: null })
+      .update({ user_id, guest_email, guest_nombre, estado: 'confirmada', creada_por: req.user.id, notas: null, nota_gestor: null })
       .eq('horario_id', horario_id)
       .eq('estado', 'cancelada')
       .select('id, estado');
@@ -1036,11 +1133,16 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
     creada = revividas[0];
   }
 
-  notificar({
-    userId: user_id, tipo: 'networking', titulo: 'Te agendaron una cita',
-    cuerpo: 'Míralo en la rueda de negocios del evento.',
-    link: `/explorar/${eventoId}/networking`, eventoId,
-  });
+  /* El aviso interno sólo llega a quien tiene cuenta: es una notificación
+     dentro de GESTEK. A quien se sentó por correo se le avisa por correo, que
+     es el único canal que tiene. */
+  if (user_id) {
+    notificar({
+      userId: user_id, tipo: 'networking', titulo: 'Te agendaron una cita',
+      cuerpo: 'Míralo en la rueda de negocios del evento.',
+      link: `/explorar/${eventoId}/networking`, eventoId,
+    });
+  }
 
   res.status(201).json({ cita: creada });
 });

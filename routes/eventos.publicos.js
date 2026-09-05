@@ -951,9 +951,33 @@ router.get('/slug/:slug/ranking', async (req, res) => {
    cupo es tuyo hasta las 19:40" en vez de dejar que la persona rellene el
    formulario entero y se entere al final de que llegó tarde. No devuelve el
    correo ni el nombre de nadie: sólo si vale, para qué boleta y hasta cuándo. */
+/* Por qué no vale, cuando no vale.
+ *
+ * Antes esto era un único `valida: false` y la página contestaba lo mismo a
+ * tres personas muy distintas — entre ellas, a quien YA COMPRÓ con ese enlace:
+ * se le decía «sigues en la fila, si se libera otro te avisamos», y esa
+ * persona se queda esperando un correo que no va a llegar porque ya tiene su
+ * boleta. Decirlo mal es peor que no decir nada.
+ *
+ * Se puede distinguir porque `consumirOferta` ya no borra el token: la fila
+ * sigue ahí, con su estado. No se devuelve ni el correo ni el nombre — sólo el
+ * motivo, que es lo que la pantalla necesita para escribir una frase cierta. */
+async function porQueNoVale(token) {
+  if (!token || typeof token !== 'string') return 'desconocido';
+  const { data } = await supabase
+    .from('event_waitlist')
+    .select('estado, oferta_expira')
+    .eq('oferta_token', token)
+    .maybeSingle();
+  if (!data) return 'desconocido';
+  if (data.estado === 'purchased') return 'ya_usado';
+  if (data.estado === 'contacted') return 'vencido';   // sigue siendo suya, pero pasó el plazo
+  return 'paso_al_siguiente';                          // 'expired' / 'active': el barrido ya la movió
+}
+
 router.get('/cupo/:token', async (req, res) => {
   const oferta = await validarOferta(req.params.token);
-  if (!oferta) return res.json({ valida: false });
+  if (!oferta) return res.json({ valida: false, motivo: await porQueNoVale(req.params.token) });
 
   const { data: tipo } = await supabase
     .from('ticket_types').select('id, nombre').eq('id', oferta.ticket_type_id).maybeSingle();

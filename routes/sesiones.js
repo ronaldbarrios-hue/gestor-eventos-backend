@@ -253,6 +253,41 @@ publico.post('/slug/:slug/sesiones/:sesionId/inscribir', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
+  /* El cupo, comprobado OTRA VEZ y ahora de verdad.
+   *
+   * La comprobación de arriba lee el contador y después inserta, y entre las
+   * dos cosas cabe otra inscripción: dos personas que pulsan a la vez por la
+   * última plaza pasan las dos. En un taller eso son dos sillas para una, y se
+   * descubre en la puerta del taller.
+   *
+   * Aquí ya se puede decidir sin ambigüedad: el disparador
+   * `trg_sync_inscritos_sesion` mantiene el contador, así que después de mi
+   * `insert` la fila existe y se puede contar CUÁNTAS entraron antes que la
+   * mía. Si antes que yo ya había tantas como plazas, el que sobra soy yo — y
+   * el criterio es el mismo para las dos peticiones que compiten, así que
+   * exactamente una se queda.
+   *
+   * Se deshace la propia inscripción y se contesta lo mismo que si se hubiera
+   * llegado tarde por un segundo, que es lo que pasó. */
+  if (sesion.cupo != null) {
+    const { count: antesQueYo, error: eCuenta } = await supabase
+      .from('sesion_inscripciones')
+      .select('id', { count: 'exact', head: true })
+      .eq('session_id', sesion.id)
+      .neq('estado', 'cancelada')
+      .lt('created_at', inscripcion.created_at);
+
+    /* Si no se puede contar, se deja la inscripción: perder una plaza por una
+       consulta que falló es peor que arriesgar una de más, y esto ya pasó el
+       control de arriba. Queda en el log. */
+    if (eCuenta) {
+      console.error(`[sesiones] no se pudo confirmar el cupo de ${sesion.id}: ${eCuenta.message}`);
+    } else if ((antesQueYo || 0) >= sesion.cupo) {
+      await supabase.from('sesion_inscripciones').delete().eq('id', inscripcion.id);
+      return res.status(409).json({ error: 'Este sub-evento ya está lleno.' });
+    }
+  }
+
   /* Constancia de aceptación (0069). Mejor esfuerzo, después de inscribir. */
   anotarConstancia('sesion_inscripciones', inscripcion.id, evento.id, req.body?.legal_aceptado);
 

@@ -63,3 +63,34 @@ test('la firma del proveedor se sigue comprobando', () => {
   assert.match(wompi, /if \(!verificarEvento\(req\.body, owner\?\.wompi_events_secret\)\)/,
     'el webhook de Wompi dejó de verificar el checksum del proveedor');
 });
+
+/* ── La misma clase de fallo, en las otras dos puertas ──────────────────── */
+
+test('la boleta se marca «usada» con cerradura, no con un `if` previo', () => {
+  /* En un evento hay VARIAS puertas escaneando a la vez, y encima la cola sin
+     conexión se vacía sola al volver la red. Dos escaneos del mismo QR leían
+     los dos «pagado», los dos pasaban, y fallaba justo lo que este control
+     existe para impedir: la misma boleta entrando dos veces sin que nadie se
+     entere. Y de paso, dos ingresos contados y los puntos de asistencia
+     pagados dos veces. */
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'clientes.js'), 'utf8');
+  assert.match(src, /\.eq\('id', ticket\.id\)\s*\n\s*\.neq\('estado', 'usado'\)/,
+    'el check-in volvió a marcar «usada» sin condición: dos escáneres a la vez dejarían entrar dos veces');
+  assert.match(src, /if \(!marcadas \|\| marcadas\.length === 0\) \{/,
+    'no se mira si el update tocó alguna fila');
+  assert.match(src, /ya_usada: true,[\s\S]{0,200}\}\);\s*\n\s*\}\s*\n\s*const updated = marcadas\[0\]/,
+    'el segundo escaneo ya no cae en el mismo 409 de «ya fue usada»');
+});
+
+test('el cupo de un sub-evento se confirma DESPUÉS de insertar', () => {
+  /* Leer el contador y después insertar deja pasar a dos personas por la
+     última plaza. En un taller eso son dos sillas para una, y se descubre en
+     la puerta del taller.
+     Comprobado en Postgres: con una plaza libre y dos compitiendo, se queda
+     exactamente una. */
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'sesiones.js'), 'utf8');
+  assert.match(src, /\.lt\('created_at', inscripcion\.created_at\)/,
+    'ya no se cuenta cuántas entraron antes: no hay forma de decidir quién sobra');
+  assert.match(src, /await supabase\.from\('sesion_inscripciones'\)\.delete\(\)\.eq\('id', inscripcion\.id\)/,
+    'la inscripción que se pasa del cupo ya no se deshace');
+});

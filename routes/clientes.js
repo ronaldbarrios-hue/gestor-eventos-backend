@@ -738,13 +738,45 @@ router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la 
       advertencia = `Esta boleta (${ticket.tipo?.nombre || 'sin tipo'}) no corresponde a ${puerta.nombre}.`;
     }
 
-    const { data: updated, error: e2 } = await supabase
+    /* La marca de «usada» es la CERRADURA, no el `if` de arriba.
+     *
+     * Entre leer el estado y escribirlo cabe otro escaneo, y aquí eso pasa de
+     * verdad: en un evento hay VARIAS PUERTAS escaneando a la vez, y encima la
+     * cola sin conexión se vacía sola cuando vuelve la red. Dos escaneos del
+     * mismo QR leerían los dos «pagado», los dos pasarían el control, y
+     * entonces falla justo lo que este control existe para impedir: la misma
+     * boleta entrando dos veces sin que nadie se entere. Además contaría dos
+     * ingresos y pagaría dos veces los puntos de asistencia.
+     *
+     * Con `.neq('estado','usado')` dentro del propio `update`, comparar y
+     * escribir son una sola operación en la base: el segundo escaneo no
+     * encuentra fila y cae al mismo 409 de «ya fue usada» que habría visto si
+     * hubiera llegado un segundo después. */
+    const { data: marcadas, error: e2 } = await supabase
       .from('tickets')
       .update({ estado: 'usado', checked_in_at: checkinAt, acceso: puerta?.nombre || null })
       .eq('id', ticket.id)
-      .select(`*, tipo:ticket_types!ticket_type_id(nombre)`)
-      .single();
+      .neq('estado', 'usado')
+      .select(`*, tipo:ticket_types!ticket_type_id(nombre)`);
     if (e2) return res.status(500).json({ error: e2.message });
+
+    if (!marcadas || marcadas.length === 0) {
+      /* Otro escáner llegó primero, por milisegundos. Se contesta lo mismo que
+         si hubiera llegado antes: quien está en la puerta necesita el mismo
+         aviso, no un error raro. Se relee para poder decir a qué hora entró. */
+      const { data: yaEstaba } = await supabase
+        .from('tickets')
+        .select(`*, tipo:ticket_types!ticket_type_id(nombre)`)
+        .eq('id', ticket.id).maybeSingle();
+      return res.status(409).json({
+        error: 'Esta boleta ya fue usada.',
+        ticket: yaEstaba || ticket,
+        sound: 'error',
+        ya_usada: true,
+        checked_in_at: yaEstaba?.checked_in_at || null,
+      });
+    }
+    const updated = marcadas[0];
 
     /* Gamificación escopada por organizador (best-effort) */
     const organizadorId = evCtx?.owner_id;

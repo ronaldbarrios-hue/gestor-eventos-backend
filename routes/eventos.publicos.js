@@ -17,7 +17,7 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
    El servidor es la autoridad, pero sólo si sirve lo que guarda. */
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
-const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { conSitio } = require('../lib/eventoSitio.js');
 const { bloqueDeSeccion } = require('../lib/bloquesLanding.js');
 const {
@@ -1327,7 +1327,12 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     .select()
     .single();
 
-  if (e3) return res.status(500).json({ error: e3.message });
+  if (e3) {
+    /* La oferta ya se tomo y la boleta no salio: se devuelve, o esa
+       persona se queda sin sitio Y sin boleta. */
+    if (ofertaMia) await devolverOferta(ofertaMia.id);
+    return res.status(500).json({ error: e3.message });
+  }
 
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);

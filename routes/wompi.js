@@ -13,7 +13,7 @@ const { signTicketQR } = require('../lib/qr.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { checkoutUrl, verificarEvento } = require('../lib/wompi.js');
 const { confirmarTicketPagado } = require('../lib/confirmarTicket.js');
-const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 
 const { sesion, publica } = require('../core/permisos');
@@ -158,7 +158,12 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
     codigo, estado: 'emitido', promocion_id: cotiz.promocion?.id || null,
     respuestas: Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
   }).select().single();
-  if (eT) return res.status(500).json({ error: eT.message });
+  if (eT) {
+    /* La oferta ya se tomo y la boleta no salio: se devuelve, o esa
+       persona se queda sin sitio Y sin boleta. */
+    if (ofertaMiaW) await devolverOferta(ofertaMiaW.id);
+    return res.status(500).json({ error: eT.message });
+  }
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
 

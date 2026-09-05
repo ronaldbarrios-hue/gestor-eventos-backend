@@ -128,3 +128,25 @@ test('el enlace de cupo de la lista de espera se quema una sola vez', () => {
       `${ruta}: el cupo se quema DESPUÉS de emitir la boleta, así que la segunda ya salió`);
   }
 });
+
+test('si la boleta no llega a crearse, el cupo se devuelve', () => {
+  /* El token se quema ANTES de emitir, que es lo que impide la doble boleta.
+     El precio es este caso: si el insert falla, esa persona se queda sin
+     sitio y sin boleta — lo peor de los dos mundos, y encima con un correo
+     que decia que el cupo era suyo. */
+  const lib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'waitlistOferta.js'), 'utf8');
+
+  /* Devolverla exige que el token siga escrito. Por eso `consumirOferta` ya no
+     lo borra: el enlace no vale igual, porque `validarOferta` pide
+     `estado === 'contacted'`. */
+  assert.doesNotMatch(lib, /purchased_at: new Date\(\)\.toISOString\(\),\s*\n\s*oferta_token\s*: null/,
+    'consumirOferta volvió a borrar el token: sin él la oferta no se puede devolver');
+  assert.match(lib, /\.eq\('estado', 'purchased'\)\s*\n\s*\.gt\('oferta_expira'/,
+    'devolverOferta dejó de mirar el plazo: resucitaría un cupo que ya es del siguiente de la fila');
+
+  for (const ruta of ['eventos.publicos.js', 'pagos.js', 'wompi.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'routes', ruta), 'utf8').replace(/\r/g, '');
+    assert.match(src, /await devolverOferta\(oferta\w*\.id\);\s*\n\s*return res\.status\(500\)/,
+      `${ruta}: un fallo al emitir se queda con el cupo de esa persona`);
+  }
+});

@@ -18,7 +18,7 @@ const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../
 const { webhookLimiter } = require('../config/security.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
-const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { sesion, publica } = require('../core/permisos');
 const { generarCodigo } = require('../lib/codigos.js');
 const { baseFrontend } = require('../lib/frontend.js');
@@ -256,7 +256,12 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
       respuestas    : Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
     })
     .select().single();
-  if (e3) return res.status(500).json({ error: e3.message });
+  if (e3) {
+    /* La oferta ya se tomo y la boleta no salio: se devuelve, o esa
+       persona se queda sin sitio Y sin boleta. */
+    if (ofertaMiaPago) await devolverOferta(ofertaMiaPago.id);
+    return res.status(500).json({ error: e3.message });
+  }
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
 

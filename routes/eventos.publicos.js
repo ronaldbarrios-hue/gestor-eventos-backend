@@ -120,10 +120,14 @@ router.get('/ticket/:codigo', async (req, res) => {
      alguien mira su entrada en la puerta del evento. Si la base de un
      despliegue no tiene la 0093, el select falla ENTERO y lo que se rompe no es
      un enlace de más: es la boleta. */
+  /* `tipo.precio` viaja para poder distinguir dos cosas que se ven iguales en
+     pantalla: una reserva gratuita legítimamente «apartada», y una compra cuyo
+     pago no se completó. La segunda tiene que enterarse ANTES de plantarse en
+     la puerta, y sin el precio no hay forma de saber cuál es cuál. */
   const COLS = (extra) => `
       id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
       guest_nombre, guest_email, user_id,
-      tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor${extra}),
+      tipo:ticket_types!ticket_type_id(nombre, descripcion, precio, currency, es_expositor${extra}),
       evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json,
                                modalidad, url_virtual, timezone)
     `;

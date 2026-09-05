@@ -9,6 +9,7 @@ const {
   COLS_TARJETA, COLS_COMPLETAS, CAMPOS_EDITABLES_ORGANIZADOR,
 } = require('../lib/expositores.js');
 const { zonasDelEvento } = require('../lib/aforoZonas.js');
+const { camposDeCierre, informeDeCitas } = require('../lib/cierreDeCita.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -167,6 +168,7 @@ router.get('/:eventoId/networking/mis-citas', sesion('Rueda de negocios: hace fa
     .from('networking_citas')
     .select(`
       id, estado, created_at, notas, creada_por,
+      resultado, expectativa_monto, expectativa_moneda, expectativa_plazo, hubo_acuerdo, resultado_nota,
       horario:networking_horarios!horario_id(id, inicio, fin,
         expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
     `)
@@ -210,15 +212,40 @@ router.patch('/:eventoId/networking/citas/:citaId/notas', sesion('Rueda de negoc
     return res.status(403).json({ error: e.message });
   }
 
-  const notas = typeof req.body?.notas === 'string' ? req.body.notas.slice(0, 4000) : null;
+  /* Sólo lo que VIENE. Antes se escribía `notas` siempre, aunque el cuerpo no
+     la trajera, así que cerrar la reunión habría borrado la nota escrita
+     durante ella. Ahora cada campo se toca si se manda y sólo entonces. */
+  const cambios = {};
+  if ('notas' in (req.body || {})) {
+    cambios.notas = typeof req.body.notas === 'string' ? req.body.notas.slice(0, 4000) : null;
+  }
+
+  /* La moneda del evento se copia al escribir el monto: una cifra sin moneda
+     no se puede interpretar dentro de un año. */
+  const { data: ev } = await supabase
+    .from('eventos').select('currency').eq('id', eventoId).maybeSingle();
+  const { campos, error: eCampos } = camposDeCierre(req.body || {}, { moneda: ev?.currency || 'COP' });
+  if (eCampos) return res.status(400).json({ error: eCampos });
+  Object.assign(cambios, campos);
+
+  /* Quién y cuándo lo registró. En una rueda de cámara esto se pregunta:
+     «esta reunión la cerró la empresa o la cerró el equipo». */
+  if ('resultado' in campos) {
+    cambios.resultado_at = campos.resultado ? new Date().toISOString() : null;
+    cambios.resultado_por = campos.resultado ? req.user.id : null;
+  }
+
+  if (Object.keys(cambios).length === 0) {
+    return res.status(400).json({ error: 'Sin cambios.' });
+  }
 
   const { data, error } = await supabase
     .from('networking_citas')
-    .update({ notas })
+    .update(cambios)
     .eq('id', citaId)
     .eq('evento_id', eventoId)
     .eq('user_id', req.user.id)
-    .select('id, notas')
+    .select('id, notas, resultado, expectativa_monto, expectativa_moneda, expectativa_plazo, hubo_acuerdo, resultado_nota')
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -239,12 +266,24 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
 
   const { data: horario, error: e1 } = await supabase
     .from('networking_horarios')
-    .select('id, expositor_id, networking_expositores!expositor_id(evento_id)')
+    .select('id, expositor_id, inicio, fin, networking_expositores!expositor_id(evento_id)')
     .eq('id', horarioId)
     .maybeSingle();
   if (e1) return res.status(500).json({ error: e1.message });
   if (!horario || horario.networking_expositores?.evento_id !== eventoId) {
     return res.status(404).json({ error: 'Horario no encontrado.' });
+  }
+
+  /* Ya tiene algo a esa hora. Se dice CON QUIÉN: «tienes otra cita a esa hora»
+     a secas obliga a ir a buscarla a la agenda para entender qué pasó. */
+  const choque = await citaQueSolapa({ eventoId, userId: req.user.id, horario });
+  if (choque) {
+    const otra = choque.horario?.expositor?.nombre;
+    return res.status(409).json({
+      error: otra
+        ? `Ya tienes una cita a esa hora con ${otra}. Cancélala primero o elige otro horario.`
+        : 'Ya tienes otra cita a esa hora. Cancélala primero o elige otro horario.',
+    });
   }
 
   /* El modo lo decide el evento, no quien reserva.
@@ -255,8 +294,14 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
    *
    * Se lee aquí y no se cachea: son cuatro bytes y el modo puede cambiar a
    * mitad de un evento, que es justo cuando cambiarlo sirve de algo. */
-  const { data: evModo } = await supabase
+  const { data: evModo, error: eModo } = await supabase
     .from('eventos').select('networking_modo').eq('id', eventoId).maybeSingle();
+  /* Si no se pudo leer el modo, no se adivina. Sin este corte, un fallo de la
+     base convertía una rueda «con aprobación» en una de reserva directa
+     durante lo que durase el fallo: citas confirmadas solas, sin que nadie del
+     equipo las hubiera aceptado, y al otro lado una mesa que no esperaba a
+     nadie. Reintentar es barato; desconfirmar a mano, no. */
+  if (eModo) return res.status(500).json({ error: eModo.message });
   const estadoInicial = evModo?.networking_modo === 'solicitud' ? 'solicitada' : 'confirmada';
 
   const { data: cita, error: e2 } = await supabase
@@ -324,6 +369,58 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
      los dos casos — la misma mentira que el correo. */
   res.status(201).json({ ok: true, cita_id: citaId, estado: estadoFinal });
 });
+
+/* ── Nadie puede estar en dos mesas a la vez ───────────────────────────
+ *
+ * El indice unico de `networking_citas` es sobre `horario_id`: impide que DOS
+ * personas ocupen la misma casilla. No impide lo contrario —que UNA persona
+ * ocupe dos casillas de la misma hora en mesas distintas—, y en una rueda eso
+ * es el error de agenda tipico: reservas 10:00 con la mesa A, 10:00 con la B,
+ * y a las diez estas en una sola.
+ *
+ * El coste lo paga la mesa que se queda esperando: su casilla figura ocupada,
+ * asi que nadie mas la pudo pedir, y ademas se queda sin nadie. Dos veces el
+ * mismo hueco perdido.
+ *
+ * Se comparan los rangos [inicio, fin) en memoria: son las citas de UNA
+ * persona en UN evento —una rueda son quince o veinte—, no una tabla entera.
+ *
+ * Devuelve la cita que choca, o null. Si la consulta falla, devuelve null a
+ * proposito: esto es una comprobacion de agenda, no un permiso, y bloquear una
+ * reserva legitima por un fallo de lectura es peor que dejar pasar un solape
+ * que el equipo puede ver en la parrilla y mover.
+ */
+async function citaQueSolapa({ eventoId, userId, guestEmail, horario, exceptoId = null }) {
+  if (!horario?.inicio || !horario?.fin) return null;
+  if (!userId && !guestEmail) return null;
+
+  let q = supabase
+    .from('networking_citas')
+    .select('id, horario:networking_horarios!horario_id(inicio, fin, expositor:networking_expositores!expositor_id(nombre))')
+    .eq('evento_id', eventoId)
+    .in('estado', ['confirmada', 'solicitada']);
+  q = userId ? q.eq('user_id', userId) : q.eq('guest_email', guestEmail);
+
+  const { data, error } = await q;
+  if (error) {
+    console.warn('[networking] no se pudo comprobar el solape de agenda:', error.message);
+    return null;
+  }
+
+  const ini = new Date(horario.inicio).getTime();
+  const fin = new Date(horario.fin).getTime();
+  return (data || []).find((c) => {
+    if (exceptoId && c.id === exceptoId) return null;
+    const a = new Date(c.horario?.inicio).getTime();
+    const b = new Date(c.horario?.fin).getTime();
+    if (Number.isNaN(a) || Number.isNaN(b)) return false;
+    /* Se tocan si empieza antes de que la otra acabe y acaba despues de que la
+       otra empiece. Con `<` y no `<=`: dos citas seguidas —una acaba 10:15 y
+       la otra empieza 10:15— NO se solapan, que es justo como se arma una
+       rueda. */
+    return ini < b && fin > a;
+  }) || null;
+}
 
 /* El correo de una cita, en un sitio.
  *
@@ -796,24 +893,41 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
   try {
     await assertOwner(eventoId, req.user.id);
 
-    const { data: expositores } = await supabase
+    /* El error se mira. Sin esto, un fallo aquí dejaba `expositores` en null y
+       la pantalla de gestión salía SIN NINGUNA MESA: el organizador ve una
+       rueda vacía, con las mesas y los horarios intactos en la base. Es el
+       mismo fallo callado que ya costó la parrilla. */
+    const { data: expositores, error: eExp } = await supabase
       .from('networking_expositores')
       .select(`${COLS_TARJETA}, descripcion`)
       .eq('evento_id', eventoId)
       .order('nombre', { ascending: true });
+    if (eExp) return res.status(500).json({ error: eExp.message });
 
     const ids = (expositores || []).map(e => e.id);
     const { data: horarios } = ids.length
       ? await supabase.from('networking_horarios').select('id, expositor_id, inicio, fin').in('expositor_id', ids).order('inicio', { ascending: true })
       : { data: [] };
 
-    const { data: citas } = await supabase
+    /* El error SE MIRA. Antes no: la consulta fallaba por la relacion que no
+       existe, `citas` volvia null, y la pantalla pintaba todas las casillas
+       libres. Una agenda llena que se ve vacia es peor que un error. */
+    const { data: citas, error: eCitas } = await supabase
       .from('networking_citas')
-      .select('id, horario_id, estado, usuario:profiles!user_id(nombre, email)')
+      .select('id, horario_id, estado, user_id, guest_email, guest_nombre')
       .eq('evento_id', eventoId)
       .eq('estado', 'confirmada');
+    if (eCitas) return res.status(500).json({ error: eCitas.message });
 
-    const citaPorHorario = new Map((citas || []).map(c => [c.horario_id, c]));
+    const personas = await personasDeLasCitas(citas);
+    const citaPorHorario = new Map((citas || []).map(c => [
+      c.horario_id,
+      {
+        ...c,
+        usuario: personas.get(c.user_id)
+          || (c.guest_email ? { nombre: c.guest_nombre || null, email: c.guest_email } : null),
+      },
+    ]));
     const resultado = (expositores || []).map(exp => ({
       ...exp,
       horarios: (horarios || []).filter(h => h.expositor_id === exp.id).map(h => ({
@@ -844,13 +958,44 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
 const ESTADOS_CITA = ['solicitada', 'confirmada', 'cancelada', 'realizada'];
 
 /* GET /eventos/:eventoId/networking/citas — la parrilla completa. */
+/* ── Quién es cada persona de una cita ─────────────────────────────────
+ *
+ * NO se puede pedir con un `profiles!user_id(...)` dentro del select, y esto
+ * costó una pantalla entera: `networking_citas.user_id` apunta a
+ * `auth.users`, no a `public.profiles` —comprobado en produccion—, asi que
+ * PostgREST no encuentra la relacion y contesta:
+ *
+ *   Could not find a relationship between 'networking_citas' and 'profiles'
+ *
+ * En la parrilla eso salia en la cara. En la vista de gestion era peor: el
+ * error no se miraba, `citas` volvia null, y TODAS las casillas se pintaban
+ * libres — una agenda llena que se ve vacia.
+ *
+ * Se resuelve con una segunda consulta y un mapa. Es una consulta mas y a
+ * cambio no depende de una relacion que la base no declara.
+ */
+async function personasDeLasCitas(citas) {
+  const ids = [...new Set((citas || []).map(c => c.user_id).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const { data, error } = await supabase
+    .from('profiles').select('id, nombre, email, avatar_url').in('id', ids);
+  if (error) {
+    /* Sin los nombres la parrilla sigue sirviendo —las casillas ocupadas se
+       ven igual—, asi que se avisa y se sigue en vez de tumbar la pantalla. */
+    console.warn('[networking] no se pudieron cargar las personas de las citas:', error.message);
+    return new Map();
+  }
+  return new Map((data || []).map(p => [p.id, p]));
+}
+
 router.get('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const { data, error } = await supabase
     .from('networking_citas')
     .select(`
-      id, estado, notas, nota_gestor, creada_por, created_at, user_id,
-      persona:profiles!user_id(id, nombre, email, avatar_url),
+      id, estado, notas, nota_gestor, creada_por, created_at, user_id, guest_email, guest_nombre,
+      resultado, resultado_at, expectativa_monto, expectativa_moneda, expectativa_plazo,
+      hubo_acuerdo, resultado_nota,
       horario:networking_horarios!horario_id(id, inicio, fin,
         expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
     `)
@@ -870,13 +1015,66 @@ router.get('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, 
   /* `notas` viaja porque el equipo necesita saber si la reunión dejó algo
      escrito, pero se manda RECORTADA: son apuntes personales sobre con quién
      se habló y qué pareció. La parrilla es para operar, no para leerlos. */
+  const personas = await personasDeLasCitas(citas);
+
   res.json({
     citas: citas.map((c) => ({
       ...c,
+      /* Con cuenta o sin ella, la parrilla enseña UNA persona. Sin este
+         respaldo, a quien el equipo sentó por correo se le veía la casilla
+         ocupada y el nombre en blanco: imposible saber a quién llamar. */
+      persona: personas.get(c.user_id)
+        || (c.guest_email ? { nombre: c.guest_nombre || null, email: c.guest_email, sin_cuenta: true } : null),
       notas: c.notas ? `${c.notas.slice(0, 140)}${c.notas.length > 140 ? '…' : ''}` : null,
       tiene_notas: Boolean(c.notas),
     })),
   });
+});
+
+/* GET /eventos/:eventoId/networking/informe — qué salió de la rueda.
+ *
+ * ── Por qué esto es el entregable, y no un extra ─────────────────────────
+ *
+ * Una rueda de negocios se organiza para poder contestar dos preguntas al
+ * cerrar: cuántas reuniones ocurrieron de verdad, y cuánto negocio se espera de
+ * ellas. Para una cámara de comercio eso es lo que se le presenta a la junta y
+ * a quien financió la rueda. Sin esto, la plataforma agenda citas y no puede
+ * decir para qué sirvieron.
+ *
+ * ── Lo que NO hace, a propósito ──────────────────────────────────────────
+ *
+ * No reparte lo que nadie registró. «Sin registrar» es una columna propia: una
+ * rueda donde no se cerró ninguna reunión tiene que verse como lo que es —sin
+ * datos— y no como una rueda con cero reuniones realizadas. Y la efectividad se
+ * calcula sobre lo registrado, diciendo sobre cuántas: sobre el total,
+ * convertiría «no lo sabemos» en «no ocurrió».
+ *
+ * Devuelve también las filas, para poder bajarlas a hoja de cálculo desde la
+ * pantalla: el informe se acaba pegando en un documento de la cámara.
+ */
+router.get('/:eventoId/networking/informe', exige(PERMS_EXPOSITORES), async (req, res) => {
+  const { eventoId } = req.params;
+
+  const { data: citas, error } = await supabase
+    .from('networking_citas')
+    .select(`
+      id, estado, resultado, resultado_at, expectativa_monto, expectativa_moneda,
+      expectativa_plazo, hubo_acuerdo, resultado_nota, user_id, guest_email, guest_nombre,
+      horario:networking_horarios!horario_id(inicio, fin,
+        expositor:networking_expositores!expositor_id(nombre, stand, categoria_negocio))
+    `)
+    .eq('evento_id', eventoId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const personas = await personasDeLasCitas(citas);
+
+  const filas = (citas || []).map((c) => ({
+    ...c,
+    persona: personas.get(c.user_id)
+      || (c.guest_email ? { nombre: c.guest_nombre || null, email: c.guest_email } : null),
+  })).sort((a, b) => new Date(a.horario?.inicio) - new Date(b.horario?.inicio));
+
+  res.json({ resumen: informeDeCitas(filas), citas: filas });
 });
 
 /* PATCH /eventos/:eventoId/networking/citas/:citaId — aprobar, mover, anotar.
@@ -896,6 +1094,20 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
     updates.estado = req.body.estado;
   }
 
+  /* El cierre también desde la parrilla: en una rueda de cámara alguien del
+     equipo recorre las mesas y va marcando qué pasó. Es la misma limpieza que
+     usa la ruta de quien asistió —una sola copia de las reglas—, o el informe
+     acabaría sumando cosas distintas según quién las escribiera. */
+  const { data: evCierre } = await supabase
+    .from('eventos').select('currency').eq('id', eventoId).maybeSingle();
+  const { campos: cierre, error: eCierre } = camposDeCierre(req.body || {}, { moneda: evCierre?.currency || 'COP' });
+  if (eCierre) return res.status(400).json({ error: eCierre });
+  Object.assign(updates, cierre);
+  if ('resultado' in cierre) {
+    updates.resultado_at = cierre.resultado ? new Date().toISOString() : null;
+    updates.resultado_por = cierre.resultado ? req.user.id : null;
+  }
+
   /* La nota del equipo, aparte de la de quien asistió. No se pisan: son de
      dueños distintos y se escriben en momentos distintos. */
   if ('nota_gestor' in (req.body || {})) {
@@ -907,14 +1119,37 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
      comprobarlo, un id de otro evento movería la cita fuera de su rueda y
      dejaría de aparecer en las dos. */
   if (req.body?.horario_id) {
-    const { data: h } = await supabase
+    const { data: h, error: eH } = await supabase
       .from('networking_horarios')
-      .select('id, expositor:networking_expositores!expositor_id(evento_id)')
+      .select('id, inicio, fin, expositor:networking_expositores!expositor_id(evento_id)')
       .eq('id', req.body.horario_id)
       .maybeSingle();
+    if (eH) return res.status(500).json({ error: eH.message });
     if (!h || h.expositor?.evento_id !== eventoId) {
       return res.status(400).json({ error: 'Ese horario no es de este evento.' });
     }
+
+    /* Mover también puede crear el solape: se arrastra una cita a las 10:00 y
+       esa persona ya tenía otra a las 10:00 en otra mesa. `exceptoId` es la que
+       se está moviendo — sin él, se chocaría consigo misma si el destino se
+       solapa con su propio origen. */
+    const { data: quien } = await supabase
+      .from('networking_citas').select('user_id, guest_email')
+      .eq('id', citaId).eq('evento_id', eventoId).maybeSingle();
+    if (quien) {
+      const choque = await citaQueSolapa({
+        eventoId, userId: quien.user_id, guestEmail: quien.guest_email, horario: h, exceptoId: citaId,
+      });
+      if (choque) {
+        const otra = choque.horario?.expositor?.nombre;
+        return res.status(409).json({
+          error: otra
+            ? `Esa persona ya tiene una cita a esa hora con ${otra}.`
+            : 'Esa persona ya tiene otra cita a esa hora.',
+        });
+      }
+    }
+
     updates.horario_id = req.body.horario_id;
 
     /* Una cita CANCELADA sigue ocupando su casilla —el indice unico es sobre
@@ -941,7 +1176,7 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
     .update(updates)
     .eq('id', citaId)
     .eq('evento_id', eventoId)
-    .select('id, estado, horario_id, nota_gestor, user_id')
+    .select('id, estado, horario_id, nota_gestor, user_id, resultado, expectativa_monto, expectativa_moneda, expectativa_plazo, hubo_acuerdo, resultado_nota')
     .maybeSingle();
 
   /* El horario está tomado por otra cita. Es un caso normal al reorganizar
@@ -992,21 +1227,84 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
  */
 router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
-  const { horario_id, user_id } = req.body || {};
-  if (!horario_id || !user_id) return res.status(400).json({ error: 'Falta el horario o la persona.' });
+  const { horario_id } = req.body || {};
+  if (!horario_id) return res.status(400).json({ error: 'Falta el horario.' });
 
-  const { data: h } = await supabase
+  /* ── A quién se sienta: una cuenta, o un correo ──────────────────────
+   *
+   * Pedir `user_id` obligaba a que esa persona YA tuviera cuenta en GESTEK, y
+   * la mayoria de quien compra una boleta no la tiene: la compra es anonima a
+   * proposito y lo unico que queda de ella es su correo en la boleta. Con esa
+   * regla, armar la agenda a mano —que es como funcionan muchas ruedas— era
+   * imposible para casi todos los asistentes.
+   *
+   * Si el correo tiene cuenta, se guarda como cuenta: asi esa persona ve la
+   * cita en «Mis citas» al entrar, que es mejor que tener dos agendas para el
+   * mismo humano. */
+  const correo = String(req.body?.email || '').trim().toLowerCase();
+  let user_id = req.body?.user_id || null;
+  let guest_email = null;
+  let guest_nombre = req.body?.nombre ? String(req.body.nombre).trim().slice(0, 120) : null;
+
+  if (!user_id) {
+    if (!correo.includes('@')) {
+      return res.status(400).json({ error: 'Escribe el correo de la persona, o elígela de la lista.' });
+    }
+
+    /* Tiene que ir al evento. Sin esta comprobacion se podria sentar a
+       cualquier correo del mundo en una mesa, y quien llega a la puerta no
+       tiene boleta: la mesa se queda vacia y el hueco ya no se puede dar a
+       otro. */
+    const { data: boleta, error: eB } = await supabase
+      .from('tickets')
+      .select('id, guest_nombre, user_id')
+      .eq('evento_id', eventoId)
+      .eq('guest_email', correo)
+      .limit(1).maybeSingle();
+    if (eB) return res.status(500).json({ error: eB.message });
+
+    const { data: perfil } = await supabase
+      .from('profiles').select('id, nombre').eq('email', correo).maybeSingle();
+
+    if (!boleta && !perfil) {
+      return res.status(404).json({
+        error: `Nadie con el correo ${correo} está registrado en este evento. Revisa el correo, o emítele una boleta primero desde Asistentes.`,
+      });
+    }
+
+    if (perfil?.id) user_id = perfil.id;
+    else {
+      guest_email = correo;
+      guest_nombre = guest_nombre || boleta?.guest_nombre || null;
+    }
+  }
+
+  const { data: h, error: eH } = await supabase
     .from('networking_horarios')
-    .select('id, expositor:networking_expositores!expositor_id(evento_id)')
+    .select('id, inicio, fin, expositor:networking_expositores!expositor_id(evento_id)')
     .eq('id', horario_id).maybeSingle();
+  if (eH) return res.status(500).json({ error: eH.message });
   if (!h || h.expositor?.evento_id !== eventoId) {
     return res.status(400).json({ error: 'Ese horario no es de este evento.' });
+  }
+
+  /* La misma comprobación que en la reserva: sentar a alguien a mano en dos
+     mesas a la misma hora es el error de agenda que más cuesta, porque lo
+     descubre la mesa que se queda esperando. */
+  const choque = await citaQueSolapa({ eventoId, userId, guestEmail: guest_email, horario: h });
+  if (choque) {
+    const otra = choque.horario?.expositor?.nombre;
+    return res.status(409).json({
+      error: otra
+        ? `Esa persona ya tiene una cita a esa hora con ${otra}.`
+        : 'Esa persona ya tiene otra cita a esa hora.',
+    });
   }
 
   const { data, error } = await supabase
     .from('networking_citas')
     .insert({
-      horario_id, evento_id: eventoId, user_id,
+      horario_id, evento_id: eventoId, user_id, guest_email, guest_nombre,
       /* Puesta por el equipo: nace confirmada. Pedirle a alguien que apruebe
          una cita que le acaban de poner sería devolverle el trabajo. */
       estado: 'confirmada',
@@ -1026,7 +1324,7 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
        la cita anterior. */
     const { data: revividas } = await supabase
       .from('networking_citas')
-      .update({ user_id, estado: 'confirmada', creada_por: req.user.id, notas: null, nota_gestor: null })
+      .update({ user_id, guest_email, guest_nombre, estado: 'confirmada', creada_por: req.user.id, notas: null, nota_gestor: null })
       .eq('horario_id', horario_id)
       .eq('estado', 'cancelada')
       .select('id, estado');
@@ -1036,11 +1334,16 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
     creada = revividas[0];
   }
 
-  notificar({
-    userId: user_id, tipo: 'networking', titulo: 'Te agendaron una cita',
-    cuerpo: 'Míralo en la rueda de negocios del evento.',
-    link: `/explorar/${eventoId}/networking`, eventoId,
-  });
+  /* El aviso interno sólo llega a quien tiene cuenta: es una notificación
+     dentro de GESTEK. A quien se sentó por correo se le avisa por correo, que
+     es el único canal que tiene. */
+  if (user_id) {
+    notificar({
+      userId: user_id, tipo: 'networking', titulo: 'Te agendaron una cita',
+      cuerpo: 'Míralo en la rueda de negocios del evento.',
+      link: `/explorar/${eventoId}/networking`, eventoId,
+    });
+  }
 
   res.status(201).json({ cita: creada });
 });
@@ -1083,8 +1386,28 @@ router.delete('/:eventoId/networking/horarios/:id', exige(PERMS_EXPOSITORES), as
   const { eventoId, id } = req.params;
   try {
     await assertOwner(eventoId, req.user.id);
-    const { data: cita } = await supabase.from('networking_citas').select('id').eq('horario_id', id).eq('estado', 'confirmada').maybeSingle();
-    if (cita) return res.status(400).json({ error: 'Ese horario ya tiene una cita confirmada. Cancélala primero.' });
+    /* El error SE MIRA, y aquí más que en ningún sitio: si esta consulta
+       falla y no se comprueba, `cita` viene vacía, la casilla parece libre y
+       el horario se borra CON su cita dentro. En cascada se lleva por delante
+       una reunión acordada, y la persona se presenta a una hora que ya no
+       existe. Fallar cerrado —«no pude comprobarlo, no borro»— es lo correcto:
+       volver a intentarlo cuesta un clic; deshacerlo no se puede.
+
+       Se miran también las SOLICITADAS: una cita pedida y pendiente de
+       aprobación es una reunión que alguien está esperando, y borrar su
+       horario la borraba sin avisar a nadie. */
+    const { data: citas, error: eCita } = await supabase
+      .from('networking_citas').select('id, estado')
+      .eq('horario_id', id).in('estado', ['confirmada', 'solicitada']);
+    if (eCita) return res.status(500).json({ error: eCita.message });
+    if (citas?.length) {
+      const pedida = citas.every(c => c.estado === 'solicitada');
+      return res.status(400).json({
+        error: pedida
+          ? 'Ese horario tiene una cita pedida y sin responder. Recházala primero, o apruébala y muévela.'
+          : 'Ese horario ya tiene una cita confirmada. Cancélala primero.',
+      });
+    }
     const { error } = await supabase.from('networking_horarios').delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });

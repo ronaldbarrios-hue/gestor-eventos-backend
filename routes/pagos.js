@@ -12,6 +12,7 @@ const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const mp = require('../lib/mercadopago.js');
+const { checkoutUrl } = require('../lib/wompi.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
@@ -315,6 +316,158 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
     },
   });
 });
+/* ────────────── Reanudar un pago que se quedó a medias ──────────────
+ *
+ * ── El agujero que tapa ──────────────────────────────────────────────────
+ *
+ * Una boleta `emitido` sin pagar es una compra abandonada: la tarjeta fue
+ * rechazada, se cerró la pestaña, el PSE no volvió. La página de la boleta ya
+ * lo dice —«Tu pago no se completó»— y ofrecía un botón «Terminar el pago»
+ * que llevaba… a la página del evento. O sea a EMPEZAR OTRA COMPRA: sale una
+ * segunda boleta, la primera se queda ahí sin pagar para siempre, y quien
+ * organiza ve dos apuntes de la misma persona sin saber cuál es cuál.
+ *
+ * Esto retoma LA MISMA boleta. La referencia que se manda a la pasarela es
+ * `tx_<id de la boleta>`, la misma de siempre, así que el webhook que ya
+ * existe la confirma sin cambiar una línea.
+ *
+ * ── De dónde sale el precio ──────────────────────────────────────────────
+ *
+ * Del apunte de pago que quedó pendiente, no de la lista de precios de hoy:
+ * es lo que esa persona ya había aceptado pagar, con su descuento si lo
+ * tenía. Volver a calcularlo podría cobrarle más que en el intento anterior
+ * —porque se acabó el early bird, o porque su código ya no vale— y enterarse
+ * de eso en la pasarela es la peor forma de enterarse. Sólo si no hay apunte
+ * se calcula el precio actual, y entonces se dice que se recalculó.
+ *
+ * No pide sesión: la credencial es el código de la boleta, igual que en
+ * `/mi-ticket`. No devuelve datos de nadie, sólo el enlace de pago. */
+router.post('/eventos/publicos/ticket/:codigo/reanudar-pago', publica('Retomar el pago de una boleta propia. La credencial es el código de la boleta, el mismo que abre /mi-ticket.'), async (req, res) => {
+  const codigo = String(req.params.codigo || '').trim().toUpperCase();
+  if (!codigo) return res.status(400).json({ error: 'Falta el código de la boleta.' });
+
+  const { data: ticket, error: eTk } = await supabase
+    .from('tickets')
+    .select('id, codigo, estado, precio_pagado, evento_id, ticket_type_id, guest_email, guest_nombre')
+    .eq('codigo', codigo).maybeSingle();
+  if (eTk) return res.status(500).json({ error: eTk.message });
+  if (!ticket) return res.status(404).json({ error: 'No encontramos esa boleta.' });
+
+  /* Ya pagada: no es un error, es la mejor noticia posible. Se contesta con el
+     dato, y no con un 400 seco, porque quien llega aquí cree que debe dinero. */
+  if (ticket.estado !== 'emitido' || Number(ticket.precio_pagado) > 0) {
+    return res.status(409).json({
+      error: 'Esta boleta no tiene ningún pago pendiente.',
+      ya_pagada: ticket.estado === 'pagado' || ticket.estado === 'usado',
+      estado: ticket.estado,
+    });
+  }
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, slug, titulo, owner_id, estado, deleted_at, currency')
+    .eq('id', ticket.evento_id).maybeSingle();
+  if (!evento || evento.deleted_at || evento.estado !== 'publicado') {
+    return res.status(404).json({ error: 'Este evento ya no está disponible.' });
+  }
+
+  const { data: tipo } = await supabase
+    .from('ticket_types').select('*').eq('id', ticket.ticket_type_id).maybeSingle();
+  if (!tipo) return res.status(404).json({ error: 'El tipo de boleta ya no existe.' });
+
+  /* El apunte pendiente de esta misma boleta: ahí está lo que se le iba a
+     cobrar y por qué pasarela iba. */
+  const { data: previa } = await supabase
+    .from('payment_transactions')
+    .select('monto, currency, gateway, promocion_id')
+    .eq('ticket_id', ticket.id)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+
+  let monto = Number(previa?.monto) || 0;
+  let precioRecalculado = false;
+  if (!monto) {
+    const cotiz = await precioDeCompra({ eventoId: evento.id, tipo, cantidad: 1 });
+    monto = Number(cotiz.precio) || 0;
+    precioRecalculado = true;
+  }
+  if (monto <= 0) {
+    return res.status(400).json({ error: 'Esta boleta no tiene importe que cobrar. Escribe a quien organiza el evento.' });
+  }
+
+  const currency = previa?.currency || evento.currency || tipo.currency || 'COP';
+  const referencia = `tx_${ticket.id}`;
+
+  const { data: owner } = await supabase
+    .from('profiles')
+    .select('mp_access_token, wompi_public_key, wompi_integrity_secret')
+    .eq('id', evento.owner_id).maybeSingle();
+
+  const hayWompi = Boolean(owner?.wompi_public_key && owner?.wompi_integrity_secret);
+  const hayMp    = Boolean(owner?.mp_access_token);
+  if (!hayWompi && !hayMp) {
+    return res.status(400).json({ error: 'El organizador no tiene una pasarela de pago conectada ahora mismo.' });
+  }
+  /* La misma pasarela del intento anterior, si sigue conectada: cambiarla a
+     mitad de una compra le enseña a la persona un sitio distinto del que ya
+     había visto. Si esa ya no está, la que haya. */
+  const usarWompi = hayWompi && (previa?.gateway === 'wompi' || !hayMp);
+
+  if (usarWompi) {
+    await supabase.from('payment_transactions').insert({
+      evento_id: evento.id, ticket_id: ticket.id, ticket_type_id: tipo.id,
+      gateway: 'wompi', referencia, status: 'pending', monto, currency,
+      promocion_id: previa?.promocion_id || null,
+      guest_email: ticket.guest_email, guest_nombre: ticket.guest_nombre,
+    });
+    const url = checkoutUrl({
+      publicKey: owner.wompi_public_key, currency,
+      amountInCents: Math.round(monto * 100), reference: referencia,
+      redirectUrl: `${publicBaseUrl()}/mi-ticket/${ticket.codigo}?pago=wompi`,
+      integritySecret: owner.wompi_integrity_secret,
+    });
+    return res.json({ checkout: { url }, monto, currency, precio_recalculado: precioRecalculado });
+  }
+
+  let preference;
+  try {
+    preference = await mp.createPreference(owner.mp_access_token, {
+      items: [{
+        id: tipo.id,
+        title: `${evento.titulo} — ${tipo.nombre}`,
+        description: tipo.descripcion || undefined,
+        quantity: 1, currency_id: currency, unit_price: monto,
+      }],
+      payer: {
+        name : ticket.guest_nombre || undefined,
+        email: ticket.guest_email || undefined,
+      },
+      externalReference: referencia,
+      notificationUrl  : `${apiBaseUrl()}/webhooks/mercadopago`,
+      successUrl       : `${publicBaseUrl()}/mi-ticket/${ticket.codigo}`,
+      failureUrl       : `${publicBaseUrl()}/mi-ticket/${ticket.codigo}?pago=fallo`,
+      pendingUrl       : `${publicBaseUrl()}/mi-ticket/${ticket.codigo}?pago=pendiente`,
+    });
+  } catch (e) {
+    return res.status(502).json({ error: `Mercado Pago rechazó la preferencia: ${e.message}` });
+  }
+
+  await supabase.from('payment_transactions').insert({
+    evento_id: evento.id, ticket_id: ticket.id, ticket_type_id: tipo.id,
+    preference_id: preference.id, status: 'pending', monto, currency,
+    promocion_id: previa?.promocion_id || null,
+    guest_email: ticket.guest_email, guest_nombre: ticket.guest_nombre,
+    raw: { preference_id: preference.id, reanudado: true },
+  });
+
+  res.json({
+    checkout: {
+      preference_id: preference.id,
+      init_point: preference.init_point,
+      sandbox_init_point: preference.sandbox_init_point,
+    },
+    monto, currency, precio_recalculado: precioRecalculado,
+  });
+});
+
 /* ────────────── Webhook Mercado Pago ────────────── */
 router.post('/webhooks/mercadopago', webhookLimiter, publica('Aviso de la pasarela, que llega desde sus servidores y no de un navegador. Se autentica con la firma del proveedor, no con sesión.'), async (req, res) => {
   const sig = verifyMPSignature(req);

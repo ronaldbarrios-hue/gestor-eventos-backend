@@ -121,9 +121,12 @@ router.put('/:eventoId/motivos', exige(PERMS_GESTION), async (req, res) => {
       }
     }
 
-    const { data: final } = await supabase
+    const { data: final, error: eFinal } = await supabase
       .from('evento_motivos').select('*').eq('evento_id', eventoId)
       .order('orden', { ascending: true });
+    /* Relectura después de guardar: vacío aquí dice que se borró lo que se
+       acaba de escribir. */
+    if (eFinal) console.error(`[motivos] releer los de ${eventoId}: ${eFinal.message}`);
     res.json({ motivos: final || [] });
   } catch (e) { err(res, e); }
 });

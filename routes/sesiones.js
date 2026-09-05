@@ -445,12 +445,15 @@ panel.put('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: 
         .update({ formulario_modo: modoQueToca }).eq('id', sesionId);
     }
 
-    const { data: final } = await supabase
+    const { data: final, error: eFinal } = await supabase
       .from('event_form_fields')
       .select(COLUMNAS_CAMPO)
       .eq('evento_id', eventoId)
       .eq('session_id', sesionId)
       .order('orden', { ascending: true });
+    /* Relectura después de guardar el formulario: una lista vacía dice que se
+       perdieron las preguntas que se acaban de escribir. */
+    if (eFinal) console.error(`[sesiones] releer campos de ${sesionId}: ${eFinal.message}`);
 
     res.json({ campos: final || [], formulario_modo: modoQueToca });
   } catch (e) { fallo(res, e); }

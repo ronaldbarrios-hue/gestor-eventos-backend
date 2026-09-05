@@ -560,10 +560,14 @@ router.put('/:eventoId/expositores/cuotas', exige(PERMS_EXPOSITORES), async (req
       if (error) return res.status(500).json({ error: error.message });
     }
 
-    const { data: reparto } = await supabase
+    const { data: reparto, error: eReparto } = await supabase
       .from('v_consumo_puntos_stand')
       .select('expositor_id, nombre, stand, cuota_puntos, otorgados, disponibles')
       .eq('evento_id', eventoId).order('nombre', { ascending: true });
+    /* Es una VISTA, y una vista que no existe —porque falta su migración— da
+       error, no cero filas. Vacío se leería como «nadie ha repartido puntos»,
+       que en mitad del evento es exactamente lo contrario de la verdad. */
+    if (eReparto) console.error(`[bolsa] reparto de ${eventoId} (¿falta la vista?): ${eReparto.message}`);
 
     res.json({ reparto: reparto || [] });
   } catch (e) {

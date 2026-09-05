@@ -717,9 +717,9 @@ router.get('/slug/:slug', async (req, res) => {
 /* Carga pública (solo lectura) de un torneo: equipos + partidos sin datos
    sensibles. Reutilizada por la vista singular y la de un torneo concreto. */
 async function cargarTorneoPublico(torneo) {
-  const { data: equipos } = await supabase
+  const { data: equipos, error: eEquipos } = await supabase
     .from('torneo_equipos').select('id, nombre, foto_url').eq('torneo_id', torneo.id).order('created_at', { ascending: true });
-  const { data: partidos } = await supabase
+  const { data: partidos, error: ePartidos } = await supabase
     .from('torneo_partidos')
     .select('id, ronda, orden, equipo_a_id, equipo_b_id, marcador_a, marcador_b, estado, cancha, fecha_hora, fase, grupo')
     .eq('torneo_id', torneo.id)
@@ -741,6 +741,12 @@ async function cargarTorneoPublico(torneo) {
     .eq('torneo_id', torneo.id)
     .order('inicio', { ascending: true })
     .limit(1);
+
+  /* Esto lo ve el PÚBLICO: una llave vacía se lee como «el torneo aún no
+     tiene equipos», y con eso alguien decide no venir. Si lo que pasó es que
+     no pudimos leerlo, al menos queda dicho dónde mirar. */
+  if (eEquipos)  console.error(`[público] equipos del torneo ${torneo.id}: ${eEquipos.message}`);
+  if (ePartidos) console.error(`[público] partidos del torneo ${torneo.id}: ${ePartidos.message}`);
 
   return {
     torneo,
@@ -773,10 +779,13 @@ async function eventoPublicado(slug, requesterId) {
 router.get('/slug/:slug/torneos', async (req, res) => {
   const evento = await eventoPublicado(req.params.slug, req.user?.id);
   if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
-  const { data: torneos } = await supabase
+  const { data: torneos, error: eTorneos } = await supabase
     .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, orden')
     .eq('evento_id', evento.id)
     .order('orden', { ascending: true }).order('created_at', { ascending: true });
+  /* Lista vacía en público = «este evento no tiene torneos». Es una afirmación,
+     y aquí se estaba haciendo también cuando la consulta fallaba. */
+  if (eTorneos) console.error(`[público] torneos de ${evento.id}: ${eTorneos.message}`);
   res.json({ torneos: torneos || [] });
 });
 
@@ -986,7 +995,9 @@ router.get('/slug/:slug/agenda', async (req, res) => {
   /* Sin la 0055 esas columnas no existen y el select falla entero. Se
      reintenta sin ellas: la agenda se sigue viendo, sólo que sin inscripción. */
   if (eSes) {
-    const { data: basico } = await supabase
+    /* Es la agenda que ve el público. Vacía se lee como «este evento no tiene
+       programa», y con eso alguien decide no venir. */
+    const { data: basico, error: eBasico } = await supabase
       .from('agenda_sessions')
       .select(`id, titulo, descripcion, inicio, fin, track, ubicacion, tipo, torneo_id, expositor_id,
                speaker:speakers!speaker_id(id, nombre, foto_url, empresa),
@@ -994,6 +1005,7 @@ router.get('/slug/:slug/agenda', async (req, res) => {
       .eq('evento_id', evento.id)
       .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
       .order('inicio', { ascending: true });
+    if (eBasico) console.error(`[público] agenda de ${evento.id} (camino básico): ${eBasico.message}`);
     return res.json({ evento_id: evento.id, evento, sessions: basico || [], preguntas: {}, inscripcion_lista: false });
   }
 

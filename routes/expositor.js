@@ -50,11 +50,17 @@ const err = (res, e) => res.status(e.message === 'No autorizado.' ? 403 : 400).j
 /* ───────────── Panel (bootstrap) ───────────── */
 router.get('/:codigo/panel', cargarExpositor, async (req, res) => {
   const { fichaId, eventoId, ficha } = req.expositor;
-  const { data: motivos } = await supabase
+  const { data: motivos, error: eMotivos } = await supabase
     .from('evento_motivos').select('*').eq('expositor_id', fichaId).order('orden', { ascending: true });
   const recompensas = await recompensasDeExpositor(fichaId);
-  const { data: franjas } = await supabase
+  const { data: franjas, error: eFranjas } = await supabase
     .from('agenda_sessions').select('*').eq('expositor_id', fichaId).order('inicio', { ascending: true });
+  /* Esto es el portal que el expositor abre EN su stand, con gente delante.
+     Sin motivos no puede dar puntos y sin franjas cree que no tiene nada
+     programado — las dos cosas se leen como «no lo configuré», no como «no se
+     pudo leer», y se ponen a configurarlo otra vez encima. */
+  if (eMotivos) console.error(`[expositor] motivos de ${fichaId}: ${eMotivos.message}`);
+  if (eFranjas) console.error(`[expositor] franjas de ${fichaId}: ${eFranjas.message}`);
   const { data: evento } = await supabase
     .from('eventos').select('id, slug, titulo, fecha_inicio, fecha_fin, timezone').eq('id', eventoId).maybeSingle();
 
@@ -101,8 +107,11 @@ router.put('/:codigo/motivos', cargarExpositor, async (req, res) => {
       await supabase.from('evento_motivos').insert({ ...fila, evento_id: eventoId, expositor_id: fichaId });
     }
   }
-  const { data: final } = await supabase
+  const { data: final, error: eFinal } = await supabase
     .from('evento_motivos').select('*').eq('expositor_id', fichaId).order('orden', { ascending: true });
+  /* Relectura después de guardar: una lista vacía aquí dice que se borró todo
+     lo que se acaba de escribir. */
+  if (eFinal) console.error(`[expositor] releer motivos de ${fichaId}: ${eFinal.message}`);
   res.json({ motivos: final || [] });
 });
 
@@ -237,8 +246,9 @@ router.put('/:codigo/recompensas', cargarExpositor, async (req, res) => {
       });
     }
   }
-  const { data: final } = await supabase
+  const { data: final, error: eFinal } = await supabase
     .from('recompensas').select('*').eq('expositor_id', fichaId).order('costo_puntos', { ascending: true });
+  if (eFinal) console.error(`[expositor] releer recompensas de ${fichaId}: ${eFinal.message}`);
   res.json({ recompensas: final || [] });
 });
 

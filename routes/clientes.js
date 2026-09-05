@@ -146,11 +146,15 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
     /* Campos del formulario personalizado (id + etiqueta), para que el
        frontend pueda "traducir" las claves de `respuestas` (que se guardan
        por id de campo) a su texto real en vez de mostrar el UUID crudo. */
-    const { data: camposForm } = await supabase
+    /* Sin estos campos las respuestas del formulario salen con el UUID del
+       campo por etiqueta — que es lo que este select vino a evitar. */
+    const { data: camposForm, error: eCampos } = await supabase
       .from('event_form_fields')
       .select('id, etiqueta, tipo, orden')
       .eq('evento_id', eventoId)
       .order('orden', { ascending: true });
+
+    if (eCampos) console.error(`[clientes] campos del formulario de ${eventoId}: ${eCampos.message}`);
 
     res.json({
       clientes: data || [],
@@ -308,17 +312,42 @@ router.get('/:eventoId/dinero', exige(['ver_pagos']), async (req, res) => {
     /* Lo que registraron las pasarelas. Va aparte del conteo de arriba a
        propósito: son dos fuentes distintas, y cuando NO cuadran es justo lo que
        hay que poder ver. */
-    const { data: tx } = await supabase
+    /* Las columnas se llaman `provider`, `status` y `currency`.
+     *
+     * Aquí se pedían en español —`proveedor`, `estado`, `moneda`— y ninguna de
+     * las tres existe. PostgREST contesta con un ERROR, no con filas a medias,
+     * así que `data` venía null; y el error se tiraba al desestructurar sólo
+     * `data`. Resultado: `transacciones: []` siempre, y el panel de «lo que
+     * registraron las pasarelas» llevaba vacío desde que se escribió. Medido en
+     * producción: cuatro transacciones que nunca se enseñaron.
+     *
+     * Duele el doble por lo que dice el comentario de arriba: ese panel existe
+     * para poder ver cuándo las DOS fuentes no cuadran. Esa comparación no se
+     * ha podido hacer nunca.
+     *
+     * Se renombran en el select en vez de tocar la pantalla: los nombres que
+     * lee el panel se quedan igual, y la traducción vive donde está la consulta.
+     */
+    const { data: tx, error: eTx } = await supabase
       .from('payment_transactions')
-      .select('id, proveedor, estado, monto, moneda, created_at')
+      .select('id, proveedor:provider, estado:status, monto, moneda:currency, created_at')
       .eq('evento_id', eventoId)
       .order('created_at', { ascending: false })
       .limit(100);
+
+    /* Y el error se MIRA. Ésta es la pantalla del dinero: una lista vacía aquí
+       se lee como «las pasarelas no registraron nada», que es una afirmación
+       muy distinta de «no pude consultarlo». */
+    if (eTx) console.error(`[dinero] no se pudieron leer las transacciones: ${eTx.message}`);
 
     res.json({
       total,
       por_tipo: Object.values(porTipo).sort((a, b) => b.cobrado.dinero - a.cobrado.dinero),
       transacciones: tx || [],
+      /* Para que la pantalla pueda decir «no pude consultarlo» en vez de
+         callar. Sin esto, el arreglo de hoy tapa el síntoma y el día que la
+         consulta vuelva a fallar pasa lo mismo otra vez. */
+      transacciones_error: Boolean(eTx),
     });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });

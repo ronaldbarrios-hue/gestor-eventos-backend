@@ -47,6 +47,11 @@ const CATALOGO = [
   { id: 'invitar_staff',         grupo: 'Equipo',    label: 'Invitar al equipo' },
   { id: 'gestionar_roles',       grupo: 'Equipo',    label: 'Gestionar roles' },
   { id: 'remover_miembros',      grupo: 'Equipo',    label: 'Quitar miembros' },
+  /* Atender lo que el equipo manda: sugerencias, incidencias y las peticiones
+     de corregir la propia ficha. Iba pegado a «ser el dueño», y eso deja al
+     organizador de un evento de siete mil personas como el único que puede
+     aprobar que a alguien le cambien una letra del nombre en la escarapela. */
+  { id: 'gestionar_solicitudes', grupo: 'Equipo',    label: 'Atender solicitudes del equipo' },
 
   { id: 'gestionar_tickets',     grupo: 'Tickets',   label: 'Gestionar tipos de boleta' },
   { id: 'gestionar_descuentos',  grupo: 'Tickets',   label: 'Códigos de descuento' },

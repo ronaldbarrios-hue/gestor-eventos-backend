@@ -436,7 +436,7 @@ router.get('/slug/:slug', async (req, res) => {
       categoria:categorias(slug, nombre),
       organizador:profiles!owner_id(nombre, handle, avatar_url, empresa, branding, empresa_logo_url),
       ticket_types(id, nombre, descripcion, precio, currency, cupo, vendidos,
-                   early_bird_precio, early_bird_hasta, venta_hasta, zonas_acceso, orden, activo)
+                   early_bird_precio, early_bird_hasta, venta_hasta, orden, activo)
     `)
     .eq('slug', slug)
     .is('deleted_at', null)

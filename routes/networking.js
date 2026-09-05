@@ -468,6 +468,23 @@ router.get('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req,
   }
 });
 
+/* PUT /eventos/:eventoId/expositores/bolsa — el total de la bolsa y su nota.
+ *
+ * ── `cuota_defecto` se guarda y NO lo hace cumplir nadie ─────────────────
+ *
+ * Se acepta aquí, vive en la tabla desde la 0057 y sale en `v_bolsa_evento`.
+ * Pero el disparador que aplica el tope (`fn_verificar_cuota_stand`) lee la
+ * cuota DEL STAND y, si es null, deja pasar sin límite: nunca cae a este
+ * valor. O sea que un organizador que ponga 500 aquí creería que ningún stand
+ * puede repartir más de 500, y todos los que no tengan cuota propia estarían
+ * repartiendo sin tope. En una economía de puntos eso es la diferencia entre
+ * tener presupuesto y no tenerlo.
+ *
+ * No se quita ni se hace funcionar en esta pasada: hacerlo funcionar cambia
+ * a quién se le corta el grifo en mitad del evento, y eso se decide, no se
+ * deduce. Queda escrito para que nadie construya encima creyendo que aplica.
+ * Hoy no engaña a nadie porque ninguna pantalla lo manda ni lo enseña —
+ * medido: la tabla está vacía en producción. */
 router.put('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const aEntero = (v) => (v === null || v === '' || v === undefined)
@@ -476,18 +493,37 @@ router.put('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req,
   try {
     await assertOwner(eventoId, req.user.id);
     const total = aEntero(req.body?.total);
-    const cuotaDefecto = aEntero(req.body?.cuota_defecto);
     if (total !== null && !Number.isFinite(total)) {
       return res.status(400).json({ error: 'El total debe ser un número.' });
     }
 
+    /* Sólo lo que VIENE en el cuerpo.
+     *
+     * Antes se escribían siempre los tres campos, así que guardar el total
+     * —que es lo único que manda la pantalla— ponía la nota y la cuota por
+     * defecto a null. Un ajuste que se borra al tocar otro distinto: nadie lo
+     * relaciona, porque el guardado que lo borró decía «guardado».
+     *
+     * Es un PUT y por escrito eso significa «reemplaza», pero lo que hace esta
+     * ruta es actualizar la bolsa; el que llama nunca ha mandado el objeto
+     * entero. Se ajusta la ruta a cómo se usa, no al revés.
+     *
+     * `null` explícito SÍ borra —es como se quita un tope—; lo que ya no borra
+     * es la ausencia. */
+    const fila = {
+      evento_id: eventoId,
+      updated_by: req.user.id,
+      updated_at: new Date().toISOString(),
+    };
+    if ('total' in (req.body || {})) fila.total = total;
+    if ('cuota_defecto' in (req.body || {})) fila.cuota_defecto = aEntero(req.body.cuota_defecto);
+    if ('nota' in (req.body || {})) {
+      fila.nota = req.body.nota ? String(req.body.nota).slice(0, 300) : null;
+    }
+
     const { data, error } = await supabase
       .from('evento_bolsa_puntos')
-      .upsert({
-        evento_id: eventoId, total, cuota_defecto: cuotaDefecto,
-        nota: req.body?.nota ? String(req.body.nota).slice(0, 300) : null,
-        updated_by: req.user.id, updated_at: new Date().toISOString(),
-      }, { onConflict: 'evento_id' })
+      .upsert(fila, { onConflict: 'evento_id' })
       .select('*').single();
     if (error) return res.status(503).json({ error: 'Falta aplicar la migración 0057.', detalle: error.message });
     res.json({ bolsa: data });

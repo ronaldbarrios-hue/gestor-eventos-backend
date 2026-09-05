@@ -47,3 +47,20 @@ test('la regla de acceso vive en la puerta, y se comprueba', () => {
   assert.match(clientes, /puerta\.tipos\.includes\(ticket\.ticket_type_id\)/,
     'la puerta dejó de comprobar qué tipos de boleta admite: ahora no queda ninguna regla de acceso viva');
 });
+
+test('un PUT parcial no borra lo que no le mandaron', () => {
+  /* La bolsa de puntos escribía sus tres campos siempre, y la pantalla sólo
+     manda el total: guardar el total ponía la nota y la cuota por defecto a
+     null. Un ajuste que se borra al tocar otro distinto no lo relaciona nadie,
+     porque el guardado que lo borró decía «guardado».
+
+     `null` explícito tiene que seguir borrando —es como se quita un tope—; lo
+     que no puede borrar es la AUSENCIA. */
+  const src = leer('routes/networking.js');
+  const i = src.indexOf("router.put('/:eventoId/expositores/bolsa'");
+  const bloque = src.slice(i, src.indexOf('});', src.indexOf('.upsert(', i)));
+  assert.match(bloque, /if \('total' in \(req\.body \|\| \{\}\)\)/,
+    'la bolsa vuelve a escribir todos los campos: guardar uno borra los otros');
+  assert.ok(!/cuota_defecto: cuotaDefecto/.test(bloque),
+    'la cuota por defecto se vuelve a escribir aunque no venga en el cuerpo');
+});

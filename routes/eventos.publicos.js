@@ -17,7 +17,7 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
    El servidor es la autoridad, pero sólo si sirve lo que guarda. */
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
-const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { conSitio } = require('../lib/eventoSitio.js');
 const { bloqueDeSeccion } = require('../lib/bloquesLanding.js');
 const {
@@ -120,11 +120,16 @@ router.get('/ticket/:codigo', async (req, res) => {
      alguien mira su entrada en la puerta del evento. Si la base de un
      despliegue no tiene la 0093, el select falla ENTERO y lo que se rompe no es
      un enlace de más: es la boleta. */
+  /* `tipo.precio` viaja para poder distinguir dos cosas que se ven iguales en
+     pantalla: una reserva gratuita legítimamente «apartada», y una compra cuyo
+     pago no se completó. La segunda tiene que enterarse ANTES de plantarse en
+     la puerta, y sin el precio no hay forma de saber cuál es cuál. */
   const COLS = (extra) => `
       id, codigo, qr_token, estado, precio_pagado, created_at, checked_in_at, respuestas,
       guest_nombre, guest_email, user_id,
-      tipo:ticket_types!ticket_type_id(nombre, descripcion, currency, es_expositor${extra}),
-      evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json)
+      tipo:ticket_types!ticket_type_id(nombre, descripcion, precio, currency, es_expositor${extra}),
+      evento:eventos!evento_id(id, slug, titulo, fecha_inicio, fecha_fin, location_nombre, cover_url, page_json,
+                               modalidad, url_virtual, timezone)
     `;
 
   let { data, error } = await supabase
@@ -435,7 +440,7 @@ router.get('/slug/:slug', async (req, res) => {
       categoria:categorias(slug, nombre),
       organizador:profiles!owner_id(nombre, handle, avatar_url, empresa, branding, empresa_logo_url),
       ticket_types(id, nombre, descripcion, precio, currency, cupo, vendidos,
-                   early_bird_precio, early_bird_hasta, venta_hasta, zonas_acceso, orden, activo)
+                   early_bird_precio, early_bird_hasta, venta_hasta, orden, activo)
     `)
     .eq('slug', slug)
     .is('deleted_at', null)
@@ -552,12 +557,23 @@ router.get('/slug/:slug', async (req, res) => {
   try {
     const { data: proximas } = await supabase
       .from('agenda_sessions')
-      .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, requiere_inscripcion')
+      .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, inscritos, requiere_inscripcion')
       .eq('evento_id', evento.id)
       .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
       .order('inicio', { ascending: true })
       .limit(24);
-    evento.agenda = proximas || [];
+    /* `libres` y `lleno` calculados aquí y no en la pantalla, igual que en
+       `mapa_sesiones` y por la misma razón: la resta se hace en UN sitio. Dos
+       pantallas restando por su cuenta acaban discrepando —una cuenta las
+       canceladas y la otra no— y entonces la misma actividad dice «quedan 3»
+       en el mapa y «completo» en la agenda.
+       Es el dato que cambia lo que hace quien lo lee: «me apunto luego» y «me
+       apunto ya» no son la misma decisión. */
+    evento.agenda = (proximas || []).map(s => ({
+      ...s,
+      libres: s.cupo == null ? null : Math.max(0, s.cupo - (s.inscritos || 0)),
+      lleno : s.cupo != null && (s.inscritos || 0) >= s.cupo,
+    }));
   } catch { evento.agenda = []; }
 
   try {
@@ -705,9 +721,9 @@ router.get('/slug/:slug', async (req, res) => {
 /* Carga pública (solo lectura) de un torneo: equipos + partidos sin datos
    sensibles. Reutilizada por la vista singular y la de un torneo concreto. */
 async function cargarTorneoPublico(torneo) {
-  const { data: equipos } = await supabase
+  const { data: equipos, error: eEquipos } = await supabase
     .from('torneo_equipos').select('id, nombre, foto_url').eq('torneo_id', torneo.id).order('created_at', { ascending: true });
-  const { data: partidos } = await supabase
+  const { data: partidos, error: ePartidos } = await supabase
     .from('torneo_partidos')
     .select('id, ronda, orden, equipo_a_id, equipo_b_id, marcador_a, marcador_b, estado, cancha, fecha_hora, fase, grupo')
     .eq('torneo_id', torneo.id)
@@ -729,6 +745,12 @@ async function cargarTorneoPublico(torneo) {
     .eq('torneo_id', torneo.id)
     .order('inicio', { ascending: true })
     .limit(1);
+
+  /* Esto lo ve el PÚBLICO: una llave vacía se lee como «el torneo aún no
+     tiene equipos», y con eso alguien decide no venir. Si lo que pasó es que
+     no pudimos leerlo, al menos queda dicho dónde mirar. */
+  if (eEquipos)  console.error(`[público] equipos del torneo ${torneo.id}: ${eEquipos.message}`);
+  if (ePartidos) console.error(`[público] partidos del torneo ${torneo.id}: ${ePartidos.message}`);
 
   return {
     torneo,
@@ -761,10 +783,13 @@ async function eventoPublicado(slug, requesterId) {
 router.get('/slug/:slug/torneos', async (req, res) => {
   const evento = await eventoPublicado(req.params.slug, req.user?.id);
   if (!evento) return res.status(404).json({ error: 'Evento no disponible.' });
-  const { data: torneos } = await supabase
+  const { data: torneos, error: eTorneos } = await supabase
     .from('torneos').select('id, nombre, formato, estado, disciplina, fase_actual, orden')
     .eq('evento_id', evento.id)
     .order('orden', { ascending: true }).order('created_at', { ascending: true });
+  /* Lista vacía en público = «este evento no tiene torneos». Es una afirmación,
+     y aquí se estaba haciendo también cuando la consulta fallaba. */
+  if (eTorneos) console.error(`[público] torneos de ${evento.id}: ${eTorneos.message}`);
   res.json({ torneos: torneos || [] });
 });
 
@@ -926,9 +951,33 @@ router.get('/slug/:slug/ranking', async (req, res) => {
    cupo es tuyo hasta las 19:40" en vez de dejar que la persona rellene el
    formulario entero y se entere al final de que llegó tarde. No devuelve el
    correo ni el nombre de nadie: sólo si vale, para qué boleta y hasta cuándo. */
+/* Por qué no vale, cuando no vale.
+ *
+ * Antes esto era un único `valida: false` y la página contestaba lo mismo a
+ * tres personas muy distintas — entre ellas, a quien YA COMPRÓ con ese enlace:
+ * se le decía «sigues en la fila, si se libera otro te avisamos», y esa
+ * persona se queda esperando un correo que no va a llegar porque ya tiene su
+ * boleta. Decirlo mal es peor que no decir nada.
+ *
+ * Se puede distinguir porque `consumirOferta` ya no borra el token: la fila
+ * sigue ahí, con su estado. No se devuelve ni el correo ni el nombre — sólo el
+ * motivo, que es lo que la pantalla necesita para escribir una frase cierta. */
+async function porQueNoVale(token) {
+  if (!token || typeof token !== 'string') return 'desconocido';
+  const { data } = await supabase
+    .from('event_waitlist')
+    .select('estado, oferta_expira')
+    .eq('oferta_token', token)
+    .maybeSingle();
+  if (!data) return 'desconocido';
+  if (data.estado === 'purchased') return 'ya_usado';
+  if (data.estado === 'contacted') return 'vencido';   // sigue siendo suya, pero pasó el plazo
+  return 'paso_al_siguiente';                          // 'expired' / 'active': el barrido ya la movió
+}
+
 router.get('/cupo/:token', async (req, res) => {
   const oferta = await validarOferta(req.params.token);
-  if (!oferta) return res.json({ valida: false });
+  if (!oferta) return res.json({ valida: false, motivo: await porQueNoVale(req.params.token) });
 
   const { data: tipo } = await supabase
     .from('ticket_types').select('id, nombre').eq('id', oferta.ticket_type_id).maybeSingle();
@@ -974,7 +1023,9 @@ router.get('/slug/:slug/agenda', async (req, res) => {
   /* Sin la 0055 esas columnas no existen y el select falla entero. Se
      reintenta sin ellas: la agenda se sigue viendo, sólo que sin inscripción. */
   if (eSes) {
-    const { data: basico } = await supabase
+    /* Es la agenda que ve el público. Vacía se lee como «este evento no tiene
+       programa», y con eso alguien decide no venir. */
+    const { data: basico, error: eBasico } = await supabase
       .from('agenda_sessions')
       .select(`id, titulo, descripcion, inicio, fin, track, ubicacion, tipo, torneo_id, expositor_id,
                speaker:speakers!speaker_id(id, nombre, foto_url, empresa),
@@ -982,6 +1033,7 @@ router.get('/slug/:slug/agenda', async (req, res) => {
       .eq('evento_id', evento.id)
       .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
       .order('inicio', { ascending: true });
+    if (eBasico) console.error(`[público] agenda de ${evento.id} (camino básico): ${eBasico.message}`);
     return res.json({ evento_id: evento.id, evento, sessions: basico || [], preguntas: {}, inscripcion_lista: false });
   }
 
@@ -1268,6 +1320,20 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   const codigo = generarCodigo();
   const estado = esGratis ? 'pagado' : 'emitido';
 
+  /* El token se quema AQUÍ, justo antes de emitir, y no después: a quien trae
+     el enlace del correo se le descuenta su propia oferta del aforo, así que
+     éste es el único camino sin control de cupo. Si dos peticiones traen el
+     mismo token —un doble toque en el móvil— sólo una se lleva el sitio.
+
+     Tan tarde como se puede a propósito: todo lo que puede fallar y devolver
+     un 400 ya pasó, de modo que nadie pierde su enlace por un campo mal
+     rellenado. */
+  if (ofertaMia && !(await consumirOferta(ofertaMia.id))) {
+    return res.status(409).json({
+      error: 'Ese enlace de cupo ya se usó. Si acabas de reservar, revisa tu correo: la boleta ya está emitida.',
+    });
+  }
+
   const { data: ticket, error: e3 } = await supabase
     .from('tickets')
     .insert({
@@ -1285,7 +1351,12 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     .select()
     .single();
 
-  if (e3) return res.status(500).json({ error: e3.message });
+  if (e3) {
+    /* La oferta ya se tomo y la boleta no salio: se devuelve, o esa
+       persona se queda sin sitio Y sin boleta. */
+    if (ofertaMia) await devolverOferta(ofertaMia.id);
+    return res.status(500).json({ error: e3.message });
+  }
 
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
@@ -1296,10 +1367,6 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   anotarConstancia('tickets', ticket.id, evento.id, req.body.legal_aceptado);
 
   await supabase.from('ticket_types').update({ vendidos: (tipo.vendidos || 0) + 1 }).eq('id', tipo.id);
-
-  /* La boleta ya existe: se cierra la entrada en la lista y se quema el token
-     para que el enlace del correo no sirva dos veces. */
-  if (ofertaMia) await consumirOferta(ofertaMia.id);
 
   if (esGratis) {
     /* Sale ya pagada, así que el uso del código se cuenta aquí: esta boleta no

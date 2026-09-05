@@ -90,12 +90,28 @@ test('ningún rol concede un permiso que no esté en el catálogo', () => {
   /* El catálogo vive en el frontend (`src/lib/permisos.js`) porque es lo que
      pinta la pantalla de roles. Un permiso sembrado que no esté ahí no se
      puede ni ver ni quitar desde la interfaz: queda concedido a ciegas. */
-  const catalogo = path.join(
-    __dirname, '..', '..', 'gestor-eventos-frontend', 'src', 'lib', 'permisos.js',
-  );
-  if (!fs.existsSync(catalogo)) return;   // repos separados: no es un fallo
+  /* Se mira el checkout principal Y los worktrees.
+   *
+   * Los dos repos se tocan a la vez cuando se añade un permiso, y el frontend
+   * se suele trabajar en un worktree — así que mirando sólo el checkout
+   * principal esta prueba se pone roja por un cambio que SÍ está hecho, sólo
+   * que en otra rama. Una prueba que falla por dónde miró enseña a ignorarla,
+   * que es justo lo contrario de lo que hace falta aquí.
+   *
+   * Basta con que UNO de los catálogos conozca el permiso: si está escrito en
+   * alguna rama viva, no se concedió a ciegas. */
+  const raizFront = path.join(__dirname, '..', '..', 'gestor-eventos-frontend');
+  const candidatos = [path.join(raizFront, 'src', 'lib', 'permisos.js')];
+  const wt = path.join(raizFront, '.claude', 'worktrees');
+  if (fs.existsSync(wt)) {
+    for (const d of fs.readdirSync(wt)) {
+      candidatos.push(path.join(wt, d, 'src', 'lib', 'permisos.js'));
+    }
+  }
+  const presentes = candidatos.filter(c => fs.existsSync(c));
+  if (presentes.length === 0) return;   // repos separados: no es un fallo
 
-  const txt = fs.readFileSync(catalogo, 'utf8');
+  const txt = presentes.map(c => fs.readFileSync(c, 'utf8')).join('\n');
   const conocidos = new Set([...txt.matchAll(/id:\s*'([\w_]+)'/g)].map(m => m[1]));
   assert.ok(conocidos.size > 15, 'no reconozco el catálogo de permisos: revisa la prueba');
 

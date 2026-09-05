@@ -56,10 +56,15 @@ router.get('/:eventoId/torneos', sesion('Las llaves y la tabla son públicas en 
 /* Carga completa de un torneo (equipos + partidos). Reutilizado por el GET
    por-id y por el GET singular retrocompatible. */
 async function cargarTorneo(torneo) {
-  const { data: equipos } = await supabase
+  const { data: equipos, error: eEquipos } = await supabase
     .from('torneo_equipos').select('*').eq('torneo_id', torneo.id).order('created_at', { ascending: true });
-  const { data: partidos } = await supabase
+  const { data: partidos, error: ePartidos } = await supabase
     .from('torneo_partidos').select('*').eq('torneo_id', torneo.id).order('ronda', { ascending: true }).order('orden', { ascending: true });
+  /* Un torneo sin equipos y un torneo que no se pudo leer se ven idénticos en
+     la pantalla: los dos son una llave vacía. Y la segunda es la que hace que
+     alguien vuelva a generar el fixture encima de uno que ya existía. */
+  if (eEquipos)  console.error(`[torneos] equipos de ${torneo.id}: ${eEquipos.message}`);
+  if (ePartidos) console.error(`[torneos] partidos de ${torneo.id}: ${ePartidos.message}`);
   return { torneo, equipos: equipos || [], partidos: partidos || [] };
 }
 
@@ -970,10 +975,13 @@ router.put('/:eventoId/torneo/:torneoId/formulario', exige(PERMS_TORNEO), async 
       if (error) return res.status(500).json({ error: error.message });
     }
 
-    const { data: final } = await supabase
+    const { data: final, error: eFinal } = await supabase
       .from('event_form_fields').select(COLUMNAS_CAMPO)
       .eq('evento_id', eventoId).eq('torneo_id', torneoId)
       .order('orden', { ascending: true });
+    /* Se acaban de guardar: si la relectura falla y se devuelve una lista
+       vacía, el panel enseña que no hay campos justo después de crearlos. */
+    if (eFinal) console.error(`[torneos] releer campos de ${torneoId}: ${eFinal.message}`);
 
     res.json({ campos: final || [] });
   } catch (e) {

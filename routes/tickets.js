@@ -19,7 +19,25 @@ function assertOwner(eventoId, userId) {
 const CAMPOS_EDITABLES = [
   'nombre', 'descripcion', 'precio', 'currency',
   'cupo', 'early_bird_precio', 'early_bird_hasta', 'venta_hasta',
-  'zonas_acceso', 'orden', 'activo', 'es_expositor',
+  'orden', 'activo', 'es_expositor',
+  /* `zonas_acceso` NO está aquí, y su ausencia es una decisión.
+   *
+   * Era un interruptor muerto de tres caras: se podía escribir por la API,
+   * viajaba en la página pública del evento, y **no lo comprobaba nadie**.
+   * Quien lo pusiera —por MCP, o desde una pantalla futura— se quedaría
+   * creyendo que su boleta VIP abre la zona VIP, y en la puerta no cambiaría
+   * nada. Una API que acepta un ajuste y lo ignora es peor que una que dice
+   * que no.
+   *
+   * Quién manda de verdad: la PUERTA. `zonas.reglas.tipos` dice qué tipos de
+   * boleta admite cada puerta, y eso sí se comprueba al escanear
+   * (`routes/clientes.js`, «Puerta restringida a ciertos tipos»). Es una sola
+   * regla y en un solo sitio; tenerla también del lado de la boleta eran dos
+   * fuentes para lo mismo, que es como se acaban contradiciendo.
+   *
+   * Medido antes de quitarlo: cero tipos de boleta en producción lo tenían
+   * puesto. No se pierde nada de nadie. La columna se queda —quitarla es
+   * contract y no toca—, sólo deja de ofrecerse. */
   /* 0093: qué crea esta boleta al pagarse. `es_expositor` sigue en la lista
      porque el panel viejo, mientras no se despliegue el nuevo, es quien la
      escribe —y un trigger mantiene las dos de acuerdo. */

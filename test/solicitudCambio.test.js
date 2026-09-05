@@ -66,11 +66,29 @@ test('crear una solicitud NO aplica nada', () => {
     'crear la solicitud escribe en `event_members`: entonces no es una solicitud, es una edición');
 });
 
-test('sólo quien organiza puede aplicar', () => {
+test('aplicar un cambio pide permiso, no basta con estar en el equipo', () => {
+  /* Era «sólo el dueño», y eso dejaba al organizador de un evento de siete mil
+     personas como el único que puede aprobar que a alguien le corrijan una
+     letra del nombre en la escarapela. Ahora se delega con
+     `gestionar_solicitudes` — pero lo que NO puede volver es que baste con
+     pertenecer al equipo: entonces cualquiera edita la ficha de cualquiera. */
   const iPatch = LIMPIO.indexOf("router.patch('/eventos/:eventoId/solicitudes/:id'");
   const bloque = LIMPIO.slice(iPatch, iPatch + 800);
-  assert.match(bloque, /if \(!isOwner\) return res\.status\(403\)/,
-    'el guardia de dueño desapareció del PATCH: cualquiera del equipo aplicaría cambios');
+  assert.match(bloque, /if \(!puedeAtender\) \{/,
+    'el guardia desapareció del PATCH: cualquiera del equipo aplicaría cambios');
+  assert.match(bloque, /res\.status\(403\)/,
+    'el guardia no rechaza con 403');
+});
+
+test('el permiso sale del catálogo y del helper, no escrito a mano', () => {
+  /* La columna se llama `custom_permissions` y el join `rol_detail`. Escritos a
+     mano y mal, no darían error: devolverían un conjunto vacío y dejarían fuera
+     a todo el mundo sin decir por qué. */
+  assert.match(LIMPIO, /permisosDeMiembro\(m\)\.has\('gestionar_solicitudes'\)/,
+    'los permisos del miembro se vuelven a calcular a mano');
+  const catalogo = fs.readFileSync(path.join(__dirname, '..', 'core', 'permisos', 'catalogo.js'), 'utf8');
+  assert.match(catalogo, /id: 'gestionar_solicitudes'/,
+    'el permiso no está en el catálogo: el panel no podría concederlo');
 });
 
 test('el cambio se aplica ANTES de cerrar la solicitud', () => {

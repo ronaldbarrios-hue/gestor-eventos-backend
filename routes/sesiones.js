@@ -28,6 +28,7 @@
 const express = require('express');
 const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
+const { horaDelEscaneo } = require('../lib/horaDeEscaneo.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -252,6 +253,41 @@ publico.post('/slug/:slug/sesiones/:sesionId/inscribir', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
+  /* El cupo, comprobado OTRA VEZ y ahora de verdad.
+   *
+   * La comprobación de arriba lee el contador y después inserta, y entre las
+   * dos cosas cabe otra inscripción: dos personas que pulsan a la vez por la
+   * última plaza pasan las dos. En un taller eso son dos sillas para una, y se
+   * descubre en la puerta del taller.
+   *
+   * Aquí ya se puede decidir sin ambigüedad: el disparador
+   * `trg_sync_inscritos_sesion` mantiene el contador, así que después de mi
+   * `insert` la fila existe y se puede contar CUÁNTAS entraron antes que la
+   * mía. Si antes que yo ya había tantas como plazas, el que sobra soy yo — y
+   * el criterio es el mismo para las dos peticiones que compiten, así que
+   * exactamente una se queda.
+   *
+   * Se deshace la propia inscripción y se contesta lo mismo que si se hubiera
+   * llegado tarde por un segundo, que es lo que pasó. */
+  if (sesion.cupo != null) {
+    const { count: antesQueYo, error: eCuenta } = await supabase
+      .from('sesion_inscripciones')
+      .select('id', { count: 'exact', head: true })
+      .eq('session_id', sesion.id)
+      .neq('estado', 'cancelada')
+      .lt('created_at', inscripcion.created_at);
+
+    /* Si no se puede contar, se deja la inscripción: perder una plaza por una
+       consulta que falló es peor que arriesgar una de más, y esto ya pasó el
+       control de arriba. Queda en el log. */
+    if (eCuenta) {
+      console.error(`[sesiones] no se pudo confirmar el cupo de ${sesion.id}: ${eCuenta.message}`);
+    } else if ((antesQueYo || 0) >= sesion.cupo) {
+      await supabase.from('sesion_inscripciones').delete().eq('id', inscripcion.id);
+      return res.status(409).json({ error: 'Este sub-evento ya está lleno.' });
+    }
+  }
+
   /* Constancia de aceptación (0069). Mejor esfuerzo, después de inscribir. */
   anotarConstancia('sesion_inscripciones', inscripcion.id, evento.id, req.body?.legal_aceptado);
 
@@ -445,12 +481,15 @@ panel.put('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: 
         .update({ formulario_modo: modoQueToca }).eq('id', sesionId);
     }
 
-    const { data: final } = await supabase
+    const { data: final, error: eFinal } = await supabase
       .from('event_form_fields')
       .select(COLUMNAS_CAMPO)
       .eq('evento_id', eventoId)
       .eq('session_id', sesionId)
       .order('orden', { ascending: true });
+    /* Relectura después de guardar el formulario: una lista vacía dice que se
+       perdieron las preguntas que se acaban de escribir. */
+    if (eFinal) console.error(`[sesiones] releer campos de ${sesionId}: ${eFinal.message}`);
 
     res.json({ campos: final || [], formulario_modo: modoQueToca });
   } catch (e) { fallo(res, e); }
@@ -505,6 +544,12 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', sesion("Panel del evento:
   const codigo = String(req.body?.codigo || '').trim().toUpperCase();
   const qrToken = req.body?.qr_token || null;
   const inscripcionId = req.body?.inscripcion_id || null;
+  /* `at` (opcional): la hora REAL del escaneo cuando viene de la cola sin
+     conexión de la puerta del taller. Sin esto, todos los que entraron durante
+     un corte de red aparecerían apelotonados en el minuto en que volvió el
+     wifi — y «cuánta gente había a las 4» es justo lo que se mira después.
+     Misma validación que el control de ingreso, y en el mismo sitio. */
+  const asistioAt = horaDelEscaneo(req.body?.at);
 
   try {
     const evento = await assertPermiso(eventoId, req.user.id, PERMS_MARCAR, 'id, owner_id');
@@ -552,7 +597,7 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', sesion("Panel del evento:
 
     const { data, error } = await supabase
       .from('sesion_inscripciones')
-      .update({ estado: 'asistio', asistio_at: new Date().toISOString() })
+      .update({ estado: 'asistio', asistio_at: asistioAt })
       .eq('id', insc.id)
       .select('id, estado, asistio_at, nombre, email')
       .single();

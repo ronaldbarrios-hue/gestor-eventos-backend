@@ -62,13 +62,16 @@ router.get('/me/loyalty/cliente', sesion("Sus puntos y sus insignias. Cuelgan de
       .sort((a, b2) => a.costo_puntos - b2.costo_puntos),
   }));
 
-  const { data: canjes } = await supabase
+  /* Sin mirar el error, «no has canjeado nada» y «no pude consultarlo» se
+     escriben igual — y lo primero se lee como que un premio no se entregó. */
+  const { data: canjes, error: eCanjes } = await supabase
     .from('canjes')
     .select('id, titulo, costo_puntos, codigo, estado, created_at, organizador_id')
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false })
     .limit(20);
 
+  if (eCanjes) console.error(`[fidelidad] canjes de ${req.user.id}: ${eCanjes.message}`);
   res.json({ comunidades, canjes: canjes || [] });
 });
 

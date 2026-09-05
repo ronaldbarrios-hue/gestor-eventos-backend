@@ -96,7 +96,7 @@ router.get('/:codigo/panel', cargarEquipo, async (req, res) => {
 
   /* Cuándo juega. Es lo primero que se pregunta quien abre esto, y sale de los
      partidos ya programados; sin fixture todavía no hay respuesta y se dice. */
-  const { data: partidos } = await supabase
+  const { data: partidos, error: ePartidos } = await supabase
     .from('torneo_partidos')
     .select('id, ronda, orden, fecha_hora, cancha, estado, marcador_a, marcador_b, equipo_a_id, equipo_b_id')
     .eq('torneo_id', torneo.id)
@@ -104,8 +104,13 @@ router.get('/:codigo/panel', cargarEquipo, async (req, res) => {
     .order('ronda', { ascending: true }).order('orden', { ascending: true });
 
   /* Los nombres de los rivales, para no enseñar un uuid. */
-  const { data: rivales } = await supabase
+  if (ePartidos) console.error(`[equipo] partidos de ${equipo.id}: ${ePartidos.message}`);
+
+  const { data: rivales, error: eRivales } = await supabase
     .from('torneo_equipos').select('id, nombre, foto_url').eq('torneo_id', torneo.id);
+  /* Sin rivales, el calendario del equipo enseña uuids en vez de nombres — o
+     nada. Quien lo abre es alguien buscando contra quién juega. */
+  if (eRivales) console.error(`[equipo] rivales de ${torneo.id}: ${eRivales.message}`);
 
   res.json({
     equipo,

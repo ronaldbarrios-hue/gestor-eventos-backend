@@ -3,6 +3,7 @@ const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/p
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
+const { horaDelEscaneo } = require('../lib/horaDeEscaneo.js');
 const { otorgarPuntos, otorgarBadge, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -99,6 +100,11 @@ function puedeAtenderPuerta(puerta, userId, evCtx) {
 router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const { q, estado, ticket_type_id, limit = 100, page = 1 } = req.query;
+  /* El filtro «sin pagar» necesita cruzar con el tipo de boleta para mirar su
+     precio, y eso pide un `inner join`. En los demas casos NO se pone: un
+     inner join descartaria las boletas cuyo tipo se borro, y esas tambien
+     tienen que salir en la lista. */
+  const unido = estado === 'sin_pagar' ? '!inner' : '';
   const desde = (Number(page) - 1) * Number(limit);
   const hasta = desde + Number(limit) - 1;
 
@@ -116,13 +122,24 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
         id, codigo, qr_token, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, acceso, created_at,
         guest_email, guest_nombre, respuestas,
         usuario:profiles!user_id(id, nombre, email, avatar_url),
-        tipo:ticket_types!ticket_type_id(id, nombre, precio, currency)
+        tipo:ticket_types!ticket_type_id${unido}(id, nombre, precio, currency)
       `, { count: 'exact' })
       .eq('evento_id', eventoId)
       .order('created_at', { ascending: false })
       .range(desde, hasta);
 
-    if (estado)         query = query.eq('estado', estado);
+    if (estado === 'sin_pagar') {
+      /* «Sin pagar» no es un estado de la boleta, es una pregunta: quien
+         empezo una compra y no la termino. `emitido` solo no sirve para
+         contestarla, porque tambien son `emitido` las reservas gratuitas
+         —legitimamente apartadas— y en un evento con entradas gratis y de
+         pago la lista sale mezclada y no se puede perseguir a nadie.
+         Por eso se pide ademas que la boleta COSTARA dinero: el `!inner` es
+         lo que permite filtrar por el precio de su tipo. */
+      query = query.eq('estado', 'emitido').is('precio_pagado', null).gt('tipo.precio', 0);
+    } else if (estado) {
+      query = query.eq('estado', estado);
+    }
     if (ticket_type_id) query = query.eq('ticket_type_id', ticket_type_id);
     if (q) {
       /* Búsqueda en email o nombre del invitado */
@@ -146,11 +163,15 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
     /* Campos del formulario personalizado (id + etiqueta), para que el
        frontend pueda "traducir" las claves de `respuestas` (que se guardan
        por id de campo) a su texto real en vez de mostrar el UUID crudo. */
-    const { data: camposForm } = await supabase
+    /* Sin estos campos las respuestas del formulario salen con el UUID del
+       campo por etiqueta — que es lo que este select vino a evitar. */
+    const { data: camposForm, error: eCampos } = await supabase
       .from('event_form_fields')
       .select('id, etiqueta, tipo, orden')
       .eq('evento_id', eventoId)
       .order('orden', { ascending: true });
+
+    if (eCampos) console.error(`[clientes] campos del formulario de ${eventoId}: ${eCampos.message}`);
 
     res.json({
       clientes: data || [],
@@ -308,17 +329,42 @@ router.get('/:eventoId/dinero', exige(['ver_pagos']), async (req, res) => {
     /* Lo que registraron las pasarelas. Va aparte del conteo de arriba a
        propósito: son dos fuentes distintas, y cuando NO cuadran es justo lo que
        hay que poder ver. */
-    const { data: tx } = await supabase
+    /* Las columnas se llaman `provider`, `status` y `currency`.
+     *
+     * Aquí se pedían en español —`proveedor`, `estado`, `moneda`— y ninguna de
+     * las tres existe. PostgREST contesta con un ERROR, no con filas a medias,
+     * así que `data` venía null; y el error se tiraba al desestructurar sólo
+     * `data`. Resultado: `transacciones: []` siempre, y el panel de «lo que
+     * registraron las pasarelas» llevaba vacío desde que se escribió. Medido en
+     * producción: cuatro transacciones que nunca se enseñaron.
+     *
+     * Duele el doble por lo que dice el comentario de arriba: ese panel existe
+     * para poder ver cuándo las DOS fuentes no cuadran. Esa comparación no se
+     * ha podido hacer nunca.
+     *
+     * Se renombran en el select en vez de tocar la pantalla: los nombres que
+     * lee el panel se quedan igual, y la traducción vive donde está la consulta.
+     */
+    const { data: tx, error: eTx } = await supabase
       .from('payment_transactions')
-      .select('id, proveedor, estado, monto, moneda, created_at')
+      .select('id, proveedor:provider, estado:status, monto, moneda:currency, created_at')
       .eq('evento_id', eventoId)
       .order('created_at', { ascending: false })
       .limit(100);
+
+    /* Y el error se MIRA. Ésta es la pantalla del dinero: una lista vacía aquí
+       se lee como «las pasarelas no registraron nada», que es una afirmación
+       muy distinta de «no pude consultarlo». */
+    if (eTx) console.error(`[dinero] no se pudieron leer las transacciones: ${eTx.message}`);
 
     res.json({
       total,
       por_tipo: Object.values(porTipo).sort((a, b) => b.cobrado.dinero - a.cobrado.dinero),
       transacciones: tx || [],
+      /* Para que la pantalla pueda decir «no pude consultarlo» en vez de
+         callar. Sin esto, el arreglo de hoy tapa el síntoma y el día que la
+         consulta vuelva a fallar pasa lo mismo otra vez. */
+      transacciones_error: Boolean(eTx),
     });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -644,13 +690,10 @@ router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la 
   const { eventoId } = req.params;
   const { qr_token, codigo, acceso_id, at } = req.body;
   if (!qr_token && !codigo) return res.status(400).json({ error: 'qr_token o codigo requerido.' });
-  /* `at` (opcional): hora real del escaneo cuando viene de la cola OFFLINE.
-     Se valida que sea una fecha razonable (no futura, no antiquísima). */
-  let checkinAt = new Date().toISOString();
-  if (typeof at === 'string') {
-    const t = new Date(at).getTime();
-    if (Number.isFinite(t) && t <= Date.now() + 60000 && t > Date.now() - 30 * 24 * 3600 * 1000) checkinAt = new Date(t).toISOString();
-  }
+  /* `at` (opcional): la hora REAL del escaneo cuando viene de la cola sin
+     conexión. La validación vive en `lib/horaDeEscaneo.js`, compartida con la
+     puerta de los sub-eventos. */
+  const checkinAt = horaDelEscaneo(at);
 
   try {
     const evCtx = await assertCheckinAccess(eventoId, req.user.id);
@@ -711,13 +754,45 @@ router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la 
       advertencia = `Esta boleta (${ticket.tipo?.nombre || 'sin tipo'}) no corresponde a ${puerta.nombre}.`;
     }
 
-    const { data: updated, error: e2 } = await supabase
+    /* La marca de «usada» es la CERRADURA, no el `if` de arriba.
+     *
+     * Entre leer el estado y escribirlo cabe otro escaneo, y aquí eso pasa de
+     * verdad: en un evento hay VARIAS PUERTAS escaneando a la vez, y encima la
+     * cola sin conexión se vacía sola cuando vuelve la red. Dos escaneos del
+     * mismo QR leerían los dos «pagado», los dos pasarían el control, y
+     * entonces falla justo lo que este control existe para impedir: la misma
+     * boleta entrando dos veces sin que nadie se entere. Además contaría dos
+     * ingresos y pagaría dos veces los puntos de asistencia.
+     *
+     * Con `.neq('estado','usado')` dentro del propio `update`, comparar y
+     * escribir son una sola operación en la base: el segundo escaneo no
+     * encuentra fila y cae al mismo 409 de «ya fue usada» que habría visto si
+     * hubiera llegado un segundo después. */
+    const { data: marcadas, error: e2 } = await supabase
       .from('tickets')
       .update({ estado: 'usado', checked_in_at: checkinAt, acceso: puerta?.nombre || null })
       .eq('id', ticket.id)
-      .select(`*, tipo:ticket_types!ticket_type_id(nombre)`)
-      .single();
+      .neq('estado', 'usado')
+      .select(`*, tipo:ticket_types!ticket_type_id(nombre)`);
     if (e2) return res.status(500).json({ error: e2.message });
+
+    if (!marcadas || marcadas.length === 0) {
+      /* Otro escáner llegó primero, por milisegundos. Se contesta lo mismo que
+         si hubiera llegado antes: quien está en la puerta necesita el mismo
+         aviso, no un error raro. Se relee para poder decir a qué hora entró. */
+      const { data: yaEstaba } = await supabase
+        .from('tickets')
+        .select(`*, tipo:ticket_types!ticket_type_id(nombre)`)
+        .eq('id', ticket.id).maybeSingle();
+      return res.status(409).json({
+        error: 'Esta boleta ya fue usada.',
+        ticket: yaEstaba || ticket,
+        sound: 'error',
+        ya_usada: true,
+        checked_in_at: yaEstaba?.checked_in_at || null,
+      });
+    }
+    const updated = marcadas[0];
 
     /* Gamificación escopada por organizador (best-effort) */
     const organizadorId = evCtx?.owner_id;

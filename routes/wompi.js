@@ -13,7 +13,7 @@ const { signTicketQR } = require('../lib/qr.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const { checkoutUrl, verificarEvento } = require('../lib/wompi.js');
 const { confirmarTicketPagado } = require('../lib/confirmarTicket.js');
-const { validarOferta, consumirOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 
 const { sesion, publica } = require('../core/permisos');
@@ -143,16 +143,29 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   const respuestasLimpias = normalizarRespuestas(campos, respuestas);
 
   const codigo = generarCodigo();
+
+  /* Mismo candado que en la reserva y en Mercado Pago: el token se quema antes
+     de emitir, y sólo una petición se lo lleva. */
+  if (ofertaMiaW && !(await consumirOferta(ofertaMiaW.id))) {
+    return res.status(409).json({
+      error: 'Ese enlace de cupo ya se usó. Si acabas de empezar la compra, continúala desde el correo o desde «Mi boleta».',
+    });
+  }
+
   const { data: ticket, error: eT } = await supabase.from('tickets').insert({
     ticket_type_id: tipo.id, evento_id: evento.id,
     guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null,
     codigo, estado: 'emitido', promocion_id: cotiz.promocion?.id || null,
     respuestas: Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
   }).select().single();
-  if (eT) return res.status(500).json({ error: eT.message });
+  if (eT) {
+    /* La oferta ya se tomo y la boleta no salio: se devuelve, o esa
+       persona se queda sin sitio Y sin boleta. */
+    if (ofertaMiaW) await devolverOferta(ofertaMiaW.id);
+    return res.status(500).json({ error: eT.message });
+  }
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
-  if (ofertaMiaW) await consumirOferta(ofertaMiaW.id);
 
   const referencia = `tx_${ticket.id}`;
   const amountInCents = Math.round(precio * 100);

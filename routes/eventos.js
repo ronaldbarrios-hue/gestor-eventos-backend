@@ -647,10 +647,49 @@ router.post('/:id/estado', sesion('Publicar o despublicar exige el permiso `publ
   if (error) return res.status(500).json({ error: error.message });
 
   auditar(req, req.params.id, 'evento.estado', { entidad: 'evento', entidadId: req.params.id, detalle: { estado } });
+
+  /* Qué le falta a lo que se acaba de publicar.
+   *
+   * Publicar sólo comprobaba el PERMISO. Se puede publicar un evento sin una
+   * sola forma de inscribirse, y entonces alguien llega a la página, la lee
+   * entera y no encuentra qué pulsar. Está pasando ahora mismo con un evento
+   * real, publicado y sin tipos de boleta activos.
+   *
+   * No se BLOQUEA la publicación: hay motivos legítimos para publicar antes de
+   * abrir inscripciones —una página de aviso, un evento con registro por
+   * fuera—, y decidirlo por el organizador sería pasarse. Se avisa, que es lo
+   * que faltaba: el panel lo enseña al volver, y quien publique por la API o
+   * por el agente se entera igual, que antes no.
+   *
+   * Va después de escribir el estado: un fallo contando lo que falta no puede
+   * impedir una publicación que ya se autorizó. */
+  let avisos = [];
   if (estado === 'publicado') {
+    try {
+      const { count } = await supabase
+        .from('ticket_types')
+        .select('id', { count: 'exact', head: true })
+        .eq('evento_id', req.params.id).eq('activo', true);
+      if (!count) {
+        avisos.push('No hay tipos de boleta activos: nadie puede inscribirse desde la página.');
+      }
+      if (!data.fecha_inicio) avisos.push('El evento no tiene fecha de inicio.');
+      if (!data.location_nombre && data.modalidad !== 'virtual') {
+        avisos.push('No hay lugar. Es de lo primero que preguntan.');
+      }
+      if (data.modalidad !== 'fisico' && !data.url_virtual) {
+        avisos.push('Es un evento en línea y no tiene enlace de conexión.');
+      }
+    } catch (e) {
+      /* Que no se pueda contar lo que falta no cambia que ya está publicado.
+         Se apunta y se sigue: un aviso ausente es un aviso, no un error. */
+      console.error(`[evento] no se pudieron calcular los avisos de publicación: ${e.message}`);
+    }
+
     dispatch(req.user.id, 'evento.publicado', { evento_id: data.id, titulo: data.titulo, slug: data.slug });
   }
-  res.json({ evento: data });
+
+  res.json({ evento: data, avisos });
 });
 
 /* ══════════════════ Padrón de eventos anteriores ══════════════════

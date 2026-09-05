@@ -40,17 +40,32 @@ const CAMPOS_PEDIBLES = {
 };
 const ESTADOS = ['abierta', 'en_revision', 'resuelta', 'descartada'];
 
-/* owner OR miembro activo */
+/* owner OR miembro activo — y si además puede ATENDERLAS.
+ *
+ * Gestionar solicitudes iba pegado a ser el dueño, y eso deja al organizador
+ * de un evento de siete mil personas como el único que puede aprobar que a
+ * alguien le corrijan una letra del nombre en la escarapela. Ahora hay un
+ * permiso para ello (`gestionar_solicitudes`), así que el dueño puede delegarlo
+ * en quien lleva el equipo — que es de lo que se trataba.
+ *
+ * `puedeAtender` sale aparte de `isOwner` a propósito: el dueño lo puede todo
+ * sin que nadie se lo conceda, y quien no es dueño necesita el permiso escrito.
+ */
 async function assertAccess(eventoId, userId) {
   const { data: ev } = await supabase
     .from('eventos').select('id, owner_id, titulo').eq('id', eventoId).maybeSingle();
   if (!ev) throw new Error('Evento no encontrado.');
-  if (ev.owner_id === userId) return { ev, isOwner: true };
+  if (ev.owner_id === userId) return { ev, isOwner: true, puedeAtender: true };
   const { data: m } = await supabase
-    .from('event_members').select('id')
+    .from('event_members')
+    .select(`id, ${SELECT_PERMISOS}`)
     .eq('evento_id', eventoId).eq('user_id', userId).eq('status', 'active').maybeSingle();
   if (!m) throw new Error('No autorizado.');
-  return { ev, isOwner: false };
+  /* Con el helper de siempre y no a mano: los permisos vienen del rol Y de los
+     sueltos de la persona, y la columna se llama `custom_permissions`. Escrito
+     aquí otra vez, un nombre mal puesto no daría error — devolvería un conjunto
+     vacío y dejaría a todo el mundo fuera sin decir por qué. */
+  return { ev, isOwner: false, puedeAtender: permisosDeMiembro(m).has('gestionar_solicitudes') };
 }
 
 /* ── GET /me/equipo/eventos ───────────────────────────────── */
@@ -253,10 +268,12 @@ router.post('/eventos/:eventoId/solicitudes', sesion('Es del equipo del evento: 
 });
 
 /* ── PATCH /eventos/:eventoId/solicitudes/:id (solo owner) ── */
-router.patch('/eventos/:eventoId/solicitudes/:id', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto.'), async (req, res) => {
+router.patch('/eventos/:eventoId/solicitudes/:id', sesion('Atender solicitudes del equipo: el dueño siempre, y quien tenga `gestionar_solicitudes`. Pertenecer al equipo no basta — aquí se edita la ficha de otra persona.'), async (req, res) => {
   try {
-    const { ev, isOwner } = await assertAccess(req.params.eventoId, req.user.id);
-    if (!isOwner) return res.status(403).json({ error: 'Solo el organizador gestiona las solicitudes.' });
+    const { ev, puedeAtender } = await assertAccess(req.params.eventoId, req.user.id);
+    if (!puedeAtender) {
+      return res.status(403).json({ error: 'Hace falta el permiso «Atender solicitudes del equipo».' });
+    }
 
     const updates = { updated_at: new Date().toISOString() };
     if (req.body.estado && ESTADOS.includes(req.body.estado)) updates.estado = req.body.estado;

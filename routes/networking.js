@@ -75,12 +75,30 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
     return res.status(403).json({ error: e.message });
   }
 
+  /* Sólo los que RECIBEN, y sólo los activos.
+   *
+   * En una rueda se sientan los compradores y rotan los vendedores. Sin este
+   * filtro, quien busca con quién reunirse veía también a los que van a pasar
+   * por las mesas —gente sin horarios que ofrecer— y a los dados de baja. Una
+   * lista donde la mitad no se puede reservar enseña a no fiarse de la lista.
+   *
+   * `rol` nace en `comprador` (0105), así que un evento que no use los tres
+   * papeles sigue viéndolo todo: esto no esconde nada que existiera antes.
+   *
+   * El error se MIRA: sin la 0105 corrida, PostgREST contesta con error y no
+   * con una lista vacía — y sin mirarlo la rueda saldría vacía sin que nadie
+   * supiera por qué. Ya pasó en esta base con `zonas.tipo`. */
   const { data: expositores, error: e1 } = await supabase
     .from('networking_expositores')
     .select(`${COLS_TARJETA}, descripcion`)
     .eq('evento_id', eventoId)
+    .eq('rol', 'comprador')
+    .eq('activo', true)
     .order('nombre', { ascending: true });
-  if (e1) return res.status(500).json({ error: e1.message });
+  if (e1) {
+    console.error(`[networking] la lista de mesas falló (¿falta la 0105?): ${e1.message}`);
+    return res.status(500).json({ error: e1.message });
+  }
 
   const { data: horarios, error: e2 } = await supabase
     .from('networking_horarios')
@@ -89,11 +107,25 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
     .order('inicio', { ascending: true });
   if (e2) return res.status(500).json({ error: e2.message });
 
+  /* Confirmadas Y solicitadas.
+   *
+   * Miraba sólo las confirmadas, y con la rueda en modo «solicitud» eso rompía
+   * el modo entero: pedías una hora, la casilla seguía saliendo libre, y otra
+   * persona la pedía encima. La segunda se llevaba un 409 —o peor, las dos se
+   * presentaban a la misma mesa a la misma hora—.
+   *
+   * Una cancelada sí libera la casilla, y aquí se pinta libre. Ojo con el
+   * porqué, que estaba escrito al revés: el índice único de `networking_citas`
+   * es sobre `horario_id` a secas —no es parcial, comprobado en producción—,
+   * así que la fila cancelada SIGUE ocupando la casilla en la base. Quien la
+   * libera de verdad es la reserva, que reutiliza esa fila cuando choca. Sin
+   * eso, cada cancelación del organizador dejaba una casilla que se veía libre
+   * y contestaba «ya fue reservado» para siempre. */
   const { data: citas, error: e3 } = await supabase
     .from('networking_citas')
     .select('id, horario_id, user_id, estado')
     .eq('evento_id', eventoId)
-    .eq('estado', 'confirmada');
+    .in('estado', ['confirmada', 'solicitada']);
   if (e3) return res.status(500).json({ error: e3.message });
 
   const citaPorHorario = new Map((citas || []).map(c => [c.horario_id, c]));
@@ -110,6 +142,10 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
           fin: h.fin,
           disponible: !cita,
           esMio: cita?.user_id === req.user.id,
+          /* Si es mía, en qué estado. «Pedida» y «Reservada» no son lo mismo
+             para quien está mirando su agenda del día. Sólo viaja cuando es
+             suya: el estado de la cita de otro no es asunto de nadie. */
+          estado: cita?.user_id === req.user.id ? cita.estado : undefined,
         };
       }),
   }));
@@ -236,65 +272,112 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
     .select('id, estado')
     .single();
 
+  let citaId = cita?.id;
+  let estadoFinal = cita?.estado;
+
   if (e2) {
-    if (e2.code === '23505') return res.status(409).json({ error: 'Ese horario ya fue reservado por alguien más.' });
-    return res.status(500).json({ error: e2.message });
+    if (e2.code !== '23505') return res.status(500).json({ error: e2.message });
+
+    /* ── La casilla que se veía libre y no se podía reservar ──────────────
+     *
+     * El índice único de `networking_citas` es sobre `horario_id` A SECAS —
+     * comprobado en producción, no es parcial—. Así que una cita CANCELADA
+     * sigue ocupando su casilla en la base, mientras que la disponibilidad
+     * que se pinta descarta las canceladas y la enseña libre.
+     *
+     * Cancelar desde la parrilla no borra la fila (guarda el histórico y la
+     * nota del equipo), así que cada cancelación del organizador dejaba una
+     * casilla muerta: se veía libre, se pulsaba, y contestaba «ya fue
+     * reservado por alguien más» — por alguien que canceló. Sin forma de
+     * arreglarlo desde ninguna pantalla.
+     *
+     * Se reutiliza esa fila. El `.eq('estado', 'cancelada')` es el candado:
+     * si entre el insert y esto otra persona se llevó la casilla, no toca
+     * ninguna fila y se contesta el 409 de verdad. Las notas se limpian
+     * porque son de la reserva anterior y no de ésta. */
+    const { data: revividas } = await supabase
+      .from('networking_citas')
+      .update({
+        user_id: req.user.id, estado: estadoInicial, creada_por: req.user.id,
+        notas: null, nota_gestor: null,
+      })
+      .eq('horario_id', horarioId)
+      .eq('estado', 'cancelada')
+      .select('id, estado');
+
+    if (!revividas || revividas.length === 0) {
+      return res.status(409).json({ error: 'Ese horario ya fue reservado por alguien más.' });
+    }
+    citaId = revividas[0].id;
+    estadoFinal = revividas[0].estado;
   }
 
-  /* Correo de cita confirmada. La plantilla `cita` existe desde que se unificó
-     el motor de correo y nadie la llamaba: se reservaba una cita y no llegaba
-     nada, así que la persona no tenía dónde consultar a qué hora era.
+  /* El correo que toca, no el de siempre. La plantilla `cita` dice «quedó
+     confirmada»; con el modo en «solicitud» eso sería mentira. */
+  avisarDeLaCita({
+    eventoId, horarioId, userId: req.user.id,
+    plantilla: estadoInicial === 'solicitada' ? 'cita_pedida' : 'cita',
+  });
 
-     Va best-effort y después de responder: la cita ya está guardada, y un fallo
-     de SMTP no debe convertirse en un error de reserva. */
-  (async () => {
-    try {
-      const { data: h } = await supabase
-        .from('networking_horarios')
-        .select('inicio, fin, expositor:networking_expositores!expositor_id(nombre, stand)')
-        .eq('id', horarioId).maybeSingle();
-
-      const { data: perfil } = await supabase
-        .from('profiles').select('nombre, email').eq('id', req.user.id).maybeSingle();
-
-      const destino = perfil?.email || req.user.email;
-      if (!destino) return;
-
-      const { data: ev } = await supabase
-        .from('eventos').select('timezone').eq('id', eventoId).maybeSingle();
-      const tz = ev?.timezone || 'America/Bogota';
-
-      let cuando = '';
-      if (h?.inicio) {
-        const d = new Date(h.inicio);
-        if (!Number.isNaN(d.getTime())) {
-          cuando = d.toLocaleString('es-CO', {
-            weekday: 'long', day: 'numeric', month: 'long',
-            hour: 'numeric', minute: '2-digit', timeZone: tz,
-          });
-        }
-      }
-
-      await enviarEmailEvento({
-        evento: eventoId,
-        tipo: 'cita',
-        to: destino,
-        ctx: {
-          nombre: perfil?.nombre || '',
-          hora: cuando,
-          /* El "lugar" útil aquí es el stand del expositor, no la sede: es a
-             donde tiene que ir esa persona. */
-          lugar: h?.expositor?.stand ? `Stand ${h.expositor.stand}` : '',
-          tipo_boleta: h?.expositor?.nombre || '',
-        },
-      });
-    } catch (e) {
-      console.warn('[networking] no se pudo avisar de la cita:', e.message);
-    }
-  })();
-
-  res.status(201).json({ ok: true, cita_id: cita.id });
+  /* Va el ESTADO, no sólo el id. Sin él la pantalla no puede saber si la cita
+     quedó confirmada o pendiente de aprobación, y decía «¡Cita confirmada!» en
+     los dos casos — la misma mentira que el correo. */
+  res.status(201).json({ ok: true, cita_id: citaId, estado: estadoFinal });
 });
+
+/* El correo de una cita, en un sitio.
+ *
+ * Lo manda tanto quien reserva como el equipo al aprobar, y son dos textos
+ * distintos: en modo «solicitud» la cita nace pendiente y hasta ahora llegaba
+ * igualmente «tu cita quedó confirmada». La persona se presentaba a una hora
+ * que nadie le había dado, y al otro lado no había nadie esperándola.
+ *
+ * Best-effort y siempre después de responder: la cita ya está guardada, y un
+ * fallo de SMTP no puede convertirse en un error de reserva.
+ */
+async function avisarDeLaCita({ eventoId, horarioId, userId, plantilla }) {
+  try {
+    const { data: h } = await supabase
+      .from('networking_horarios')
+      .select('inicio, fin, expositor:networking_expositores!expositor_id(nombre, stand)')
+      .eq('id', horarioId).maybeSingle();
+
+    const { data: perfil } = await supabase
+      .from('profiles').select('nombre, email').eq('id', userId).maybeSingle();
+    if (!perfil?.email) return;
+
+    const { data: ev } = await supabase
+      .from('eventos').select('timezone').eq('id', eventoId).maybeSingle();
+    const tz = ev?.timezone || 'America/Bogota';
+
+    let cuando = '';
+    if (h?.inicio) {
+      const d = new Date(h.inicio);
+      if (!Number.isNaN(d.getTime())) {
+        cuando = d.toLocaleString('es-CO', {
+          weekday: 'long', day: 'numeric', month: 'long',
+          hour: 'numeric', minute: '2-digit', timeZone: tz,
+        });
+      }
+    }
+
+    await enviarEmailEvento({
+      evento: eventoId,
+      tipo: plantilla,
+      to: perfil.email,
+      ctx: {
+        nombre: perfil?.nombre || '',
+        hora: cuando,
+        /* El «lugar» útil aquí es el stand, no la sede: es a donde tiene que
+           ir esa persona. */
+        lugar: h?.expositor?.stand ? `Stand ${h.expositor.stand}` : '',
+        tipo_boleta: h?.expositor?.nombre || '',
+      },
+    });
+  } catch (e) {
+    console.warn(`[networking] no se pudo avisar de la cita (${plantilla}):`, e.message);
+  }
+}
 
 /* DELETE /eventos/:eventoId/networking/citas/:citaId — cancelar mi propia cita.
    Se filtra por user_id, así que ya está implícitamente protegido. */
@@ -425,6 +508,23 @@ router.get('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req,
   }
 });
 
+/* PUT /eventos/:eventoId/expositores/bolsa — el total de la bolsa y su nota.
+ *
+ * ── `cuota_defecto` se guarda y NO lo hace cumplir nadie ─────────────────
+ *
+ * Se acepta aquí, vive en la tabla desde la 0057 y sale en `v_bolsa_evento`.
+ * Pero el disparador que aplica el tope (`fn_verificar_cuota_stand`) lee la
+ * cuota DEL STAND y, si es null, deja pasar sin límite: nunca cae a este
+ * valor. O sea que un organizador que ponga 500 aquí creería que ningún stand
+ * puede repartir más de 500, y todos los que no tengan cuota propia estarían
+ * repartiendo sin tope. En una economía de puntos eso es la diferencia entre
+ * tener presupuesto y no tenerlo.
+ *
+ * No se quita ni se hace funcionar en esta pasada: hacerlo funcionar cambia
+ * a quién se le corta el grifo en mitad del evento, y eso se decide, no se
+ * deduce. Queda escrito para que nadie construya encima creyendo que aplica.
+ * Hoy no engaña a nadie porque ninguna pantalla lo manda ni lo enseña —
+ * medido: la tabla está vacía en producción. */
 router.put('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req, res) => {
   const { eventoId } = req.params;
   const aEntero = (v) => (v === null || v === '' || v === undefined)
@@ -433,18 +533,37 @@ router.put('/:eventoId/expositores/bolsa', exige(PERMS_EXPOSITORES), async (req,
   try {
     await assertOwner(eventoId, req.user.id);
     const total = aEntero(req.body?.total);
-    const cuotaDefecto = aEntero(req.body?.cuota_defecto);
     if (total !== null && !Number.isFinite(total)) {
       return res.status(400).json({ error: 'El total debe ser un número.' });
     }
 
+    /* Sólo lo que VIENE en el cuerpo.
+     *
+     * Antes se escribían siempre los tres campos, así que guardar el total
+     * —que es lo único que manda la pantalla— ponía la nota y la cuota por
+     * defecto a null. Un ajuste que se borra al tocar otro distinto: nadie lo
+     * relaciona, porque el guardado que lo borró decía «guardado».
+     *
+     * Es un PUT y por escrito eso significa «reemplaza», pero lo que hace esta
+     * ruta es actualizar la bolsa; el que llama nunca ha mandado el objeto
+     * entero. Se ajusta la ruta a cómo se usa, no al revés.
+     *
+     * `null` explícito SÍ borra —es como se quita un tope—; lo que ya no borra
+     * es la ausencia. */
+    const fila = {
+      evento_id: eventoId,
+      updated_by: req.user.id,
+      updated_at: new Date().toISOString(),
+    };
+    if ('total' in (req.body || {})) fila.total = total;
+    if ('cuota_defecto' in (req.body || {})) fila.cuota_defecto = aEntero(req.body.cuota_defecto);
+    if ('nota' in (req.body || {})) {
+      fila.nota = req.body.nota ? String(req.body.nota).slice(0, 300) : null;
+    }
+
     const { data, error } = await supabase
       .from('evento_bolsa_puntos')
-      .upsert({
-        evento_id: eventoId, total, cuota_defecto: cuotaDefecto,
-        nota: req.body?.nota ? String(req.body.nota).slice(0, 300) : null,
-        updated_by: req.user.id, updated_at: new Date().toISOString(),
-      }, { onConflict: 'evento_id' })
+      .upsert(fila, { onConflict: 'evento_id' })
       .select('*').single();
     if (error) return res.status(503).json({ error: 'Falta aplicar la migración 0057.', detalle: error.message });
     res.json({ bolsa: data });
@@ -517,10 +636,14 @@ router.put('/:eventoId/expositores/cuotas', exige(PERMS_EXPOSITORES), async (req
       if (error) return res.status(500).json({ error: error.message });
     }
 
-    const { data: reparto } = await supabase
+    const { data: reparto, error: eReparto } = await supabase
       .from('v_consumo_puntos_stand')
       .select('expositor_id, nombre, stand, cuota_puntos, otorgados, disponibles')
       .eq('evento_id', eventoId).order('nombre', { ascending: true });
+    /* Es una VISTA, y una vista que no existe —porque falta su migración— da
+       error, no cero filas. Vacío se leería como «nadie ha repartido puntos»,
+       que en mitad del evento es exactamente lo contrario de la verdad. */
+    if (eReparto) console.error(`[bolsa] reparto de ${eventoId} (¿falta la vista?): ${eReparto.message}`);
 
     res.json({ reparto: reparto || [] });
   } catch (e) {
@@ -793,6 +916,20 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
       return res.status(400).json({ error: 'Ese horario no es de este evento.' });
     }
     updates.horario_id = req.body.horario_id;
+
+    /* Una cita CANCELADA sigue ocupando su casilla —el indice unico es sobre
+       `horario_id` a secas—, mientras la parrilla la pinta libre. Al arrastrar
+       a alguien ahi, la base contestaba «ya esta ocupada» senalando una casilla
+       vacia en pantalla. Aqui no se puede reutilizar la fila (la que se mueve
+       es otra), asi que se quita la cancelada: es lo unico que libera el hueco,
+       y una cita cancelada de la que sale otra en su sitio no deja nada que
+       consultar despues. */
+    await supabase
+      .from('networking_citas')
+      .delete()
+      .eq('horario_id', req.body.horario_id)
+      .eq('evento_id', eventoId)
+      .eq('estado', 'cancelada');
   }
 
   if (Object.keys(updates).length === 0) {
@@ -829,6 +966,19 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
       cuerpo: 'Míralo en la rueda de negocios del evento.',
       link: `/explorar/${req.params.eventoId}/networking`, eventoId,
     });
+
+    /* Y el correo cuando se APRUEBA, que es la otra mitad del modo
+       «solicitud». Sin esto, quien pidió una cita recibía «la estamos
+       revisando» y ya: nada le decía que se la habían dado. Tenía que volver
+       a entrar a mirar por su cuenta, y quien no vuelve, no va.
+       Sólo al pasar a confirmada — mover de casilla o cancelar ya se cuentan
+       con el aviso de arriba, y un correo por cada toque de la parrilla el día
+       del evento es correo que se deja de leer. */
+    if (updates.estado === 'confirmada' && data.horario_id) {
+      avisarDeLaCita({
+        eventoId, horarioId: data.horario_id, userId: data.user_id, plantilla: 'cita',
+      });
+    }
   }
 
   res.json({ cita: data });
@@ -865,9 +1015,25 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
     .select('id, estado')
     .single();
 
+  let creada = data;
   if (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'Esa casilla ya está ocupada.' });
-    return res.status(500).json({ error: error.message });
+    if (error.code !== '23505') return res.status(500).json({ error: error.message });
+
+    /* La misma casilla muerta que en la reserva: una cita cancelada sigue
+       ocupando su hueco en la base —el indice unico es sobre `horario_id` a
+       secas— mientras la parrilla la pinta libre. Se reutiliza esa fila, con
+       el `.eq('estado', 'cancelada')` de candado. Las notas se limpian: son de
+       la cita anterior. */
+    const { data: revividas } = await supabase
+      .from('networking_citas')
+      .update({ user_id, estado: 'confirmada', creada_por: req.user.id, notas: null, nota_gestor: null })
+      .eq('horario_id', horario_id)
+      .eq('estado', 'cancelada')
+      .select('id, estado');
+    if (!revividas || revividas.length === 0) {
+      return res.status(409).json({ error: 'Esa casilla ya está ocupada.' });
+    }
+    creada = revividas[0];
   }
 
   notificar({
@@ -876,7 +1042,7 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
     link: `/explorar/${eventoId}/networking`, eventoId,
   });
 
-  res.status(201).json({ cita: data });
+  res.status(201).json({ cita: creada });
 });
 
 router.post('/:eventoId/networking/expositores/:id/horarios', exige(PERMS_EXPOSITORES), async (req, res) => {

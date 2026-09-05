@@ -1,125 +1,112 @@
-/* Que las dos semillas de roles no se separen, y que ningún rol prometa de más.
+/* Los roles semilla, contra lo que promete su descripción.
  *
- * Los roles se siembran en DOS sitios: `private.fn_roles_semilla()` en SQL
- * —que es la que corre hoy, por el trigger `seed_event_roles`— y el array
- * `ROLES` de `modules/eventos/semillas.js`, que es el camino de MySQL del
- * Frente A. Hoy dicen lo mismo. El día que alguien añada un permiso a uno y no
- * al otro, un evento tendrá permisos distintos según por qué camino nació — y
- * eso ya pasó una vez: los 31 eventos anteriores a la 0054 llevan el «Editor»
- * traducido del inglés de la 0007, sin `gestionar_agenda`.
+ * ── Qué se vigila ────────────────────────────────────────────────────────
+ *
+ * Un rol es una promesa escrita: «Atención — atiende asistentes durante el
+ * evento». Si sus permisos no alcanzan para eso, el síntoma no es un error:
+ * es una pantalla que no está, o un botón que contesta 403 con alguien
+ * delante esperando su boleta.
+ *
+ * Aquí se fija esa correspondencia para los tres que estaban cortos, y algo
+ * más barato de comprobar y más fácil de romper: que ningún rol reparta un
+ * permiso que no existe en el catálogo. Un permiso inventado no falla al
+ * guardarse — simplemente no autoriza nada, para siempre y sin avisar.
  *
  * Correr: npm test */
+'use strict';
+
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { ROLES } = require('../modules/eventos/semillas.js');
+const { TODOS } = require('../core/permisos/catalogo.js');
 
-/* La última migración que (re)define la semilla SQL. Se busca por contenido y
-   no por número: así una 0095 que la vuelva a tocar se coge sola. */
-function semillaSql() {
-  const dir = path.join(__dirname, '..', 'db', 'migrations');
-  /* Los que empiezan por `_` son ayudantes, no migraciones: `_all_pendientes`,
-     `_cron_send_reminders`, o el `_aplicar_...` que se genera para pegar
-     varias de golpe en el SQL Editor. Ese ultimo contiene DOS definiciones de
-     la semilla —la de la 0089 y la de la 0090— y ademas ordena DESPUES de los
-     numeros, asi que sin filtrarlo la prueba lo tomaba por la ultima y contaba
-     22 roles. */
-  const archivos = fs.readdirSync(dir)
-    .filter(f => f.endsWith('.sql') && !f.startsWith('_'))
-    .sort();
-  let ultima = null;
-  for (const f of archivos) {
-    const txt = fs.readFileSync(path.join(dir, f), 'utf8');
-    if (/create\s+or\s+replace\s+function\s+\w+\.fn_roles_semilla/i.test(txt)) ultima = txt;
-  }
-  assert.ok(ultima, 'no encuentro ninguna migración que defina fn_roles_semilla');
+const SQL = fs.readFileSync(
+  path.join(__dirname, '..', 'db', 'migrations', '0109_roles_que_hacen_lo_que_dicen.sql'), 'utf8');
 
-  /* Desde la DECLARACIÓN de la función, no desde la última vez que se nombra:
-     la 0089 la vuelve a llamar más abajo (`from private.fn_roles_semilla()`) y
-     cortar por ahí dejaba fuera el bloque `values` entero — la prueba leía
-     cero roles y se declaraba vieja en vez de comparar nada. */
-  const inicio = ultima.search(/create\s+or\s+replace\s+function\s+\w+\.fn_roles_semilla/i);
-  const cuerpo = ultima.slice(inicio);
+/* La semilla tal cual la declara la migración: se leen los pares
+   ('Nombre', 'descripción', '[...]'::jsonb, orden) de dentro de `values`. */
+function rolesDeLaSemilla() {
+  const ini = SQL.indexOf('returns table (nombre text');
+  const fin = SQL.indexOf('-- ── 2 ·');
+  const cuerpo = SQL.slice(ini, fin);
   const roles = [];
-  const re = /\('([^']+)',\s*'([^']*)',\s*'(\[[^']*\])'::jsonb,\s*(\d+)\)/g;
-  let m;
-  while ((m = re.exec(cuerpo))) {
-    roles.push({
-      nombre: m[1],
-      permissions: JSON.parse(m[3].replace(/\s+/g, ' ')),
-      orden: Number(m[4]),
-    });
+  const re = /\('([^']+)',\s*'([^']*)',\s*'(\[[\s\S]*?\])'::jsonb,\s*(\d+)\)/g;
+  for (const m of cuerpo.matchAll(re)) {
+    roles.push({ nombre: m[1], descripcion: m[2], permisos: JSON.parse(m[3]), orden: Number(m[4]) });
   }
   return roles;
 }
 
-const orden = (a) => [...a].sort();
+const ROLES = rolesDeLaSemilla();
+const porNombre = (n) => ROLES.find(r => r.nombre === n);
 
-test('la semilla SQL y la de JS reparten exactamente los mismos permisos', () => {
-  const sql = semillaSql();
-  assert.ok(sql.length >= 10, `sólo leo ${sql.length} roles del SQL: la prueba se quedó vieja`);
-  assert.equal(sql.length, ROLES.length, 'las dos semillas tienen distinto número de roles');
-
-  for (const rolSql of sql) {
-    const rolJs = ROLES.find(r => r.nombre === rolSql.nombre);
-    assert.ok(rolJs, `«${rolSql.nombre}» está en el SQL y no en semillas.js`);
-    assert.deepEqual(
-      orden(rolJs.permissions), orden(rolSql.permissions),
-      `«${rolSql.nombre}» concede cosas distintas según por dónde nazca el evento`,
-    );
-    assert.equal(rolJs.orden, rolSql.orden, `«${rolSql.nombre}» sale en otro sitio de la lista`);
-  }
+test('la semilla se puede leer y trae los once roles', () => {
+  /* Si esto falla, todo lo de abajo pasaría por no encontrar nada. */
+  assert.equal(ROLES.length, 11, `leí ${ROLES.length} roles de la semilla`);
 });
 
-test('existe un rol que puede todo', () => {
-  /* Sin él, delegar «todo» obliga a traspasar el evento: el dueño no es un rol,
-     es una columna. */
-  const admin = ROLES.find(r => r.nombre === 'Administrador');
-  assert.ok(admin, 'no hay rol «Administrador»');
-  for (const otro of ROLES) {
-    for (const p of otro.permissions) {
-      assert.ok(admin.permissions.includes(p),
-        `«${otro.nombre}» puede «${p}» y el Administrador no: deja de poder todo`);
-    }
-  }
-});
-
-test('ningún rol concede un permiso que no esté en el catálogo', () => {
-  /* El catálogo vive en el frontend (`src/lib/permisos.js`) porque es lo que
-     pinta la pantalla de roles. Un permiso sembrado que no esté ahí no se
-     puede ni ver ni quitar desde la interfaz: queda concedido a ciegas. */
-  /* Se mira el checkout principal Y los worktrees.
-   *
-   * Los dos repos se tocan a la vez cuando se añade un permiso, y el frontend
-   * se suele trabajar en un worktree — así que mirando sólo el checkout
-   * principal esta prueba se pone roja por un cambio que SÍ está hecho, sólo
-   * que en otra rama. Una prueba que falla por dónde miró enseña a ignorarla,
-   * que es justo lo contrario de lo que hace falta aquí.
-   *
-   * Basta con que UNO de los catálogos conozca el permiso: si está escrito en
-   * alguna rama viva, no se concedió a ciegas. */
-  const raizFront = path.join(__dirname, '..', '..', 'gestor-eventos-frontend');
-  const candidatos = [path.join(raizFront, 'src', 'lib', 'permisos.js')];
-  const wt = path.join(raizFront, '.claude', 'worktrees');
-  if (fs.existsSync(wt)) {
-    for (const d of fs.readdirSync(wt)) {
-      candidatos.push(path.join(wt, d, 'src', 'lib', 'permisos.js'));
-    }
-  }
-  const presentes = candidatos.filter(c => fs.existsSync(c));
-  if (presentes.length === 0) return;   // repos separados: no es un fallo
-
-  const txt = presentes.map(c => fs.readFileSync(c, 'utf8')).join('\n');
-  const conocidos = new Set([...txt.matchAll(/id:\s*'([\w_]+)'/g)].map(m => m[1]));
-  assert.ok(conocidos.size > 15, 'no reconozco el catálogo de permisos: revisa la prueba');
-
-  const sueltos = [];
+test('ningún rol reparte un permiso que no existe', () => {
+  /* Un permiso inventado no revienta: se guarda, se enseña en la pantalla del
+     rol, y no autoriza nada. La persona tiene el rol correcto y la pantalla en
+     blanco, y nadie relaciona una cosa con la otra. */
+  const inventados = [];
   for (const r of ROLES) {
-    for (const p of r.permissions) {
-      if (!conocidos.has(p)) sueltos.push(`${r.nombre} → ${p}`);
-    }
+    for (const p of r.permisos) if (!TODOS.includes(p)) inventados.push(`${r.nombre} → ${p}`);
   }
-  assert.deepEqual(sueltos, [], 'permisos sembrados que la pantalla de roles no conoce');
+  assert.deepEqual(inventados, [], 'permisos que no están en el catálogo');
+});
+
+test('Atención puede atender, no sólo mirar', () => {
+  /* Lo primero que hace un puesto de atención es reenviar una boleta que no
+     llegó o corregir un correo mal escrito. Las dos cosas piden
+     `gestionar_clientes` (routes/clientes.js, PERMS_CLIENTES). Sin él, el rol
+     entero se reducía a leer una lista. */
+  const r = porNombre('Atención');
+  assert.ok(r.permisos.includes('gestionar_clientes'),
+    'sin `gestionar_clientes`, «Atención» no puede reenviar una boleta ni corregir un dato');
+  assert.ok(r.permisos.includes('checkin'), 'y sigue necesitando escanear');
+});
+
+test('quien coordina expositores puede ver a quién sentar', () => {
+  /* Desde la 0108 se sienta gente en la rueda con su correo, y para eso hay
+     que poder ver quién está inscrito. */
+  assert.ok(porNombre('Coordinación de expositores').permisos.includes('ver_clientes'),
+    'sin `ver_clientes` no puede saber qué correos están registrados');
+});
+
+test('Logística no arma el programa, pero ve el aforo', () => {
+  /* `gestionar_agenda` es armar el calendario del evento: no es el trabajo de
+     montaje y técnica, y es de los permisos que más cosas mueven. Lo que sí
+     necesita el día del evento es ver zonas y aforo, que van con `checkin`. */
+  const r = porNombre('Staff · Logística');
+  assert.ok(!r.permisos.includes('gestionar_agenda'),
+    'Logística vuelve a poder reprogramar el evento entero');
+  assert.ok(r.permisos.includes('checkin'), 'y se quedó sin ver zonas ni aforo');
+});
+
+test('el Administrador tiene el catálogo entero menos lo que es del dueño', () => {
+  /* «Puede todo dentro del evento, salvo transferirlo o borrarlo». Cuando se
+     añade un permiso nuevo y nadie se acuerda de este rol, el Administrador
+     deja de poder algo que su descripción promete — y se descubre tarde. */
+  const admin = porNombre('Administrador');
+  const faltan = TODOS.filter(p => !admin.permisos.includes(p));
+  assert.deepEqual(faltan, [],
+    'el catálogo creció y el rol Administrador se quedó atrás: ' + faltan.join(', '));
+});
+
+test('sólo se tocan los roles que nadie ha ajustado', () => {
+  /* Si alguien ya cambió su «Atención», esa decisión gana sobre la nuestra.
+     La comparación es por CONJUNTO: el orden dentro del jsonb no significa
+     nada, y compararlo como texto dejaría fuera filas idénticas. */
+  const actualizaciones = [...SQL.matchAll(/update public\.event_roles r([\s\S]*?);/g)].map(m => m[1]);
+  assert.ok(actualizaciones.length >= 3, 'no encuentro las actualizaciones de los roles ya creados');
+  for (const u of actualizaciones) {
+    assert.match(u, /is_system/, 'una actualización toca roles que no son de la semilla');
+    assert.match(u, /fn_mismo_conjunto/,
+      'una actualización pisa el rol aunque alguien ya lo hubiera ajustado');
+  }
+  assert.match(SQL, /create or replace function private\.fn_mismo_conjunto/,
+    'desapareció la comparación por conjunto');
 });

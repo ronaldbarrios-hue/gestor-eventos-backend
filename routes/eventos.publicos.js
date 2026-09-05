@@ -18,6 +18,7 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { limpiarOrigen } = require('../lib/origenDeRegistro.js');
 const { conSitio } = require('../lib/eventoSitio.js');
 const { bloqueDeSeccion } = require('../lib/bloquesLanding.js');
 const {
@@ -1344,6 +1345,9 @@ router.post('/slug/:slug/reservar', async (req, res) => {
       codigo,
       estado,
       promocion_id  : cotiz.promocion?.id || null,
+      /* Por que boton entro. Se limpia en un solo sitio (lib/origenDeRegistro)
+         para que «boton-home» y «Boton Home» no cuenten como dos canales. */
+      origen        : limpiarOrigen(req.body.origen),
       precio_pagado : esGratis ? 0 : null,
       pagado_at     : esGratis ? new Date().toISOString() : null,
       respuestas    : Object.keys(respuestasLimpias).length ? respuestasLimpias : null,

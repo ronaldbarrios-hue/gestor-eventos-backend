@@ -20,6 +20,7 @@ const { webhookLimiter } = require('../config/security.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { ofrecerCupoAlSiguiente, validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { limpiarOrigen } = require('../lib/origenDeRegistro.js');
 const { sesion, publica } = require('../core/permisos');
 const { generarCodigo } = require('../lib/codigos.js');
 const { baseFrontend } = require('../lib/frontend.js');
@@ -254,6 +255,7 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
       codigo,
       estado        : 'emitido',
       promocion_id  : cotiz.promocion?.id || null,
+      origen        : limpiarOrigen(req.body.origen),
       respuestas    : Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
     })
     .select().single();

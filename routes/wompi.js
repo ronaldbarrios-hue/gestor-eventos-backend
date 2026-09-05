@@ -14,6 +14,7 @@ const { verifyTurnstile } = require('../lib/turnstile.js');
 const { checkoutUrl, verificarEvento } = require('../lib/wompi.js');
 const { confirmarTicketPagado } = require('../lib/confirmarTicket.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { limpiarOrigen } = require('../lib/origenDeRegistro.js');
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 
 const { sesion, publica } = require('../core/permisos');
@@ -156,6 +157,7 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
     ticket_type_id: tipo.id, evento_id: evento.id,
     guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null,
     codigo, estado: 'emitido', promocion_id: cotiz.promocion?.id || null,
+    origen: limpiarOrigen(req.body.origen),
     respuestas: Object.keys(respuestasLimpias).length ? respuestasLimpias : null,
   }).select().single();
   if (eT) {

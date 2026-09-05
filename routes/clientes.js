@@ -97,6 +97,52 @@ function puedeAtenderPuerta(puerta, userId, evCtx) {
 }
 
 /* GET /eventos/:eventoId/clientes — listar tickets emitidos del evento */
+/* GET /eventos/:eventoId/origenes — cuánto trajo cada botón.
+ *
+ * ── Por qué esto es lo que hace que los botones sirvan ───────────────────
+ *
+ * El organizador pega el botón en su web, en un correo, en el Instagram de la
+ * alcaldía y en el WhatsApp del gremio. Sin esto son cuatro copias iguales de
+ * un mismo enlace y no hay forma de saber cuál trajo gente — así que se pegan
+ * una vez y se olvidan.
+ *
+ * `origen` NULL se cuenta aparte y se llama por su nombre: «directo», que es
+ * quien llegó a la página del evento sin pasar por ningún botón. Meterlo con
+ * los demás o esconderlo daría dos cuadros distintos de la misma realidad.
+ *
+ * Se cuenta sobre TODAS las boletas y se separan las pagadas: un botón que
+ * trae cien reservas sin pagar y otro que trae diez pagadas no son lo mismo, y
+ * el número grande es el que engaña.
+ */
+router.get('/:eventoId/origenes', exige(['ver_clientes', 'gestionar_clientes']), async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);
+  } catch (e) {
+    return res.status(403).json({ error: e.message });
+  }
+
+  const { data, error } = await supabase
+    .from('tickets')
+    .select('origen, estado, precio_pagado')
+    .eq('evento_id', eventoId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const por = new Map();
+  for (const t of data || []) {
+    const k = t.origen || '__directo__';
+    const fila = por.get(k) || { origen: t.origen || null, total: 0, pagadas: 0, ingresos: 0 };
+    fila.total++;
+    if (t.estado === 'pagado' || t.estado === 'usado') {
+      fila.pagadas++;
+      fila.ingresos += Number(t.precio_pagado) || 0;
+    }
+    por.set(k, fila);
+  }
+
+  res.json({ origenes: [...por.values()].sort((a, b) => b.total - a.total) });
+});
+
 router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const { q, estado, ticket_type_id, limit = 100, page = 1 } = req.query;

@@ -94,3 +94,37 @@ test('el cupo de un sub-evento se confirma DESPUÉS de insertar', () => {
   assert.match(src, /await supabase\.from\('sesion_inscripciones'\)\.delete\(\)\.eq\('id', inscripcion\.id\)/,
     'la inscripción que se pasa del cupo ya no se deshace');
 });
+
+test('el enlace de cupo de la lista de espera se quema una sola vez', () => {
+  /* `validarOferta` sólo LEE. El enlace llega por correo, se abre en el móvil,
+     y pulsar dos veces un botón que tarda es lo normal. Las dos peticiones
+     pasaban la validación — y también `hayCupoLibre`, porque a quien trae el
+     token se le descuenta su propia oferta a propósito: éste es el ÚNICO
+     camino donde el control de aforo está desactivado por diseño. Un cupo
+     ofrecido salía en dos boletas y el desajuste aparecía en la puerta.
+
+     Comprobado en Postgres: dos updates condicionales sobre la misma fila,
+     primera 1 fila, segunda 0. */
+  const lib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'waitlistOferta.js'), 'utf8');
+  assert.match(lib, /\.eq\('id', waitlistId\)\.eq\('estado', 'contacted'\)\.select\('id'\)/,
+    'consumirOferta volvió a escribir sin condición: el mismo enlace serviría dos veces');
+  assert.match(lib, /return Boolean\(data && data\.length\);/,
+    'consumirOferta ya no dice quién se llevó el cupo');
+
+  for (const ruta of ['eventos.publicos.js', 'pagos.js', 'wompi.js']) {
+    /* Sin los retornos de carro: los archivos están en CRLF, y un patrón que
+       lleve un salto de línea no casaría nunca — o sea una prueba que pasa
+       por no encontrar nada. */
+    const src = fs.readFileSync(path.join(__dirname, '..', 'routes', ruta), 'utf8').replace(/\r/g, '');
+    assert.match(src, /if \(oferta\w* && !\(await consumirOferta\(oferta\w*\.id\)\)\) \{[\s\S]{0,300}status\(409\)/,
+      `${ruta}: el token de la lista de espera dejó de quemarse con candado`);
+    /* Antes de emitir, no después: si se quema después, la segunda petición ya
+       creó su boleta y quemarlo no deshace nada. */
+    const iQuema = src.indexOf('consumirOferta(oferta');
+    const iAlta  = src.indexOf(".from('tickets')\n    .insert(") >= 0
+      ? src.indexOf(".from('tickets')\n    .insert(")
+      : src.indexOf(".from('tickets').insert(");
+    assert.ok(iQuema > 0 && iAlta > 0 && iQuema < iAlta,
+      `${ruta}: el cupo se quema DESPUÉS de emitir la boleta, así que la segunda ya salió`);
+  }
+});

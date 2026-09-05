@@ -233,6 +233,16 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
   if (falloForm) return res.status(400).json({ error: falloForm });
   const respuestasLimpias = normalizarRespuestas(camposReq, respuestas);
   const codigo = generarCodigo();
+
+  /* El mismo candado que en la reserva: el token se quema antes de emitir, y
+     sólo una petición se lo lleva. Aquí importa igual aunque falte pagar,
+     porque la boleta ya ocupa sitio en cuanto existe. */
+  if (ofertaMiaPago && !(await consumirOferta(ofertaMiaPago.id))) {
+    return res.status(409).json({
+      error: 'Ese enlace de cupo ya se usó. Si acabas de empezar la compra, continúala desde el correo o desde «Mi boleta».',
+    });
+  }
+
   const { data: ticket, error: e3 } = await supabase
     .from('tickets')
     .insert({
@@ -249,11 +259,6 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
   if (e3) return res.status(500).json({ error: e3.message });
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
-
-  /* La boleta ya está emitida (falta pagarla): se cierra la fila y se quema el
-     token. Si el pago se cae, la persona conserva la boleta en 'emitido' y
-     puede reintentar desde /mi-ticket; devolverla a la cola sería peor. */
-  if (ofertaMiaPago) await consumirOferta(ofertaMiaPago.id);
 
   const externalRef = `tx_${ticket.id}`;
   const currency = evento.currency || tipo.currency || 'COP';

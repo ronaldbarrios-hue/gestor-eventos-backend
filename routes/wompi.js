@@ -143,6 +143,15 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   const respuestasLimpias = normalizarRespuestas(campos, respuestas);
 
   const codigo = generarCodigo();
+
+  /* Mismo candado que en la reserva y en Mercado Pago: el token se quema antes
+     de emitir, y sólo una petición se lo lleva. */
+  if (ofertaMiaW && !(await consumirOferta(ofertaMiaW.id))) {
+    return res.status(409).json({
+      error: 'Ese enlace de cupo ya se usó. Si acabas de empezar la compra, continúala desde el correo o desde «Mi boleta».',
+    });
+  }
+
   const { data: ticket, error: eT } = await supabase.from('tickets').insert({
     ticket_type_id: tipo.id, evento_id: evento.id,
     guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null,
@@ -152,7 +161,6 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
   if (eT) return res.status(500).json({ error: eT.message });
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
-  if (ofertaMiaW) await consumirOferta(ofertaMiaW.id);
 
   const referencia = `tx_${ticket.id}`;
   const amountInCents = Math.round(precio * 100);

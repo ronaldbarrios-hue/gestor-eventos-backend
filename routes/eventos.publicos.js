@@ -1296,6 +1296,20 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   const codigo = generarCodigo();
   const estado = esGratis ? 'pagado' : 'emitido';
 
+  /* El token se quema AQUÍ, justo antes de emitir, y no después: a quien trae
+     el enlace del correo se le descuenta su propia oferta del aforo, así que
+     éste es el único camino sin control de cupo. Si dos peticiones traen el
+     mismo token —un doble toque en el móvil— sólo una se lleva el sitio.
+
+     Tan tarde como se puede a propósito: todo lo que puede fallar y devolver
+     un 400 ya pasó, de modo que nadie pierde su enlace por un campo mal
+     rellenado. */
+  if (ofertaMia && !(await consumirOferta(ofertaMia.id))) {
+    return res.status(409).json({
+      error: 'Ese enlace de cupo ya se usó. Si acabas de reservar, revisa tu correo: la boleta ya está emitida.',
+    });
+  }
+
   const { data: ticket, error: e3 } = await supabase
     .from('tickets')
     .insert({
@@ -1324,10 +1338,6 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   anotarConstancia('tickets', ticket.id, evento.id, req.body.legal_aceptado);
 
   await supabase.from('ticket_types').update({ vendidos: (tipo.vendidos || 0) + 1 }).eq('id', tipo.id);
-
-  /* La boleta ya existe: se cierra la entrada en la lista y se quema el token
-     para que el enlace del correo no sirva dos veces. */
-  if (ofertaMia) await consumirOferta(ofertaMia.id);
 
   if (esGratis) {
     /* Sale ya pagada, así que el uso del código se cuenta aquí: esta boleta no

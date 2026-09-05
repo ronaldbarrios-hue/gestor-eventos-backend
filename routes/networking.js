@@ -114,8 +114,13 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
    * persona la pedía encima. La segunda se llevaba un 409 —o peor, las dos se
    * presentaban a la misma mesa a la misma hora—.
    *
-   * Una cancelada sí libera: el índice único deja reservar encima, así que
-   * pintarla ocupada escondería un hueco que existe de verdad. */
+   * Una cancelada sí libera la casilla, y aquí se pinta libre. Ojo con el
+   * porqué, que estaba escrito al revés: el índice único de `networking_citas`
+   * es sobre `horario_id` a secas —no es parcial, comprobado en producción—,
+   * así que la fila cancelada SIGUE ocupando la casilla en la base. Quien la
+   * libera de verdad es la reserva, que reutiliza esa fila cuando choca. Sin
+   * eso, cada cancelación del organizador dejaba una casilla que se veía libre
+   * y contestaba «ya fue reservado» para siempre. */
   const { data: citas, error: e3 } = await supabase
     .from('networking_citas')
     .select('id, horario_id, user_id, estado')
@@ -267,9 +272,44 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
     .select('id, estado')
     .single();
 
+  let citaId = cita?.id;
+  let estadoFinal = cita?.estado;
+
   if (e2) {
-    if (e2.code === '23505') return res.status(409).json({ error: 'Ese horario ya fue reservado por alguien más.' });
-    return res.status(500).json({ error: e2.message });
+    if (e2.code !== '23505') return res.status(500).json({ error: e2.message });
+
+    /* ── La casilla que se veía libre y no se podía reservar ──────────────
+     *
+     * El índice único de `networking_citas` es sobre `horario_id` A SECAS —
+     * comprobado en producción, no es parcial—. Así que una cita CANCELADA
+     * sigue ocupando su casilla en la base, mientras que la disponibilidad
+     * que se pinta descarta las canceladas y la enseña libre.
+     *
+     * Cancelar desde la parrilla no borra la fila (guarda el histórico y la
+     * nota del equipo), así que cada cancelación del organizador dejaba una
+     * casilla muerta: se veía libre, se pulsaba, y contestaba «ya fue
+     * reservado por alguien más» — por alguien que canceló. Sin forma de
+     * arreglarlo desde ninguna pantalla.
+     *
+     * Se reutiliza esa fila. El `.eq('estado', 'cancelada')` es el candado:
+     * si entre el insert y esto otra persona se llevó la casilla, no toca
+     * ninguna fila y se contesta el 409 de verdad. Las notas se limpian
+     * porque son de la reserva anterior y no de ésta. */
+    const { data: revividas } = await supabase
+      .from('networking_citas')
+      .update({
+        user_id: req.user.id, estado: estadoInicial, creada_por: req.user.id,
+        notas: null, nota_gestor: null,
+      })
+      .eq('horario_id', horarioId)
+      .eq('estado', 'cancelada')
+      .select('id, estado');
+
+    if (!revividas || revividas.length === 0) {
+      return res.status(409).json({ error: 'Ese horario ya fue reservado por alguien más.' });
+    }
+    citaId = revividas[0].id;
+    estadoFinal = revividas[0].estado;
   }
 
   /* El correo que toca, no el de siempre. La plantilla `cita` dice «quedó
@@ -282,7 +322,7 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
   /* Va el ESTADO, no sólo el id. Sin él la pantalla no puede saber si la cita
      quedó confirmada o pendiente de aprobación, y decía «¡Cita confirmada!» en
      los dos casos — la misma mentira que el correo. */
-  res.status(201).json({ ok: true, cita_id: cita.id, estado: cita.estado });
+  res.status(201).json({ ok: true, cita_id: citaId, estado: estadoFinal });
 });
 
 /* El correo de una cita, en un sitio.
@@ -876,6 +916,20 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
       return res.status(400).json({ error: 'Ese horario no es de este evento.' });
     }
     updates.horario_id = req.body.horario_id;
+
+    /* Una cita CANCELADA sigue ocupando su casilla —el indice unico es sobre
+       `horario_id` a secas—, mientras la parrilla la pinta libre. Al arrastrar
+       a alguien ahi, la base contestaba «ya esta ocupada» senalando una casilla
+       vacia en pantalla. Aqui no se puede reutilizar la fila (la que se mueve
+       es otra), asi que se quita la cancelada: es lo unico que libera el hueco,
+       y una cita cancelada de la que sale otra en su sitio no deja nada que
+       consultar despues. */
+    await supabase
+      .from('networking_citas')
+      .delete()
+      .eq('horario_id', req.body.horario_id)
+      .eq('evento_id', eventoId)
+      .eq('estado', 'cancelada');
   }
 
   if (Object.keys(updates).length === 0) {
@@ -961,9 +1015,25 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
     .select('id, estado')
     .single();
 
+  let creada = data;
   if (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'Esa casilla ya está ocupada.' });
-    return res.status(500).json({ error: error.message });
+    if (error.code !== '23505') return res.status(500).json({ error: error.message });
+
+    /* La misma casilla muerta que en la reserva: una cita cancelada sigue
+       ocupando su hueco en la base —el indice unico es sobre `horario_id` a
+       secas— mientras la parrilla la pinta libre. Se reutiliza esa fila, con
+       el `.eq('estado', 'cancelada')` de candado. Las notas se limpian: son de
+       la cita anterior. */
+    const { data: revividas } = await supabase
+      .from('networking_citas')
+      .update({ user_id, estado: 'confirmada', creada_por: req.user.id, notas: null, nota_gestor: null })
+      .eq('horario_id', horario_id)
+      .eq('estado', 'cancelada')
+      .select('id, estado');
+    if (!revividas || revividas.length === 0) {
+      return res.status(409).json({ error: 'Esa casilla ya está ocupada.' });
+    }
+    creada = revividas[0];
   }
 
   notificar({
@@ -972,7 +1042,7 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
     link: `/explorar/${eventoId}/networking`, eventoId,
   });
 
-  res.status(201).json({ cita: data });
+  res.status(201).json({ cita: creada });
 });
 
 router.post('/:eventoId/networking/expositores/:id/horarios', exige(PERMS_EXPOSITORES), async (req, res) => {

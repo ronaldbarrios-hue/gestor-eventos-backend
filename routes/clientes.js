@@ -3,6 +3,7 @@ const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/p
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
+const { horaDelEscaneo } = require('../lib/horaDeEscaneo.js');
 const { otorgarPuntos, otorgarBadge, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -673,13 +674,10 @@ router.post('/:eventoId/checkin', sesion('Lo opera quien está en la puerta: la 
   const { eventoId } = req.params;
   const { qr_token, codigo, acceso_id, at } = req.body;
   if (!qr_token && !codigo) return res.status(400).json({ error: 'qr_token o codigo requerido.' });
-  /* `at` (opcional): hora real del escaneo cuando viene de la cola OFFLINE.
-     Se valida que sea una fecha razonable (no futura, no antiquísima). */
-  let checkinAt = new Date().toISOString();
-  if (typeof at === 'string') {
-    const t = new Date(at).getTime();
-    if (Number.isFinite(t) && t <= Date.now() + 60000 && t > Date.now() - 30 * 24 * 3600 * 1000) checkinAt = new Date(t).toISOString();
-  }
+  /* `at` (opcional): la hora REAL del escaneo cuando viene de la cola sin
+     conexión. La validación vive en `lib/horaDeEscaneo.js`, compartida con la
+     puerta de los sub-eventos. */
+  const checkinAt = horaDelEscaneo(at);
 
   try {
     const evCtx = await assertCheckinAccess(eventoId, req.user.id);

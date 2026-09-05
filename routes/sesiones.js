@@ -28,6 +28,7 @@
 const express = require('express');
 const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
+const { horaDelEscaneo } = require('../lib/horaDeEscaneo.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -508,6 +509,12 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', sesion("Panel del evento:
   const codigo = String(req.body?.codigo || '').trim().toUpperCase();
   const qrToken = req.body?.qr_token || null;
   const inscripcionId = req.body?.inscripcion_id || null;
+  /* `at` (opcional): la hora REAL del escaneo cuando viene de la cola sin
+     conexión de la puerta del taller. Sin esto, todos los que entraron durante
+     un corte de red aparecerían apelotonados en el minuto en que volvió el
+     wifi — y «cuánta gente había a las 4» es justo lo que se mira después.
+     Misma validación que el control de ingreso, y en el mismo sitio. */
+  const asistioAt = horaDelEscaneo(req.body?.at);
 
   try {
     const evento = await assertPermiso(eventoId, req.user.id, PERMS_MARCAR, 'id, owner_id');
@@ -555,7 +562,7 @@ panel.post('/:eventoId/sesiones/:sesionId/asistencia', sesion("Panel del evento:
 
     const { data, error } = await supabase
       .from('sesion_inscripciones')
-      .update({ estado: 'asistio', asistio_at: new Date().toISOString() })
+      .update({ estado: 'asistio', asistio_at: asistioAt })
       .eq('id', insc.id)
       .select('id, estado, asistio_at, nombre, email')
       .single();

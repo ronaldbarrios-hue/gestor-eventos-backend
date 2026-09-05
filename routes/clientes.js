@@ -100,6 +100,11 @@ function puedeAtenderPuerta(puerta, userId, evCtx) {
 router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
   const { q, estado, ticket_type_id, limit = 100, page = 1 } = req.query;
+  /* El filtro «sin pagar» necesita cruzar con el tipo de boleta para mirar su
+     precio, y eso pide un `inner join`. En los demas casos NO se pone: un
+     inner join descartaria las boletas cuyo tipo se borro, y esas tambien
+     tienen que salir en la lista. */
+  const unido = estado === 'sin_pagar' ? '!inner' : '';
   const desde = (Number(page) - 1) * Number(limit);
   const hasta = desde + Number(limit) - 1;
 
@@ -117,13 +122,24 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
         id, codigo, qr_token, estado, precio_pagado, pagado_at, checked_in_at, zona_usada, acceso, created_at,
         guest_email, guest_nombre, respuestas,
         usuario:profiles!user_id(id, nombre, email, avatar_url),
-        tipo:ticket_types!ticket_type_id(id, nombre, precio, currency)
+        tipo:ticket_types!ticket_type_id${unido}(id, nombre, precio, currency)
       `, { count: 'exact' })
       .eq('evento_id', eventoId)
       .order('created_at', { ascending: false })
       .range(desde, hasta);
 
-    if (estado)         query = query.eq('estado', estado);
+    if (estado === 'sin_pagar') {
+      /* «Sin pagar» no es un estado de la boleta, es una pregunta: quien
+         empezo una compra y no la termino. `emitido` solo no sirve para
+         contestarla, porque tambien son `emitido` las reservas gratuitas
+         —legitimamente apartadas— y en un evento con entradas gratis y de
+         pago la lista sale mezclada y no se puede perseguir a nadie.
+         Por eso se pide ademas que la boleta COSTARA dinero: el `!inner` es
+         lo que permite filtrar por el precio de su tipo. */
+      query = query.eq('estado', 'emitido').is('precio_pagado', null).gt('tipo.precio', 0);
+    } else if (estado) {
+      query = query.eq('estado', estado);
+    }
     if (ticket_type_id) query = query.eq('ticket_type_id', ticket_type_id);
     if (q) {
       /* Búsqueda en email o nombre del invitado */

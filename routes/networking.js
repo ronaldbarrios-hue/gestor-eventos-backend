@@ -9,6 +9,7 @@ const {
   COLS_TARJETA, COLS_COMPLETAS, CAMPOS_EDITABLES_ORGANIZADOR,
 } = require('../lib/expositores.js');
 const { zonasDelEvento } = require('../lib/aforoZonas.js');
+const { camposDeCierre, informeDeCitas } = require('../lib/cierreDeCita.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -167,6 +168,7 @@ router.get('/:eventoId/networking/mis-citas', sesion('Rueda de negocios: hace fa
     .from('networking_citas')
     .select(`
       id, estado, created_at, notas, creada_por,
+      resultado, expectativa_monto, expectativa_moneda, expectativa_plazo, hubo_acuerdo, resultado_nota,
       horario:networking_horarios!horario_id(id, inicio, fin,
         expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
     `)
@@ -210,15 +212,40 @@ router.patch('/:eventoId/networking/citas/:citaId/notas', sesion('Rueda de negoc
     return res.status(403).json({ error: e.message });
   }
 
-  const notas = typeof req.body?.notas === 'string' ? req.body.notas.slice(0, 4000) : null;
+  /* Sólo lo que VIENE. Antes se escribía `notas` siempre, aunque el cuerpo no
+     la trajera, así que cerrar la reunión habría borrado la nota escrita
+     durante ella. Ahora cada campo se toca si se manda y sólo entonces. */
+  const cambios = {};
+  if ('notas' in (req.body || {})) {
+    cambios.notas = typeof req.body.notas === 'string' ? req.body.notas.slice(0, 4000) : null;
+  }
+
+  /* La moneda del evento se copia al escribir el monto: una cifra sin moneda
+     no se puede interpretar dentro de un año. */
+  const { data: ev } = await supabase
+    .from('eventos').select('currency').eq('id', eventoId).maybeSingle();
+  const { campos, error: eCampos } = camposDeCierre(req.body || {}, { moneda: ev?.currency || 'COP' });
+  if (eCampos) return res.status(400).json({ error: eCampos });
+  Object.assign(cambios, campos);
+
+  /* Quién y cuándo lo registró. En una rueda de cámara esto se pregunta:
+     «esta reunión la cerró la empresa o la cerró el equipo». */
+  if ('resultado' in campos) {
+    cambios.resultado_at = campos.resultado ? new Date().toISOString() : null;
+    cambios.resultado_por = campos.resultado ? req.user.id : null;
+  }
+
+  if (Object.keys(cambios).length === 0) {
+    return res.status(400).json({ error: 'Sin cambios.' });
+  }
 
   const { data, error } = await supabase
     .from('networking_citas')
-    .update({ notas })
+    .update(cambios)
     .eq('id', citaId)
     .eq('evento_id', eventoId)
     .eq('user_id', req.user.id)
-    .select('id, notas')
+    .select('id, notas, resultado, expectativa_monto, expectativa_moneda, expectativa_plazo, hubo_acuerdo, resultado_nota')
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -967,6 +994,8 @@ router.get('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, 
     .from('networking_citas')
     .select(`
       id, estado, notas, nota_gestor, creada_por, created_at, user_id, guest_email, guest_nombre,
+      resultado, resultado_at, expectativa_monto, expectativa_moneda, expectativa_plazo,
+      hubo_acuerdo, resultado_nota,
       horario:networking_horarios!horario_id(id, inicio, fin,
         expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
     `)
@@ -1002,6 +1031,52 @@ router.get('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req, 
   });
 });
 
+/* GET /eventos/:eventoId/networking/informe — qué salió de la rueda.
+ *
+ * ── Por qué esto es el entregable, y no un extra ─────────────────────────
+ *
+ * Una rueda de negocios se organiza para poder contestar dos preguntas al
+ * cerrar: cuántas reuniones ocurrieron de verdad, y cuánto negocio se espera de
+ * ellas. Para una cámara de comercio eso es lo que se le presenta a la junta y
+ * a quien financió la rueda. Sin esto, la plataforma agenda citas y no puede
+ * decir para qué sirvieron.
+ *
+ * ── Lo que NO hace, a propósito ──────────────────────────────────────────
+ *
+ * No reparte lo que nadie registró. «Sin registrar» es una columna propia: una
+ * rueda donde no se cerró ninguna reunión tiene que verse como lo que es —sin
+ * datos— y no como una rueda con cero reuniones realizadas. Y la efectividad se
+ * calcula sobre lo registrado, diciendo sobre cuántas: sobre el total,
+ * convertiría «no lo sabemos» en «no ocurrió».
+ *
+ * Devuelve también las filas, para poder bajarlas a hoja de cálculo desde la
+ * pantalla: el informe se acaba pegando en un documento de la cámara.
+ */
+router.get('/:eventoId/networking/informe', exige(PERMS_EXPOSITORES), async (req, res) => {
+  const { eventoId } = req.params;
+
+  const { data: citas, error } = await supabase
+    .from('networking_citas')
+    .select(`
+      id, estado, resultado, resultado_at, expectativa_monto, expectativa_moneda,
+      expectativa_plazo, hubo_acuerdo, resultado_nota, user_id, guest_email, guest_nombre,
+      horario:networking_horarios!horario_id(inicio, fin,
+        expositor:networking_expositores!expositor_id(nombre, stand, categoria_negocio))
+    `)
+    .eq('evento_id', eventoId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const personas = await personasDeLasCitas(citas);
+
+  const filas = (citas || []).map((c) => ({
+    ...c,
+    persona: personas.get(c.user_id)
+      || (c.guest_email ? { nombre: c.guest_nombre || null, email: c.guest_email } : null),
+  })).sort((a, b) => new Date(a.horario?.inicio) - new Date(b.horario?.inicio));
+
+  res.json({ resumen: informeDeCitas(filas), citas: filas });
+});
+
 /* PATCH /eventos/:eventoId/networking/citas/:citaId — aprobar, mover, anotar.
  *
  * Tres cosas en una ruta porque son la misma acción desde la parrilla: tocar
@@ -1017,6 +1092,20 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
       return res.status(400).json({ error: `Estado inválido. Usa: ${ESTADOS_CITA.join(', ')}.` });
     }
     updates.estado = req.body.estado;
+  }
+
+  /* El cierre también desde la parrilla: en una rueda de cámara alguien del
+     equipo recorre las mesas y va marcando qué pasó. Es la misma limpieza que
+     usa la ruta de quien asistió —una sola copia de las reglas—, o el informe
+     acabaría sumando cosas distintas según quién las escribiera. */
+  const { data: evCierre } = await supabase
+    .from('eventos').select('currency').eq('id', eventoId).maybeSingle();
+  const { campos: cierre, error: eCierre } = camposDeCierre(req.body || {}, { moneda: evCierre?.currency || 'COP' });
+  if (eCierre) return res.status(400).json({ error: eCierre });
+  Object.assign(updates, cierre);
+  if ('resultado' in cierre) {
+    updates.resultado_at = cierre.resultado ? new Date().toISOString() : null;
+    updates.resultado_por = cierre.resultado ? req.user.id : null;
   }
 
   /* La nota del equipo, aparte de la de quien asistió. No se pisan: son de
@@ -1087,7 +1176,7 @@ router.patch('/:eventoId/networking/citas/:citaId', exige(PERMS_EXPOSITORES), as
     .update(updates)
     .eq('id', citaId)
     .eq('evento_id', eventoId)
-    .select('id, estado, horario_id, nota_gestor, user_id')
+    .select('id, estado, horario_id, nota_gestor, user_id, resultado, expectativa_monto, expectativa_moneda, expectativa_plazo, hubo_acuerdo, resultado_nota')
     .maybeSingle();
 
   /* El horario está tomado por otra cita. Es un caso normal al reorganizar

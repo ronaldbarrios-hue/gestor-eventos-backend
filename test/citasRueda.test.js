@@ -27,7 +27,11 @@ test('nadie escribe notas en la cita de otro', () => {
      en la cita ajena cambiando el id de la URL. */
   const i = LIMPIO.indexOf("'/:eventoId/networking/citas/:citaId/notas'");
   assert.ok(i > 0, 'no existe la ruta de notas');
-  const bloque = LIMPIO.slice(i, i + 1200);
+  /* Hasta el final de la ruta y no 1200 caracteres: desde que la misma ruta
+     cierra la reunión —resultado y expectativa— el handler creció, y una
+     ventana fija haría que esta prueba dejara de mirar el filtro sin dejar de
+     pasar. Ese es el fallo que la prueba existe para impedir. */
+  const bloque = LIMPIO.slice(i, LIMPIO.indexOf('\nrouter.', i + 10));
   assert.match(bloque, /\.eq\('user_id', req\.user\.id\)/,
     'la ruta de notas no filtra por la persona: se puede escribir en la cita de otro');
 });

@@ -3,6 +3,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { exige, sesion } = require('../core/permisos');
+const { validarCriterios, validarRondas, crearBaseCalificacion, poblarPrimeraRonda } = require('./torneoJurado.js');
 const {
   TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
   validarFormulario, normalizarRespuestas,
@@ -11,7 +12,9 @@ const {
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-const FORMATOS_VALIDOS = ['eliminacion', 'liga', 'grupos_eliminacion'];
+const FORMATOS_VALIDOS = ['eliminacion', 'liga', 'grupos_eliminacion', 'puntaje_jurado'];
+const MODOS_CALIFICACION_VALIDOS = ['rubrica', 'puntaje_unico'];
+const MODOS_RONDAS_VALIDOS = ['una_ronda', 'eliminatoria'];
 
 /* Las mismas listas que ya comprobaban los helpers de abajo, ahora también
    declaradas en la ruta. `exige` las verifica antes del handler y el helper
@@ -241,9 +244,20 @@ router.get('/:eventoId/torneo', exige(PERMS_TORNEO_CONFIG), async (req, res) => 
    Body: { nombre, formato, disciplina?, num_grupos?, avanzan_por_grupo? } */
 router.post('/:eventoId/torneo', exige(PERMS_TORNEO_CONFIG), async (req, res) => {
   const { eventoId } = req.params;
-  const { nombre, formato, disciplina, num_grupos, avanzan_por_grupo, categoria_id } = req.body;
+  const { nombre, formato, disciplina, num_grupos, avanzan_por_grupo, categoria_id, modo_calificacion, modo_rondas, criterios, rondas } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'El nombre del torneo es requerido.' });
   if (!FORMATOS_VALIDOS.includes(formato)) return res.status(400).json({ error: 'Formato inválido.' });
+
+  let baseCalificacion = null;
+  if (formato === 'puntaje_jurado') {
+    if (!MODOS_CALIFICACION_VALIDOS.includes(modo_calificacion)) return res.status(400).json({ error: 'Indica el modo de calificación (rubrica o puntaje_unico).' });
+    if (!MODOS_RONDAS_VALIDOS.includes(modo_rondas)) return res.status(400).json({ error: 'Indica el modo de rondas (una_ronda o eliminatoria).' });
+    const rCriterios = validarCriterios(modo_calificacion, criterios);
+    if (rCriterios.error) return res.status(400).json({ error: rCriterios.error });
+    const rRondas = validarRondas(modo_rondas, rondas);
+    if (rRondas.error) return res.status(400).json({ error: rRondas.error });
+    baseCalificacion = { criterios: rCriterios.criterios, rondas: rRondas.rondas };
+  }
 
   const insert = {
     nombre: nombre.trim(), formato, evento_id: eventoId,
@@ -251,6 +265,10 @@ router.post('/:eventoId/torneo', exige(PERMS_TORNEO_CONFIG), async (req, res) =>
     /* Sin categoría el torneo existe igual y sale suelto (#48). */
     categoria_id: categoria_id || null,
   };
+  if (formato === 'puntaje_jurado') {
+    insert.modo_calificacion = modo_calificacion;
+    insert.modo_rondas = modo_rondas;
+  }
   if (formato === 'grupos_eliminacion') {
     const ng = Number(num_grupos);
     const apg = Number(avanzan_por_grupo);
@@ -271,6 +289,16 @@ router.post('/:eventoId/torneo', exige(PERMS_TORNEO_CONFIG), async (req, res) =>
 
     const { data, error } = await supabase.from('torneos').insert(insert).select().single();
     if (error) return res.status(500).json({ error: error.message });
+
+    if (baseCalificacion) {
+      try {
+        await crearBaseCalificacion(data.id, baseCalificacion);
+      } catch (e2) {
+        await supabase.from('torneos').delete().eq('id', data.id);
+        return res.status(500).json({ error: 'No se pudo preparar la calificación: ' + e2.message });
+      }
+    }
+
     res.status(201).json({ torneo: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
@@ -621,6 +649,8 @@ router.post('/:eventoId/torneo/:torneoId/generar', exige(PERMS_TORNEO), async (r
         }
       }
       await supabase.from('torneos').update({ fase_actual: 'grupos' }).eq('id', torneoId);
+    } else if (torneo.formato === 'puntaje_jurado') {
+      await poblarPrimeraRonda(torneoId);
     }
 
     await supabase.from('torneos').update({ estado: 'en_curso' }).eq('id', torneoId);

@@ -14,6 +14,19 @@
 #   API=https://otro.host bash scripts/comprobar-despliegue.sh   # sólo uno
 #
 # Ninguna comprobación escribe nada.
+#
+# ── AL SUBIR UNA TANDA, AÑADE AQUÍ SU SEÑAL ─────────────────────────────────
+#
+# Este archivo se queda viejo solo, y cuando se queda viejo MIENTE: contesta
+# «al día» mirando lo que se desplegó hace un mes. Ya pasó — dijo que los dos
+# servidores estaban al día mientras a cPanel le faltaba la rueda entera, y sólo
+# se vio porque se preguntó a mano por una ruta de esta semana.
+#
+# Una señal buena es una ruta o un mensaje que ANTES no existía, que se puede
+# pedir sin sesión y sin escribir nada. El patrón que mejor funciona: pedir algo
+# inventado a una ruta nueva y pública. Si la ruta existe, contesta su propio
+# «no lo encuentro»; si no existe, cae en el guardia genérico y contesta «Token
+# requerido». Esa diferencia es la prueba.
 set -u
 
 HOSTS="${API:-https://api.gestekeventost.dpdns.org https://gestor-eventos-backend-yx75.onrender.com}"
@@ -47,6 +60,13 @@ for api in $HOSTS; do
   # boleta — que es la prueba de que la ruta existe y es pública.
   probar "$api" "existe la ruta para retomar un pago" \
     "/eventos/publicos/ticket/CODIGOQUENOEXISTE/reanudar-pago" 'No encontramos esa boleta' POST
+
+  # La agenda de una mesa (PR #46). Un código inventado en una ruta que EXISTE
+  # contesta «Boleta no encontrada»; si la ruta no existe, cae en el guardia
+  # genérico y contesta «Token requerido». Esa es toda la diferencia, y es la
+  # que dice si este servidor tiene lo de la rueda.
+  probar "$api" "la agenda de una mesa (rueda)" \
+    "/eventos/publicos/expositor/CODIGOQUENOEXISTE/citas" 'Boleta no encontrada'
   echo
 done
 

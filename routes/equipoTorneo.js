@@ -31,6 +31,9 @@ const {
  * hablando de alguien que no existe.
  */
 
+const { prellenarValidando } = require('../lib/heredarRespuestas.js');
+const { loQueYaContesto } = require('../lib/loQueYaContesto.js');
+
 const router = express.Router();
 
 router.use(require('../core/permisos').publica(
@@ -42,7 +45,7 @@ async function cargarEquipo(req, res, next) {
 
   const { data: ticket } = await supabase
     .from('tickets')
-    .select('id, evento_id, estado, codigo')
+    .select('id, evento_id, estado, codigo, respuestas')
     .eq('codigo', cod).maybeSingle();
   if (!ticket) return res.status(404).json({ error: 'Boleta no encontrada.' });
   if (!['pagado', 'usado'].includes(ticket.estado)) {
@@ -94,6 +97,25 @@ router.get('/:codigo/panel', cargarEquipo, async (req, res) => {
 
   const campos = await camposDelTorneo(ticket.evento_id, torneo.id);
 
+  /* Lo que el capitán ya contestó al inscribir su equipo.
+   *
+   * Es la misma persona rellenando dos formularios del mismo evento con media
+   * hora de diferencia. Si el del torneo vuelve a preguntar el teléfono o el
+   * nombre de la empresa, se lo hace escribir otra vez — y las dos respuestas
+   * quedan en cajas distintas, así que después ni cuadran.
+   *
+   * Se prellena al LEER y no al crear el equipo: el disparador de la base crea
+   * la fila en el momento del pago, cuando los campos del torneo pueden no
+   * existir todavía. Haciéndolo aquí vale también para los equipos que se
+   * crearon antes de que el torneo tuviera preguntas — que son todos los de
+   * hoy — y la regla vive en un solo sitio.
+   *
+   * `yaEscrito` es lo que el equipo ya guardó: nunca se pisa. */
+  const sabido = await loQueYaContesto(ticket.evento_id, ticket.respuestas);
+  const sugeridas = prellenarValidando({
+    camposDestino: campos, sabido, yaEscrito: equipo.respuestas || {},
+  });
+
   /* Cuándo juega. Es lo primero que se pregunta quien abre esto, y sale de los
      partidos ya programados; sin fixture todavía no hay respuesta y se dice. */
   const { data: partidos, error: ePartidos } = await supabase
@@ -117,6 +139,11 @@ router.get('/:codigo/panel', cargarEquipo, async (req, res) => {
     torneo,
     evento,
     campos,
+    /* Aparte de `equipo.respuestas` y no mezcladas dentro: son una sugerencia,
+       no algo guardado. La pantalla las pinta y las puede decir como tales; si
+       llegaran mezcladas, el capitán vería su ficha «ya completa» sin haberla
+       enviado nunca. */
+    sugeridas,
     partidos: partidos || [],
     equipos: rivales || [],
     /* El nombre se congela con el fixture: los partidos jugados hablan de este

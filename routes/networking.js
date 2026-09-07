@@ -10,6 +10,7 @@ const {
 } = require('../lib/expositores.js');
 const { zonasDelEvento } = require('../lib/aforoZonas.js');
 const { camposDeCierre, informeDeCitas } = require('../lib/cierreDeCita.js');
+const { ESTADOS_EN_AGENDA, armarAgenda, resumenDeAgenda } = require('../lib/agendaDeMesa.js');
 const {
   MENSAJE_APAGADA, ruedaEncendida,
   topeValido, alcanzoElTope, mensajeDeTope,
@@ -1512,6 +1513,84 @@ router.delete('/:eventoId/networking/horarios/:id', exige(PERMS_EXPOSITORES), as
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
+});
+
+/* GET /eventos/:eventoId/networking/expositores/:id/citas — la agenda de UNA empresa
+ *
+ * ── El hueco que tapa ───────────────────────────────────────────────────
+ *
+ * Una rueda tiene dos lados y hasta ahora sólo uno podía consultar su día.
+ * Quien visita ve «Mis citas»; la empresa que está SENTADA en la mesa no
+ * tenía ninguna pantalla: para saber a quién iba a recibir a las 10:15 había
+ * que pedírselo a quien organiza, que lo leía de la parrilla.
+ *
+ * Y quien organiza tampoco podía mirar una sola empresa: la parrilla las
+ * enseña todas a la vez, que es lo correcto para operar el salón y lo peor
+ * para contestar «¿qué tiene mañana Café del Tolima?».
+ *
+ * ── Quién puede verla ───────────────────────────────────────────────────
+ *
+ * Dos: quien gestiona la rueda, y **el contacto de esa misma empresa** por su
+ * `contacto_email`. Lo segundo es lo que la convierte en algo que se le puede
+ * dar al participante en vez de en otra pantalla del panel — y no hace falta
+ * inventar un vínculo nuevo entre cuentas y expositores: ese correo ya está
+ * en la ficha, es el que el equipo escribió al darla de alta, y es a donde
+ * van los avisos de esa mesa.
+ *
+ * Se compara en minúsculas por lo de siempre: nadie escribe su correo dos
+ * veces igual.
+ */
+router.get('/:eventoId/networking/expositores/:id/citas', sesion('La agenda de una mesa: la ve quien gestiona la rueda y el contacto de esa misma empresa (se decide dentro, contra contacto_email).'), async (req, res) => {
+  const { eventoId, id } = req.params;
+
+  const { data: exp, error: eExp } = await supabase
+    .from('networking_expositores')
+    .select('id, evento_id, nombre, stand, contacto_email, contacto_nombre, categoria_negocio')
+    .eq('id', id).eq('evento_id', eventoId).maybeSingle();
+  if (eExp) return res.status(500).json({ error: eExp.message });
+  if (!exp) return res.status(404).json({ error: 'Esa mesa no es de este evento.' });
+
+  const miCorreo = (req.user.email || '').toLowerCase();
+  const suyo = miCorreo && (exp.contacto_email || '').toLowerCase() === miCorreo;
+  if (!suyo) {
+    try {
+      await assertOwner(eventoId, req.user.id);
+    } catch {
+      return res.status(403).json({ error: 'Esta agenda es de otra empresa.' });
+    }
+  }
+
+  const { horarios, error: eHor } = await horariosDeExpositores([id]);
+  if (eHor) return res.status(500).json({ error: eHor });
+
+  const ids = (horarios || []).map(h => h.id);
+  let citas = [];
+  if (ids.length) {
+    const { data, error } = await supabase
+      .from('networking_citas')
+      .select('id, horario_id, estado, user_id, guest_email, guest_nombre, resultado, hubo_acuerdo')
+      .eq('evento_id', eventoId)
+      .in('horario_id', ids)
+      .in('estado', ESTADOS_EN_AGENDA);
+    if (error) return res.status(500).json({ error: error.message });
+    citas = data || [];
+  }
+
+  const personas = await personasDeLasCitas(citas);
+  const agenda = armarAgenda({ horarios, citas, personas });
+
+  res.json({
+    expositor: {
+      id: exp.id, nombre: exp.nombre, stand: exp.stand,
+      categoria_negocio: exp.categoria_negocio,
+      contacto_nombre: exp.contacto_nombre,
+    },
+    resumen: resumenDeAgenda(agenda),
+    /* Para que la pantalla sepa si puede ofrecer lo que sólo hace quien
+       organiza —mover, cancelar— sin tener que adivinarlo por el 403. */
+    soyElEquipo: !suyo,
+    agenda,
+  });
 });
 
 /* PATCH /eventos/:eventoId/networking/horarios/:id — bloquear o soltar una franja

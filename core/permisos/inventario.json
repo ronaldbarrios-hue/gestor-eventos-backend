@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
-  "censado_el": "2026-09-05",
-  "total": 316,
+  "censado_el": "2026-09-07",
+  "total": 320,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -805,6 +805,13 @@
         "gestionar_tickets"
       ]
     },
+    "GET /eventos/:eventoId/origenes": {
+      "estado": "exige",
+      "acciones": [
+        "ver_clientes",
+        "gestionar_clientes"
+      ]
+    },
     "GET /eventos/:eventoId/clientes": {
       "estado": "exige",
       "acciones": [
@@ -1184,6 +1191,13 @@
         "editar_evento"
       ]
     },
+    "GET /eventos/:eventoId/networking/informe": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
+    },
     "PATCH /eventos/:eventoId/networking/citas/:citaId": {
       "estado": "exige",
       "acciones": [
@@ -1206,6 +1220,17 @@
       ]
     },
     "DELETE /eventos/:eventoId/networking/horarios/:id": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/networking/expositores/:id/citas": {
+      "estado": "sesion",
+      "motivo": "La agenda de una mesa: la ve quien gestiona la rueda y el contacto de esa misma empresa (se decide dentro, contra contacto_email)."
+    },
+    "PATCH /eventos/:eventoId/networking/horarios/:id": {
       "estado": "exige",
       "acciones": [
         "gestionar_expositores",

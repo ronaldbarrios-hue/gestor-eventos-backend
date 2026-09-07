@@ -18,6 +18,7 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
+const { ESTADOS_EN_AGENDA, armarAgenda, resumenDeAgenda } = require('../lib/agendaDeMesa.js');
 const { limpiarOrigen } = require('../lib/origenDeRegistro.js');
 const { conSitio } = require('../lib/eventoSitio.js');
 const { bloqueDeSeccion } = require('../lib/bloquesLanding.js');
@@ -390,6 +391,79 @@ router.get('/expositor/:codigo', async (req, res) => {
     pagada: ticket.estado === 'pagado' || ticket.estado === 'usado',
     ticket: { codigo: req.params.codigo.toUpperCase().trim(), nombre: ticket.guest_nombre, email: ticket.guest_email },
     evento,
+  });
+});
+
+/* GET /eventos/publicos/expositor/:codigo/citas — la agenda de SU mesa.
+ *
+ * ── Por qué por el código y no por la cuenta ────────────────────────────
+ *
+ * Una rueda tiene dos lados y sólo uno podía consultar su día: quien visita ve
+ * «Mis citas», y la empresa sentada en la mesa no tenía ninguna pantalla. Para
+ * saber a quién iba a recibir a las 10:15 había que pedírselo a quien organiza,
+ * que lo leía de la parrilla — y el día del evento eso es una fila de gente
+ * preguntando lo mismo.
+ *
+ * Va por el código de la boleta-stand, que es el canal que la empresa YA usa
+ * para editar su ficha: sin cuenta, sin invitación y sin una contraseña más
+ * que recordar. Pedirle que se registre en GESTEK para ver su propia agenda
+ * sería inventar un trámite donde ya hay una puerta abierta.
+ *
+ * ── Lo que NO viaja ─────────────────────────────────────────────────────
+ *
+ * Los nombres y correos de la contraparte SÍ: es con quien esa empresa se va a
+ * sentar, y una agenda que dice «10:15 · ocupado» no sirve de nada. Lo que no
+ * viaja es nada de las otras mesas: la consulta se ata a la ficha que resuelve
+ * el código, no a un id que venga en la URL.
+ */
+router.get('/expositor/:codigo/citas', async (req, res) => {
+  const { error, ticket, ficha } = await resolverFichaExpositor(req.params.codigo);
+  if (error) return res.status(error === 'Código inválido.' ? 400 : 404).json({ error });
+  if (!ficha) return res.status(409).json({ error: 'La ficha aún no está lista. Si acabas de pagar, espera unos segundos.' });
+
+  /* Con y sin las columnas de la 0113: mientras no esté aplicada no hay
+     bloqueos, en vez de no haber agenda. */
+  const pedir = (cols) => supabase
+    .from('networking_horarios').select(cols).eq('expositor_id', ficha.id);
+  let { data: horarios, error: eH } = await pedir('id, inicio, fin, bloqueado, bloqueo_motivo');
+  if (eH) ({ data: horarios, error: eH } = await pedir('id, inicio, fin'));
+  if (eH) return res.status(500).json({ error: eH.message });
+
+  const ids = (horarios || []).map(h => h.id);
+  let citas = [];
+  if (ids.length) {
+    const { data, error: eC } = await supabase
+      .from('networking_citas')
+      .select('id, horario_id, estado, user_id, guest_email, guest_nombre, resultado, hubo_acuerdo')
+      .eq('evento_id', ticket.evento_id)
+      .in('horario_id', ids)
+      .in('estado', ESTADOS_EN_AGENDA);
+    if (eC) return res.status(500).json({ error: eC.message });
+    citas = data || [];
+  }
+
+  /* Quién es cada contraparte. No se puede pedir con un embed
+     `profiles!user_id`: `networking_citas.user_id` apunta a `auth.users` y no
+     a `public.profiles` —comprobado contra la API—, así que PostgREST contesta
+     PGRST200 y la agenda saldría sin un solo nombre. */
+  const ids2 = [...new Set(citas.map(c => c.user_id).filter(Boolean))];
+  let personas = new Map();
+  if (ids2.length) {
+    const { data: perfiles } = await supabase
+      .from('profiles').select('id, nombre, email').in('id', ids2);
+    personas = new Map((perfiles || []).map(p => [p.id, p]));
+  }
+
+  const agenda = armarAgenda({ horarios: horarios || [], citas, personas });
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, slug, titulo, timezone').eq('id', ticket.evento_id).maybeSingle();
+
+  res.json({
+    expositor: { id: ficha.id, nombre: ficha.nombre, stand: ficha.stand },
+    evento,
+    resumen: resumenDeAgenda(agenda),
+    agenda,
   });
 });
 

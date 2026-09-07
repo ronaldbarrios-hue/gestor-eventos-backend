@@ -18,6 +18,7 @@ const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO,
   limpiarMapeo, mapeoSugerido, filasSinCruce } = require('../lib/padronPrevio.js');
 const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
 const { sincronizarZonas, sincronizarPuertas, conZonas } = require('../lib/zonasTabla.js');
+const { topeValido, TOPE_MAX } = require('../lib/ajustesRueda.js');
 const { fallaPaginas } = require('../lib/bloquesLanding.js');
 
 /* El padrón es parte de configurar el formulario del evento, así que pide lo
@@ -45,6 +46,11 @@ const CAMPOS_EDITABLES = [
      lo que no está en esta lista, que es lo correcto y por eso hay que
      acordarse de venir aquí al añadir una columna. */
   'networking_modo',
+  /* Si el evento TIENE rueda, y cuántas citas puede tener una misma empresa
+     (0113). Lo primero lo decidía la categoría del evento y por eso una rueda
+     de agroindustria —categoría que ni existe en el catálogo— no se podía
+     montar; ahora lo decide quien organiza. */
+  'networking_activo', 'networking_tope_por_empresa',
   'pago_llave', 'pago_qr_url', 'pago_instrucciones',
 ];
 
@@ -353,6 +359,17 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
     if (campo in updates && !esUrlImagenSegura(updates[campo])) {
       return res.status(400).json({ error: `URL inválida en ${campo}.` });
     }
+  }
+
+  /* El tope de citas de la rueda se valida aquí y no sólo con el CHECK: la
+     base contestaría «violates check constraint eventos_networking_tope_chk»,
+     que es lo que acabaría viendo quien escribió «cinco» en la casilla. */
+  if ('networking_tope_por_empresa' in updates) {
+    const n = topeValido(updates.networking_tope_por_empresa);
+    if (n === undefined) {
+      return res.status(400).json({ error: `El tope de citas tiene que ser un número entre 1 y ${TOPE_MAX}. Déjalo vacío para no poner tope.` });
+    }
+    updates.networking_tope_por_empresa = n;
   }
 
   if ('modo_publico' in updates || 'url_externa' in updates) {

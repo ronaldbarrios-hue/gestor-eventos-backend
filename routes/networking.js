@@ -10,13 +10,19 @@ const {
 } = require('../lib/expositores.js');
 const { zonasDelEvento } = require('../lib/aforoZonas.js');
 const { camposDeCierre, informeDeCitas } = require('../lib/cierreDeCita.js');
+const { ESTADOS_EN_AGENDA, armarAgenda, resumenDeAgenda } = require('../lib/agendaDeMesa.js');
+const {
+  MENSAJE_APAGADA, ruedaEncendida,
+  topeValido, alcanzoElTope, mensajeDeTope,
+  estaBloqueado, mensajeDeBloqueo, limpiarMotivo,
+} = require('../lib/ajustesRueda.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-/* Categorías donde tiene sentido ofrecer Rueda de Negocios. Los slugs deben
-   coincidir con los que ya existen en la tabla `categorias`. */
-const CATEGORIAS_PERMITIDAS = ['negocios', 'marketing', 'tecnologia'];
+/* Quién decide que este evento tiene rueda: ver `lib/ajustesRueda.js`. Hasta la
+   0113 lo decidía la categoría del evento y la lista estaba escrita también en
+   el frontend; ahora lo decide quien organiza. */
 
 /* `gestionar_expositores` es el permiso fino (stands y rueda de negocios);
    `editar_evento` sigue valiendo para no romper a quien ya lo tenía.
@@ -30,17 +36,85 @@ function assertOwner(eventoId, userId) {
   return assertPermiso(eventoId, userId, PERMS_EXPOSITORES, 'id, owner_id');
 }
 
-/* Verifica que el evento tenga una categoría habilitada para este módulo. */
-async function assertCategoriaPermitida(eventoId) {
-  const { data: ev } = await supabase
+/* Verifica que este evento tenga rueda encendida.
+ *
+ * Se piden las dos cosas —el interruptor y la categoría— porque si el código
+ * sube antes que la 0113 la columna no existe, PostgREST contesta error, y hay
+ * que poder seguir contestando lo de ayer en vez de apagarle la rueda a todo el
+ * mundo el día del despliegue. */
+async function assertRuedaActiva(eventoId) {
+  let columnaExiste = true;
+  let { data: ev, error } = await supabase
     .from('eventos')
-    .select('categoria:categorias(slug, nombre)')
+    .select('networking_activo, categoria:categorias(slug, nombre)')
     .eq('id', eventoId)
     .maybeSingle();
-  const slug = ev?.categoria?.slug;
-  if (!slug || !CATEGORIAS_PERMITIDAS.includes(slug)) {
-    throw new Error('La Rueda de Negocios solo está disponible para eventos de categoría Negocios, Marketing o Tecnología.');
+
+  if (error) {
+    columnaExiste = false;
+    console.warn(`[networking] sin el interruptor de la rueda (¿falta la 0113?): ${error.message}`);
+    ({ data: ev } = await supabase
+      .from('eventos')
+      .select('categoria:categorias(slug, nombre)')
+      .eq('id', eventoId)
+      .maybeSingle());
   }
+
+  if (!ruedaEncendida(ev, { columnaExiste })) throw new Error(MENSAJE_APAGADA);
+}
+
+/* Los ajustes que la rueda consulta al reservar. Se leen en cada reserva y no
+   se cachean: son dos enteros, y un tope puesto a mitad de evento tiene que
+   valer desde la siguiente cita, que es justo cuando ponerlo sirve de algo. */
+async function ajustesDelEvento(eventoId) {
+  const { data, error } = await supabase
+    .from('eventos')
+    .select('networking_modo, networking_tope_por_empresa')
+    .eq('id', eventoId)
+    .maybeSingle();
+  if (error) {
+    /* Sin la 0113 no hay tope; el modo sí existe desde la 0104 y ése no se
+       puede adivinar, así que se lee aparte y su fallo sigue cortando. */
+    const { data: soloModo, error: e2 } = await supabase
+      .from('eventos').select('networking_modo').eq('id', eventoId).maybeSingle();
+    if (e2) return { error: e2 };
+    return { ajustes: { networking_modo: soloModo?.networking_modo, networking_tope_por_empresa: null } };
+  }
+  return { ajustes: data || {} };
+}
+
+/* Una franja, comprobando que sea de ESTE evento.
+ *
+ * Devuelve la fila, `null` si no existe o es de otro evento, o `{ error }`. Se
+ * pide con las columnas de bloqueo y sin ellas: hasta que la 0113 esté
+ * aplicada, pedirlas contesta error y la reserva entera se caería — cuando lo
+ * correcto es que sin la migración no haya bloqueos, no que no haya reservas. */
+async function horarioDelEvento(horarioId, eventoId) {
+  const pedir = (cols) => supabase
+    .from('networking_horarios').select(cols).eq('id', horarioId).maybeSingle();
+
+  const CON = 'id, expositor_id, inicio, fin, bloqueado, bloqueo_motivo, networking_expositores!expositor_id(evento_id)';
+  const SIN = 'id, expositor_id, inicio, fin, networking_expositores!expositor_id(evento_id)';
+
+  let { data, error } = await pedir(CON);
+  if (error) ({ data, error } = await pedir(SIN));
+  if (error) return { error: error.message };
+  if (!data || data.networking_expositores?.evento_id !== eventoId) return null;
+  return data;
+}
+
+/* Las franjas de un puñado de mesas, en orden. Mismo apaño que arriba con las
+   columnas de la 0113: si no están, se piden sin ellas y no hay bloqueos, en
+   vez de quedarse sin parrilla. */
+async function horariosDeExpositores(ids) {
+  if (!ids?.length) return { horarios: [] };
+  const pedir = (cols) => supabase
+    .from('networking_horarios').select(cols).in('expositor_id', ids).order('inicio', { ascending: true });
+
+  let { data, error } = await pedir('id, expositor_id, inicio, fin, bloqueado, bloqueo_motivo');
+  if (error) ({ data, error } = await pedir('id, expositor_id, inicio, fin'));
+  if (error) return { error: error.message };
+  return { horarios: data || [] };
 }
 
 /* El organizador siempre puede; cualquier otro usuario necesita tener al
@@ -101,12 +175,8 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
     return res.status(500).json({ error: e1.message });
   }
 
-  const { data: horarios, error: e2 } = await supabase
-    .from('networking_horarios')
-    .select('id, expositor_id, inicio, fin')
-    .in('expositor_id', (expositores || []).map(e => e.id).length ? expositores.map(e => e.id) : ['00000000-0000-0000-0000-000000000000'])
-    .order('inicio', { ascending: true });
-  if (e2) return res.status(500).json({ error: e2.message });
+  const { horarios, error: e2 } = await horariosDeExpositores((expositores || []).map(e => e.id));
+  if (e2) return res.status(500).json({ error: e2 });
 
   /* Confirmadas Y solicitadas.
    *
@@ -141,7 +211,13 @@ router.get('/:eventoId/networking/expositores', sesion('Rueda de negocios: hace 
           id: h.id,
           inicio: h.inicio,
           fin: h.fin,
-          disponible: !cita,
+          /* Bloqueada por quien coordina: existe y no se puede pedir. Va como
+             `disponible: false` para que ninguna pantalla vieja la ofrezca, y
+             además con su bandera, para poder pintarla distinta de una que
+             alguien ya reservó — que son dos cosas distintas para quien mira. */
+          disponible: !cita && !estaBloqueado(h),
+          bloqueado: estaBloqueado(h) || undefined,
+          bloqueoMotivo: estaBloqueado(h) ? (h.bloqueo_motivo || undefined) : undefined,
           esMio: cita?.user_id === req.user.id,
           /* Si es mía, en qué estado. «Pedida» y «Reservada» no son lo mismo
              para quien está mirando su agenda del día. Sólo viaja cuando es
@@ -264,14 +340,15 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
     return res.status(403).json({ error: e.message });
   }
 
-  const { data: horario, error: e1 } = await supabase
-    .from('networking_horarios')
-    .select('id, expositor_id, inicio, fin, networking_expositores!expositor_id(evento_id)')
-    .eq('id', horarioId)
-    .maybeSingle();
-  if (e1) return res.status(500).json({ error: e1.message });
-  if (!horario || horario.networking_expositores?.evento_id !== eventoId) {
-    return res.status(404).json({ error: 'Horario no encontrado.' });
+  const horario = await horarioDelEvento(horarioId, eventoId);
+  if (horario?.error) return res.status(500).json({ error: horario.error });
+  if (!horario) return res.status(404).json({ error: 'Horario no encontrado.' });
+
+  /* Bloqueada por quien coordina (0113). Se dice el motivo si lo hay: «no está
+     disponible» a secas, en una casilla que se ve igual que las libres, parece
+     un fallo de la aplicación. */
+  if (estaBloqueado(horario)) {
+    return res.status(409).json({ error: mensajeDeBloqueo(horario) });
   }
 
   /* Ya tiene algo a esa hora. Se dice CON QUIÉN: «tienes otra cita a esa hora»
@@ -294,8 +371,7 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
    *
    * Se lee aquí y no se cachea: son cuatro bytes y el modo puede cambiar a
    * mitad de un evento, que es justo cuando cambiarlo sirve de algo. */
-  const { data: evModo, error: eModo } = await supabase
-    .from('eventos').select('networking_modo').eq('id', eventoId).maybeSingle();
+  const { ajustes: evModo, error: eModo } = await ajustesDelEvento(eventoId);
   /* Si no se pudo leer el modo, no se adivina. Sin este corte, un fallo de la
      base convertía una rueda «con aprobación» en una de reserva directa
      durante lo que durase el fallo: citas confirmadas solas, sin que nadie del
@@ -303,6 +379,25 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
      nadie. Reintentar es barato; desconfirmar a mano, no. */
   if (eModo) return res.status(500).json({ error: eModo.message });
   const estadoInicial = evModo?.networking_modo === 'solicitud' ? 'solicitada' : 'confirmada';
+
+  /* El tope de citas por participante (0113). Se comprueba DESPUÉS del solape
+     y antes de insertar: contar primero las que ya tiene es una consulta más
+     por reserva sólo cuando el evento puso tope, que es la minoría. */
+  const tope = topeValido(evModo?.networking_tope_por_empresa);
+  if (tope) {
+    const { data: mias, error: eMias } = await supabase
+      .from('networking_citas')
+      .select('id, estado')
+      .eq('evento_id', eventoId)
+      .eq('user_id', req.user.id);
+    /* Si no se pueden contar, no se deja pasar: un tope que se salta cuando la
+       base tose no es un tope. Al revés que el modo, aquí equivocarse por
+       exceso llena la agenda de una empresa y vacía la de otras. */
+    if (eMias) return res.status(500).json({ error: eMias.message });
+    if (alcanzoElTope({ citas: mias || [], tope })) {
+      return res.status(409).json({ error: mensajeDeTope(tope) });
+    }
+  }
 
   const { data: cita, error: e2 } = await supabase
     .from('networking_citas')
@@ -870,7 +965,7 @@ async function borrarExpositor(req, res) {
 /* El gate de la Rueda de Negocios, como middleware: solo lo llevan sus rutas. */
 async function soloCategoriaNetworking(req, res, next) {
   try {
-    await assertCategoriaPermitida(req.params.eventoId);
+    await assertRuedaActiva(req.params.eventoId);
     next();
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -905,9 +1000,8 @@ router.get('/:eventoId/networking/admin', exige(PERMS_EXPOSITORES), async (req, 
     if (eExp) return res.status(500).json({ error: eExp.message });
 
     const ids = (expositores || []).map(e => e.id);
-    const { data: horarios } = ids.length
-      ? await supabase.from('networking_horarios').select('id, expositor_id, inicio, fin').in('expositor_id', ids).order('inicio', { ascending: true })
-      : { data: [] };
+    const { horarios, error: eHor } = await horariosDeExpositores(ids);
+    if (eHor) return res.status(500).json({ error: eHor });
 
     /* El error SE MIRA. Antes no: la consulta fallaba por la relacion que no
        existe, `citas` volvia null, y la pantalla pintaba todas las casillas
@@ -1279,19 +1373,24 @@ router.post('/:eventoId/networking/citas', exige(PERMS_EXPOSITORES), async (req,
     }
   }
 
-  const { data: h, error: eH } = await supabase
-    .from('networking_horarios')
-    .select('id, inicio, fin, expositor:networking_expositores!expositor_id(evento_id)')
-    .eq('id', horario_id).maybeSingle();
-  if (eH) return res.status(500).json({ error: eH.message });
-  if (!h || h.expositor?.evento_id !== eventoId) {
-    return res.status(400).json({ error: 'Ese horario no es de este evento.' });
-  }
+  const h = await horarioDelEvento(horario_id, eventoId);
+  if (h?.error) return res.status(500).json({ error: h.error });
+  if (!h) return res.status(400).json({ error: 'Ese horario no es de este evento.' });
+
+  /* Sentar a alguien en una franja que el propio equipo bloqueó es casi
+     siempre un despiste, pero se deja pasar a propósito: quien coordina sabe
+     por qué la bloqueó y a veces necesita meter una reunión ahí de todos
+     modos. Lo que sí hace falta es decírselo, y eso lo pinta la parrilla. */
 
   /* La misma comprobación que en la reserva: sentar a alguien a mano en dos
      mesas a la misma hora es el error de agenda que más cuesta, porque lo
-     descubre la mesa que se queda esperando. */
-  const choque = await citaQueSolapa({ eventoId, userId, guestEmail: guest_email, horario: h });
+     descubre la mesa que se queda esperando.
+
+     `user_id`, no `userId`: esta línea nombraba una variable que no existe en
+     este ámbito, así que sentar a alguien a mano reventaba con ReferenceError
+     antes de llegar a comprobar nada. Es justo la función que se pidió para
+     armar la agenda entera con sólo el correo. */
+  const choque = await citaQueSolapa({ eventoId, userId: user_id, guestEmail: guest_email, horario: h });
   if (choque) {
     const otra = choque.horario?.expositor?.nombre;
     return res.status(409).json({
@@ -1355,7 +1454,7 @@ router.post('/:eventoId/networking/expositores/:id/horarios', exige(PERMS_EXPOSI
 
   try {
     await assertOwner(eventoId, req.user.id);
-    await assertCategoriaPermitida(eventoId);
+    await assertRuedaActiva(eventoId);
 
     const { data: exp } = await supabase.from('networking_expositores').select('id').eq('id', id).eq('evento_id', eventoId).maybeSingle();
     if (!exp) return res.status(404).json({ error: 'Expositor no encontrado.' });
@@ -1411,6 +1510,139 @@ router.delete('/:eventoId/networking/horarios/:id', exige(PERMS_EXPOSITORES), as
     const { error } = await supabase.from('networking_horarios').delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* GET /eventos/:eventoId/networking/expositores/:id/citas — la agenda de UNA empresa
+ *
+ * ── El hueco que tapa ───────────────────────────────────────────────────
+ *
+ * Una rueda tiene dos lados y hasta ahora sólo uno podía consultar su día.
+ * Quien visita ve «Mis citas»; la empresa que está SENTADA en la mesa no
+ * tenía ninguna pantalla: para saber a quién iba a recibir a las 10:15 había
+ * que pedírselo a quien organiza, que lo leía de la parrilla.
+ *
+ * Y quien organiza tampoco podía mirar una sola empresa: la parrilla las
+ * enseña todas a la vez, que es lo correcto para operar el salón y lo peor
+ * para contestar «¿qué tiene mañana Café del Tolima?».
+ *
+ * ── Quién puede verla ───────────────────────────────────────────────────
+ *
+ * Dos: quien gestiona la rueda, y **el contacto de esa misma empresa** por su
+ * `contacto_email`. Lo segundo es lo que la convierte en algo que se le puede
+ * dar al participante en vez de en otra pantalla del panel — y no hace falta
+ * inventar un vínculo nuevo entre cuentas y expositores: ese correo ya está
+ * en la ficha, es el que el equipo escribió al darla de alta, y es a donde
+ * van los avisos de esa mesa.
+ *
+ * Se compara en minúsculas por lo de siempre: nadie escribe su correo dos
+ * veces igual.
+ */
+router.get('/:eventoId/networking/expositores/:id/citas', sesion('La agenda de una mesa: la ve quien gestiona la rueda y el contacto de esa misma empresa (se decide dentro, contra contacto_email).'), async (req, res) => {
+  const { eventoId, id } = req.params;
+
+  const { data: exp, error: eExp } = await supabase
+    .from('networking_expositores')
+    .select('id, evento_id, nombre, stand, contacto_email, contacto_nombre, categoria_negocio')
+    .eq('id', id).eq('evento_id', eventoId).maybeSingle();
+  if (eExp) return res.status(500).json({ error: eExp.message });
+  if (!exp) return res.status(404).json({ error: 'Esa mesa no es de este evento.' });
+
+  const miCorreo = (req.user.email || '').toLowerCase();
+  const suyo = miCorreo && (exp.contacto_email || '').toLowerCase() === miCorreo;
+  if (!suyo) {
+    try {
+      await assertOwner(eventoId, req.user.id);
+    } catch {
+      return res.status(403).json({ error: 'Esta agenda es de otra empresa.' });
+    }
+  }
+
+  const { horarios, error: eHor } = await horariosDeExpositores([id]);
+  if (eHor) return res.status(500).json({ error: eHor });
+
+  const ids = (horarios || []).map(h => h.id);
+  let citas = [];
+  if (ids.length) {
+    const { data, error } = await supabase
+      .from('networking_citas')
+      .select('id, horario_id, estado, user_id, guest_email, guest_nombre, resultado, hubo_acuerdo')
+      .eq('evento_id', eventoId)
+      .in('horario_id', ids)
+      .in('estado', ESTADOS_EN_AGENDA);
+    if (error) return res.status(500).json({ error: error.message });
+    citas = data || [];
+  }
+
+  const personas = await personasDeLasCitas(citas);
+  const agenda = armarAgenda({ horarios, citas, personas });
+
+  res.json({
+    expositor: {
+      id: exp.id, nombre: exp.nombre, stand: exp.stand,
+      categoria_negocio: exp.categoria_negocio,
+      contacto_nombre: exp.contacto_nombre,
+    },
+    resumen: resumenDeAgenda(agenda),
+    /* Para que la pantalla sepa si puede ofrecer lo que sólo hace quien
+       organiza —mover, cancelar— sin tener que adivinarlo por el 403. */
+    soyElEquipo: !suyo,
+    agenda,
+  });
+});
+
+/* PATCH /eventos/:eventoId/networking/horarios/:id — bloquear o soltar una franja
+ *
+ * «Esta empresa no está de 11 a 12» sólo se podía decir borrando esos horarios,
+ * y borrar pierde el porqué: nadie sabe luego si esa hora no existió nunca o si
+ * se quitó, y si la persona vuelve hay que recrearla a mano y adivinando.
+ *
+ * Bloquear es reversible y la casilla sigue en la parrilla, marcada. */
+router.patch('/:eventoId/networking/horarios/:id', exige(PERMS_EXPOSITORES), async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const horario = await horarioDelEvento(id, eventoId);
+    if (horario?.error) return res.status(500).json({ error: horario.error });
+    if (!horario) return res.status(404).json({ error: 'Horario no encontrado.' });
+
+    const bloquear = req.body.bloqueado === true;
+
+    /* Bloquear una casilla ocupada no cancela la cita: quien la tiene seguiría
+       esperando en la mesa y nadie se lo habría dicho. Se pide cancelarla
+       primero, que es el camino que sí avisa. Mismo criterio que el borrado. */
+    if (bloquear) {
+      const { data: citas, error: eCita } = await supabase
+        .from('networking_citas').select('id, estado')
+        .eq('horario_id', id).in('estado', ['confirmada', 'solicitada']);
+      if (eCita) return res.status(500).json({ error: eCita.message });
+      if (citas?.length) {
+        return res.status(400).json({
+          error: 'Esa franja tiene una cita. Cancélala primero: bloquearla sin más dejaría a alguien esperando en la mesa.',
+        });
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('networking_horarios')
+      .update({
+        bloqueado: bloquear,
+        /* Al soltarla se limpia el motivo: un «llega a las 11:30» que sobrevive
+           al desbloqueo reaparece la próxima vez que se bloquee, con otra fecha
+           y sin sentido. */
+        bloqueo_motivo: bloquear ? limpiarMotivo(req.body.motivo) : null,
+      })
+      .eq('id', id)
+      .select('id, bloqueado, bloqueo_motivo')
+      .maybeSingle();
+    if (error) {
+      console.error(`[networking] no se pudo bloquear la franja (¿falta la 0113?): ${error.message}`);
+      return res.status(500).json({ error: error.message });
+    }
+    res.json({ horario: data });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

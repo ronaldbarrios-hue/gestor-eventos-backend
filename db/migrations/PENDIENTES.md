@@ -2,9 +2,22 @@
 
 **No queda ninguna.**
 
+> **El número 0103 estaba duplicado y ya no lo está.** El torneo de puntaje por
+> jurado nació como `0103_torneo_calificacion_jurado.sql`, con el número que ya
+> tenía `0103_solicitud_de_cambio.sql`. Renumerado a **0114** el 2026-09-06. No
+> hay nada que volver a correr: cambió el nombre del archivo, no el contenido.
+
+
 | Nº | Qué hace | Estado |
 |---|---|---|
-| 0103 | Formato de torneo "puntaje jurado" (show de talento): jurado, criterios, rondas | ✅ aplicada el 2026-09-05 |
+| 0113 | El interruptor de la rueda, el tope de citas por participante y las franjas bloqueadas | ✅ aplicada el 2026-09-06 |
+| 0112 | Recordar la cita una hora antes (`networking_citas.recordatorio_at`) | ✅ aplicada el 2026-09-06 |
+| 0111 | De dónde vino cada inscripción (`tickets.origen`) | ✅ aplicada el 2026-09-05 |
+| 0110 | Qué pasó en la reunión y qué negocio se espera | ✅ aplicada el 2026-09-05 |
+| 0109 | Los roles hacen lo que dicen que hacen | ✅ aplicada el 2026-09-05 |
+| 0108 | Sentar a alguien en la rueda con sólo su correo | ✅ aplicada el 2026-09-05 |
+| 0107 | Límite de caracteres y de palabras en las preguntas | ✅ aplicada el 2026-09-05 |
+| 0114 | Formato de torneo "puntaje jurado" (show de talento): jurado, criterios, rondas — nació como 0103, renumerada | ✅ aplicada el 2026-09-05 |
 | 0102 | Una notificación que lleva a algún sitio (`notificaciones.link`) | ✅ aplicada el 2026-09-04 |
 | 0100 | Los descuentos del agente se mudan a donde se cobran | ✅ aplicada el 2026-09-04 |
 | 0101 | Tirar cuatro tablas que nunca se usaron | ✅ aplicada el 2026-09-04 |

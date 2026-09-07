@@ -1,3 +1,14 @@
+-- 0114 · Torneo de "puntaje por jurado" (show de talento)
+--
+-- Nació numerada 0103, que ya estaba cogida por `0103_solicitud_de_cambio.sql`.
+-- Las dos están aplicadas, así que el número duplicado no rompió nada — pero
+-- quien ordene esta carpeta por nombre para saber qué falta correr, o
+-- reconstruya la base desde cero, ve dos entradas con el mismo número y no
+-- sabe cuál va primero. Se renumera a 0114 (la siguiente libre) el 2026-09-06.
+--
+-- No hay nada que volver a correr: el contenido no cambió, sólo el nombre del
+-- archivo.
+
 begin;
 
 alter table public.torneos

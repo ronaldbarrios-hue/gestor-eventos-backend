@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
   "censado_el": "2026-09-07",
-  "total": 323,
+  "total": 324,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -164,6 +164,10 @@
       "motivo": "El capitán se identifica con el código de su boleta de inscripción, no con una cuenta."
     },
     "GET /eventos/publicos/slug/:slug/sesiones": {
+      "estado": "publica",
+      "motivo": "Inscripción a sub-eventos desde la página pública, identificada por el código de la boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/sesiones/:sesionId/prellenar": {
       "estado": "publica",
       "motivo": "Inscripción a sub-eventos desde la página pública, identificada por el código de la boleta."
     },

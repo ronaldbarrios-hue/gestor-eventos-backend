@@ -19,6 +19,8 @@ const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { ESTADOS_EN_AGENDA, armarAgenda, resumenDeAgenda } = require('../lib/agendaDeMesa.js');
+const { prellenarFicha } = require('../lib/heredarRespuestas.js');
+const { loQueYaContesto } = require('../lib/loQueYaContesto.js');
 const { limpiarOrigen } = require('../lib/origenDeRegistro.js');
 const { conSitio } = require('../lib/eventoSitio.js');
 const { bloqueDeSeccion } = require('../lib/bloquesLanding.js');
@@ -368,7 +370,7 @@ async function resolverFichaExpositor(codigo) {
   if (cod.length < 4) return { error: 'Código inválido.' };
   const { data: ticket } = await supabase
     .from('tickets')
-    .select('id, evento_id, estado, guest_nombre, guest_email, ticket_type_id, tipo:ticket_types!ticket_type_id(nombre, es_expositor)')
+    .select('id, evento_id, estado, guest_nombre, guest_email, ticket_type_id, respuestas, tipo:ticket_types!ticket_type_id(nombre, es_expositor)')
     .eq('codigo', cod).maybeSingle();
   if (!ticket) return { error: 'Boleta no encontrada.' };
   if (!ticket.tipo?.es_expositor) return { error: 'Esta boleta no es de expositor.' };
@@ -386,8 +388,27 @@ router.get('/expositor/:codigo', async (req, res) => {
     .from('eventos').select('id, slug, titulo, cover_url, fecha_inicio, fecha_fin, timezone')
     .eq('id', ticket.evento_id).maybeSingle();
 
+  /* Lo que esta empresa ya contestó al comprar su stand.
+   *
+   * Quien abre esta ficha acaba de rellenar el formulario del evento, donde muy
+   * probablemente ya escribió su teléfono, su web y su sector. Volvérselo a
+   * pedir en la ficha es hacerle escribir dos veces lo mismo — y como la ficha
+   * es PÚBLICA, lo que no rellena se queda en blanco a la vista de todos.
+   *
+   * Aquí el cruce es al revés que en un formulario: de la etiqueta que el
+   * organizador escribió a la columna de la ficha que significa. La lista de
+   * sinónimos vive en `lib/heredarRespuestas.js` y es corta a propósito.
+   *
+   * Va como SUGERENCIA y no guardado: es la ficha de la empresa y la escribe
+   * ella. Lo que ya tenga puesto no se propone siquiera. */
+  const sabido = await loQueYaContesto(ticket.evento_id, ticket.respuestas);
+  const sugeridas = ficha ? prellenarFicha({ sabido, fichaActual: ficha }) : {};
+
   res.json({
     ficha: ficha || null,
+    /* Aparte de la ficha: si llegaran mezcladas, la empresa vería su ficha
+       «ya completa» sin haberla enviado nunca — y la pública seguiría vacía. */
+    sugeridas,
     pagada: ticket.estado === 'pagado' || ticket.estado === 'usado',
     ticket: { codigo: req.params.codigo.toUpperCase().trim(), nombre: ticket.guest_nombre, email: ticket.guest_email },
     evento,

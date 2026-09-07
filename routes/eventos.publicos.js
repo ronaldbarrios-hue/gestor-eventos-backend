@@ -156,6 +156,39 @@ router.get('/ticket/:codigo', async (req, res) => {
       .eq('evento_id', data.evento.id)
       .order('orden', { ascending: true });
     data.evento.campos_formulario = campos || [];
+
+    /* ── A qué actividades está inscrita esta boleta ──────────────────────
+     *
+     * Dentro de un evento NO se emite una boleta por taller. Sería un código
+     * más por actividad, y quien llega a la puerta del Encuentro de Mujeres
+     * con tres QR en el teléfono no sabe cuál enseñar — y la persona de la
+     * puerta tampoco. La escarapela es una y sirve para todo: el escáner del
+     * taller lee ESE mismo QR y busca la inscripción por `ticket_id`.
+     *
+     * Lo que faltaba era decirlo. La inscripción existía en la base y no se
+     * veía en ninguna parte: quien se apuntaba a dos talleres se quedaba sin
+     * forma de comprobar que quedó apuntado, y sin saber a qué hora ni dónde.
+     * Va en la boleta porque es donde se mira antes de entrar.
+     *
+     * Si la 0055 no está aplicada, esto no existe y la boleta se enseña igual:
+     * es información de más, no la boleta. */
+    const { data: inscripciones } = await supabase
+      .from('sesion_inscripciones')
+      .select('id, estado, asistio_at, sesion:agenda_sessions!session_id(id, titulo, inicio, fin, ubicacion)')
+      .eq('ticket_id', data.id)
+      .neq('estado', 'cancelada');
+
+    data.actividades = (inscripciones || [])
+      .filter(i => i.sesion)
+      .map(i => ({
+        inscripcion_id: i.id,
+        estado: i.estado,
+        /* Que ya entró se dice: en un evento de dos días, «¿fui a ése?» es una
+           pregunta real, y la respuesta está aquí. */
+        asistio: Boolean(i.asistio_at),
+        ...i.sesion,
+      }))
+      .sort((a, b) => new Date(a.inicio) - new Date(b.inicio));
   }
 
   /* Puntos, historial y qué puede reclamar: es lo que vuelve híbrida la

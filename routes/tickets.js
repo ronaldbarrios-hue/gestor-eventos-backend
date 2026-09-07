@@ -5,6 +5,7 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { auditar } = require('../lib/auditar.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
+const { boletasSinEquipo, filasDeEquipo, avisoDeBoletasSueltas } = require('../lib/equiposDesdeBoletas.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -176,5 +177,105 @@ router.delete('/:eventoId/tickets/:ticketId', exige(PERMS_TICKETS), async (req, 
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
 });
+
+/* ═══════════ Las boletas que se vendieron antes de tener torneo ═══════════
+ *
+ * Quien mete a un equipo en el torneo es el disparador `trg_equipo_desde_boleta`
+ * de la base, y su definición es la clave:
+ *
+ *     AFTER INSERT OR UPDATE **OF estado** ON tickets
+ *
+ * Sólo corre cuando la boleta nace o cambia de estado. Así que este camino
+ * —que es el normal cuando el evento se arma de a poco— deja gente fuera:
+ *
+ *   1. Todavía no hay torneo, así que el tipo se crea con «Nada más» —es lo
+ *      único que el formulario deja guardar— y se empieza a vender.
+ *   2. Días después se crea el torneo y se cambia el tipo a «Un equipo».
+ *   3. Las boletas ya pagadas no entran: su estado ya no va a cambiar, el
+ *      disparador no vuelve a correr, y no hay ningún error que ver.
+ *
+ * Se descubre el día de la competencia, contando sillas.
+ */
+
+/* GET — cuántas boletas de este tipo se quedarían fuera. Se pregunta ANTES de
+   guardar el cambio, para poder avisar en vez de dejar el hueco hecho. */
+router.get('/:eventoId/tickets/:ticketId/boletas-sin-equipo', exige(PERMS_TICKETS), async (req, res) => {
+  const { eventoId, ticketId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+    const { sueltas, error } = await boletasQueFaltan(eventoId, ticketId);
+    if (error) return res.status(500).json({ error });
+    res.json({ cuantas: sueltas.length, aviso: avisoDeBoletasSueltas(sueltas.length) });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* POST — meterlas al torneo.
+ *
+ * Se insertan los equipos directamente en vez de tocar `estado` para que el
+ * disparador corra solo: `estado` es el dato del que cuelgan el aforo, el cobro
+ * y la entrada, y moverlo para provocar un efecto secundario es la clase de
+ * atajo que un día marca cien boletas como pagadas. */
+router.post('/:eventoId/tickets/:ticketId/crear-equipos', exige(PERMS_TICKETS), async (req, res) => {
+  const { eventoId, ticketId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id);
+
+    const { tipo, sueltas, error } = await boletasQueFaltan(eventoId, ticketId);
+    if (error) return res.status(500).json({ error });
+    if (!tipo) return res.status(404).json({ error: 'Ese tipo de boleta no es de este evento.' });
+    if (tipo.crea !== 'equipo' || !tipo.crea_torneo_id) {
+      return res.status(400).json({ error: 'Este tipo de boleta no crea equipos. Elige «Un equipo» y su torneo primero.' });
+    }
+    if (!sueltas.length) return res.json({ creados: 0 });
+
+    /* `ticket_id` es único en `torneo_equipos`, así que si alguien pulsa dos
+       veces —o el disparador se adelanta— la segunda no duplica nada. Aquí no
+       hay `on conflict do nothing` como en el disparador, así que se mira el
+       23505 y se cuenta como «ya estaba», que es la verdad. */
+    const { data, error: eIns } = await supabase
+      .from('torneo_equipos')
+      .insert(filasDeEquipo(sueltas, tipo.crea_torneo_id))
+      .select('id');
+    if (eIns && eIns.code !== '23505') return res.status(500).json({ error: eIns.message });
+
+    const creados = data?.length || 0;
+    auditar(req, eventoId, 'ticket.equipos-al-torneo', {
+      entidad: 'ticket', entidadId: ticketId,
+      detalle: { torneo: tipo.crea_torneo_id, creados },
+    });
+    res.json({ creados });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* El tipo, y sus boletas vendidas que todavía no tienen equipo. */
+async function boletasQueFaltan(eventoId, ticketId) {
+  const { data: tipo, error: eTipo } = await supabase
+    .from('ticket_types').select('id, crea, crea_torneo_id')
+    .eq('id', ticketId).eq('evento_id', eventoId).maybeSingle();
+  if (eTipo) return { error: eTipo.message, sueltas: [] };
+  if (!tipo) return { tipo: null, sueltas: [] };
+
+  const { data: tickets, error: eT } = await supabase
+    .from('tickets').select('id, estado, guest_nombre, guest_email, user_id')
+    .eq('evento_id', eventoId).eq('ticket_type_id', ticketId);
+  if (eT) return { error: eT.message, sueltas: [] };
+
+  const ids = (tickets || []).map(t => t.id);
+  let conEquipo = new Set();
+  if (ids.length) {
+    const { data: ya, error: eE } = await supabase
+      .from('torneo_equipos').select('ticket_id').in('ticket_id', ids);
+    /* Si no se pueden leer los equipos que YA existen, no se sigue: insertar a
+       ciegas duplicaría los que ya estaban. */
+    if (eE) return { error: eE.message, sueltas: [] };
+    conEquipo = new Set((ya || []).map(e => e.ticket_id));
+  }
+
+  return { tipo, sueltas: boletasSinEquipo(tickets || [], conEquipo) };
+}
 
 module.exports = router;

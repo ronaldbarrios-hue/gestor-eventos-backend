@@ -185,6 +185,7 @@ app.use('/eventos',          require('./routes/auditoria.js'));
 app.use('/eventos',          require('./routes/analytics.js'));
 app.use('/eventos',          require('./routes/networking.js'));
 app.use('/eventos',          require('./routes/torneos.js'));
+app.use('/eventos',          require('./routes/torneoJurado.js'));
 app.use('/eventos',          require('./routes/interacciones.js'));
 app.use('/eventos',          require('./routes/eventos.js'));
 

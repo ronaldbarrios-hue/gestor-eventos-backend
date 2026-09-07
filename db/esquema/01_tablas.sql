@@ -1,39 +1,17 @@
-/* ═══════════════════════════════════════════════════════════════════════════
- * GESTEK · Volcado de la base de Supabase a archivo — 01 · TABLAS
- * ═══════════════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════════
+ * GESTEK · Volcado de la base de Supabase — 01 · TABLAS
+ * ═══════════════════════════════════════════════════════════════════════════════
  *
- * Origen  : proyecto Supabase `GestorEventosMarcaBlanca` (yopontbwgdybfsniqawz),
- *           Postgres 17.6, esquema `public`.
- * Destino : MySQL 8 (cPanel). Motor InnoDB, utf8mb4, colación _0900_as_ci.
- * Generado: 2026-09-01, corriendo `db/migraciones/generar-esquema-mysql.sql`
- *           contra Postgres. 71 tablas, 0 tipos sin traducir.
+ * Generado: 2026-09-04, corriendo db/esquema/generar-esquema.mjs contra Postgres
+ *           (proyecto `GestorEventosMarcaBlanca`, yopontbwgdybfsniqawz).
+ * 69 tablas.
  *
- * Este archivo es la salida del generador. NO se edita a mano: si el esquema de
- * Postgres cambia, se vuelve a correr el generador y se compara con `git diff`.
- * El «por qué» de cada traducción de tipo está en
- * `db/migraciones/NOTAS-ESQUEMA.md`.
- *
- * ── Orden de aplicación (ver README.md de esta carpeta) ────────────────────
- *   01_tablas.sql                  ← este archivo
- *   02_indices_unicos_parciales.sql
- *   03_datos.sql
- *   04_indices.sql
- *   05_claves_foraneas.sql
- *   06_vistas.sql
- *
- * Las claves foráneas van al final (05) porque hay 148 y ciclos entre tablas:
- * no existe un orden de creación que las respete todas.
- *
- * ── Lo que este archivo NO trae, a propósito ──────────────────────────────
- *   · Las 8 claves que en Postgres apuntan a `auth.users` → quedan como
- *     CHAR(36) con índice; los usuarios viven en la base de identidad
- *     (`001_identidad.sql`). La integridad la sostiene el código.
- *   · Los 13 disparadores y las 20 funciones de Postgres → se fueron al código
- *     del backend (`modules/…`). Detalle en NOTAS-ESQUEMA.md.
- *   · Las 76 políticas RLS → el backend entra con una sola credencial; el filtro
- *     por evento/usuario lo hace `core/permisos`.
- *   · Los 6 tipos enumerados de Postgres → ninguna columna los usa; son texto.
- * ═══════════════════════════════════════════════════════════════════════════ */
+ * Este archivo es la salida del generador. NO se edita a mano: si el esquema
+ * de Postgres cambia, se vuelve a correr este script y se compara con
+ * `git diff`. El «por qué» de cada traducción está en
+ * `db/migraciones/NOTAS-ESQUEMA.md`; el orden de aplicación de los seis
+ * archivos, en el README.md de esta carpeta.
+ * ═══════════════════════════════════════════════════════════════════════════════ */
 
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
@@ -245,6 +223,7 @@ CREATE TABLE `event_form_fields` (
   `session_id` CHAR(36) NULL,
   `buscable` TINYINT(1) NULL,
   `visible_si` JSON NULL,
+  `torneo_id` CHAR(36) NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -275,6 +254,7 @@ CREATE TABLE `event_requests` (
   `respuesta` TEXT NULL,
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `cambio` JSON NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -484,20 +464,7 @@ CREATE TABLE `eventos` (
   `branding` JSON NOT NULL DEFAULT (CAST('{}' AS JSON)),
   `paginas` JSON NOT NULL DEFAULT (CAST('[]' AS JSON)),
   `navbar` JSON NOT NULL DEFAULT (CAST('{}' AS JSON)),
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
-
-CREATE TABLE `missions` (
-  `id` CHAR(36) NOT NULL,
-  `owner_id` CHAR(36) NOT NULL,
-  `titulo` TEXT NOT NULL,
-  `descripcion` TEXT NULL,
-  `condition_type` TEXT NOT NULL,
-  `condition_value` INT NOT NULL,
-  `reward_puntos` INT NOT NULL DEFAULT 0,
-  `badge_slug` TEXT NULL,
-  `activo` TINYINT(1) NOT NULL DEFAULT 1,
-  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `networking_modo` TEXT NOT NULL DEFAULT ('auto'),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -506,8 +473,11 @@ CREATE TABLE `networking_citas` (
   `horario_id` CHAR(36) NOT NULL,
   `evento_id` CHAR(36) NOT NULL,
   `user_id` CHAR(36) NOT NULL,
-  `estado` TEXT NOT NULL DEFAULT ('confirmada'),
+  `estado` VARCHAR(255) NOT NULL DEFAULT ('confirmada'),
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `notas` TEXT NULL,
+  `nota_gestor` TEXT NULL,
+  `creada_por` CHAR(36) NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -533,6 +503,8 @@ CREATE TABLE `networking_expositores` (
   `cuota_puntos` INT NULL,
   `galeria` JSON NOT NULL DEFAULT (CAST('[]' AS JSON)),
   `zona_id` VARCHAR(255) NULL,
+  `rol` VARCHAR(255) NOT NULL DEFAULT ('comprador'),
+  `contacto_publico` TINYINT(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -554,6 +526,7 @@ CREATE TABLE `notificaciones` (
   `cuerpo` TEXT NULL,
   `leida` TINYINT(1) NOT NULL DEFAULT 0,
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `link` TEXT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -641,6 +614,7 @@ CREATE TABLE `payment_transactions` (
   `kind` TEXT NOT NULL DEFAULT ('ticket'),
   `gateway` TEXT NULL DEFAULT ('mercadopago'),
   `referencia` VARCHAR(255) NULL,
+  `promocion_id` CHAR(36) NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -652,10 +626,7 @@ CREATE TABLE `perfil_talento` (
   `habilidades` JSON NULL DEFAULT (CAST('[]' AS JSON)),
   `experiencia` JSON NULL DEFAULT (CAST('[]' AS JSON)),
   `disponibilidad` JSON NULL DEFAULT (CAST('{}' AS JSON)),
-  `ciudad` VARCHAR(255) NULL,
   `pais` TEXT NULL DEFAULT ('Colombia'),
-  `telefono` TEXT NULL,
-  `foto_url` TEXT NULL,
   `portfolio_url` TEXT NULL,
   `redes` JSON NULL DEFAULT (CAST('{}' AS JSON)),
   `publicado` TINYINT(1) NOT NULL DEFAULT 0,
@@ -789,26 +760,6 @@ CREATE TABLE `recompensas` (
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `evento_id` CHAR(36) NULL,
   `expositor_id` CHAR(36) NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
-
-CREATE TABLE `recordatorio_inapp_log` (
-  `id` CHAR(36) NOT NULL,
-  `evento_id` CHAR(36) NOT NULL,
-  `scope_id` CHAR(36) NOT NULL,
-  `tipo` VARCHAR(255) NOT NULL,
-  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
-
-CREATE TABLE `referral_codes` (
-  `id` CHAR(36) NOT NULL,
-  `user_id` CHAR(36) NOT NULL,
-  `evento_id` CHAR(36) NULL,
-  `codigo` VARCHAR(255) NOT NULL,
-  `usos` INT NOT NULL DEFAULT 0,
-  `puntos_por_uso` INT NOT NULL DEFAULT 0,
-  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -968,6 +919,8 @@ CREATE TABLE `ticket_types` (
   `activo` TINYINT(1) NOT NULL DEFAULT 1,
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `es_expositor` TINYINT(1) NOT NULL DEFAULT 0,
+  `crea` TEXT NOT NULL DEFAULT ('nada'),
+  `crea_torneo_id` CHAR(36) NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -991,6 +944,7 @@ CREATE TABLE `tickets` (
   `acceso` TEXT NULL,
   `legal_aceptado_at` DATETIME(6) NULL,
   `legal_version` VARCHAR(255) NULL,
+  `promocion_id` CHAR(36) NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -1014,6 +968,8 @@ CREATE TABLE `torneo_equipos` (
   `contacto_email` TEXT NULL,
   `contacto_user_id` CHAR(36) NULL,
   `grupo` TEXT NULL,
+  `ticket_id` CHAR(36) NULL,
+  `respuestas` JSON NOT NULL DEFAULT (CAST('{}' AS JSON)),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
@@ -1088,21 +1044,6 @@ CREATE TABLE `vacantes` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
-CREATE TABLE `waitlist` (
-  `id` CHAR(36) NOT NULL,
-  `evento_id` CHAR(36) NOT NULL,
-  `ticket_type_id` CHAR(36) NULL,
-  `guest_nombre` TEXT NOT NULL,
-  `guest_email` TEXT NOT NULL,
-  `guest_telefono` TEXT NULL,
-  `estado` VARCHAR(255) NOT NULL DEFAULT ('esperando'),
-  `posicion` INT NULL,
-  `promovido_at` DATETIME(6) NULL,
-  `ticket_id` CHAR(36) NULL,
-  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
-
 CREATE TABLE `webhook_deliveries` (
   `id` CHAR(36) NOT NULL,
   `webhook_id` CHAR(36) NOT NULL,
@@ -1135,8 +1076,21 @@ CREATE TABLE `zona_cortes` (
   `dentro_antes` INT NULL,
   `created_by` CHAR(36) NULL,
   `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `tipo` TEXT NOT NULL DEFAULT ('reset'),
+  `foto_url` TEXT NULL,
+  `nota` TEXT NULL,
+  `contexto` JSON NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;
 
-
-SET FOREIGN_KEY_CHECKS = 1;
+CREATE TABLE `zonas` (
+  `id` VARCHAR(255) NOT NULL,
+  `evento_id` CHAR(36) NOT NULL,
+  `nombre` TEXT NOT NULL,
+  `aforo_max` INT NULL,
+  `orden` INT NOT NULL DEFAULT 0,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `tipo` VARCHAR(255) NOT NULL DEFAULT ('evento'),
+  `reglas` JSON NOT NULL DEFAULT (CAST('{}' AS JSON)),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_as_ci;

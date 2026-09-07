@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
-  "censado_el": "2026-08-30",
-  "total": 285,
+  "censado_el": "2026-09-05",
+  "total": 316,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -155,6 +155,14 @@
       "estado": "publica",
       "motivo": "El expositor se identifica con el código de su boleta-Stand, no con una cuenta."
     },
+    "GET /eventos/publicos/equipo/:codigo/panel": {
+      "estado": "publica",
+      "motivo": "El capitán se identifica con el código de su boleta de inscripción, no con una cuenta."
+    },
+    "PUT /eventos/publicos/equipo/:codigo/ficha": {
+      "estado": "publica",
+      "motivo": "El capitán se identifica con el código de su boleta de inscripción, no con una cuenta."
+    },
     "GET /eventos/publicos/slug/:slug/sesiones": {
       "estado": "publica",
       "motivo": "Inscripción a sub-eventos desde la página pública, identificada por el código de la boleta."
@@ -220,6 +228,10 @@
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
     "GET /eventos/publicos/slug/:slug/agenda": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/rueda": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
@@ -295,6 +307,14 @@
       "estado": "sesion",
       "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
     },
+    "POST /me/sugerencias": {
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: se guarda a su nombre y sólo él la vuelve a leer."
+    },
+    "GET /me/sugerencias": {
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
+    },
     "GET /me/mercadopago/test": {
       "estado": "sesion",
       "motivo": "La cuenta de cobro que el organizador conecta a su perfil."
@@ -310,6 +330,10 @@
     "POST /eventos/publicos/slug/:slug/comprar": {
       "estado": "publica",
       "motivo": "La compra se hace sin cuenta: es el punto de vender entradas a quien llega desde fuera. La identidad viaja en el formulario, no en una sesión."
+    },
+    "POST /eventos/publicos/ticket/:codigo/reanudar-pago": {
+      "estado": "publica",
+      "motivo": "Retomar el pago de una boleta propia. La credencial es el código de la boleta, el mismo que abre /mi-ticket."
     },
     "POST /webhooks/mercadopago": {
       "estado": "publica",
@@ -381,19 +405,19 @@
     },
     "GET /eventos/:id/promociones": {
       "estado": "sesion",
-      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
+      "motivo": "El dueño, o el miembro con `gestionar_descuentos`: lo comprueba `puedeDescuentos` con assertPermiso antes de tocar nada."
     },
     "POST /eventos/:id/promociones": {
       "estado": "sesion",
-      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
+      "motivo": "El dueño, o el miembro con `gestionar_descuentos`: lo comprueba `puedeDescuentos` con assertPermiso antes de tocar nada."
     },
     "PATCH /eventos/:id/promociones/:pid": {
       "estado": "sesion",
-      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
+      "motivo": "El dueño, o el miembro con `gestionar_descuentos`: lo comprueba `puedeDescuentos` con assertPermiso antes de tocar nada."
     },
     "DELETE /eventos/:id/promociones/:pid": {
       "estado": "sesion",
-      "motivo": "Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy."
+      "motivo": "El dueño, o el miembro con `gestionar_descuentos`: lo comprueba `puedeDescuentos` con assertPermiso antes de tocar nada."
     },
     "POST /eventos/publicos/slug/:slug/promocion/validar": {
       "estado": "publica",
@@ -531,7 +555,7 @@
     },
     "GET /me/solicitudes": {
       "estado": "sesion",
-      "motivo": "Las sugerencias que ha enviado esta persona."
+      "motivo": "Las solicitudes que mandó esta persona, más las que recibió en sus propios eventos. Cada fila dice cuál es."
     },
     "GET /eventos/:eventoId/solicitudes": {
       "estado": "sesion",
@@ -543,7 +567,7 @@
     },
     "PATCH /eventos/:eventoId/solicitudes/:id": {
       "estado": "sesion",
-      "motivo": "Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto."
+      "motivo": "Atender solicitudes del equipo: el dueño siempre, y quien tenga `gestionar_solicitudes`. Pertenecer al equipo no basta — aquí se edita la ficha de otra persona."
     },
     "GET /me/recompensas": {
       "estado": "sesion",
@@ -705,6 +729,14 @@
       "estado": "sesion",
       "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
     },
+    "POST /sugerencias": {
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: se guarda a su nombre y sólo él la vuelve a leer."
+    },
+    "GET /sugerencias": {
+      "estado": "sesion",
+      "motivo": "Cuelga del usuario: la consulta filtra por su propio id y no admite mirar la de otro."
+    },
     "GET /eventos/:eventoId/equipo": {
       "estado": "sesion",
       "motivo": "Cada ruta llama a assertOwner con la lista de permisos que le toca (invitar_staff, gestionar_roles, remover_miembros): el permiso se comprueba dentro, contra el rol del miembro."
@@ -785,6 +817,24 @@
         "gestionar_clientes"
       ]
     },
+    "GET /eventos/:eventoId/dinero": {
+      "estado": "exige",
+      "acciones": [
+        "ver_pagos"
+      ]
+    },
+    "POST /eventos/:eventoId/clientes/:ticketId/reembolsar": {
+      "estado": "exige",
+      "acciones": [
+        "reembolsar"
+      ]
+    },
+    "POST /eventos/:eventoId/clientes/:ticketId/reenviar": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_clientes"
+      ]
+    },
     "POST /eventos/:eventoId/clientes/importar": {
       "estado": "exige",
       "acciones": [
@@ -812,6 +862,10 @@
       "acciones": [
         "gestionar_clientes"
       ]
+    },
+    "POST /eventos/:eventoId/zonas/reporte-manual": {
+      "estado": "sesion",
+      "motivo": "Lo opera quien está en la puerta: la ruta comprueba el permiso `checkin` sobre el rol del miembro, no un permiso de edición del evento."
     },
     "GET /eventos/:eventoId/mapa/vivo": {
       "estado": "sesion",
@@ -1034,6 +1088,10 @@
       "estado": "sesion",
       "motivo": "Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento»."
     },
+    "PATCH /eventos/:eventoId/networking/citas/:citaId/notas": {
+      "estado": "sesion",
+      "motivo": "Rueda de negocios: hace falta tener una boleta del evento, no un permiso. Y la cita tiene que ser suya."
+    },
     "POST /eventos/:eventoId/networking/horarios/:horarioId/reservar": {
       "estado": "sesion",
       "motivo": "Rueda de negocios: hace falta tener una boleta del evento, no un permiso. La comprobación es «esta persona va al evento»."
@@ -1091,13 +1149,6 @@
         "editar_evento"
       ]
     },
-    "GET /eventos/:eventoId/networking/admin": {
-      "estado": "exige",
-      "acciones": [
-        "gestionar_expositores",
-        "editar_evento"
-      ]
-    },
     "POST /eventos/:eventoId/networking/expositores": {
       "estado": "exige",
       "acciones": [
@@ -1105,7 +1156,42 @@
         "editar_evento"
       ]
     },
+    "PATCH /eventos/:eventoId/networking/expositores/:id": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
+    },
     "DELETE /eventos/:eventoId/networking/expositores/:id": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/networking/admin": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/networking/citas": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
+    },
+    "PATCH /eventos/:eventoId/networking/citas/:citaId": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_expositores",
+        "editar_evento"
+      ]
+    },
+    "POST /eventos/:eventoId/networking/citas": {
       "estado": "exige",
       "acciones": [
         "gestionar_expositores",
@@ -1237,6 +1323,80 @@
       "estado": "sesion",
       "motivo": "Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel."
     },
+    "GET /eventos/:eventoId/torneo/:torneoId/formulario": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
+    },
+    "PUT /eventos/:eventoId/torneo/:torneoId/formulario": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/torneo/:torneoId/criterios": {
+      "estado": "sesion",
+      "motivo": "Las notas y la rúbrica son del panel del evento; se leen con sesión."
+    },
+    "PATCH /eventos/:eventoId/torneo/:torneoId/criterios": {
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/torneo/:torneoId/rondas": {
+      "estado": "sesion",
+      "motivo": "Las rondas son del panel del evento; se leen con sesión."
+    },
+    "PATCH /eventos/:eventoId/torneo/:torneoId/rondas": {
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/torneo/:torneoId/jurados": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
+    },
+    "POST /eventos/:eventoId/torneo/:torneoId/jurados": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
+    },
+    "DELETE /eventos/:eventoId/torneo/:torneoId/jurados/:userId": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/torneo/:torneoId/calificar": {
+      "estado": "sesion",
+      "motivo": "La hoja de calificación es del jurado asignado; el acceso se decide dentro (assertEsJurado), no por permiso de catálogo."
+    },
+    "PUT /eventos/:eventoId/torneo/:torneoId/calificar": {
+      "estado": "sesion",
+      "motivo": "El acceso se decide dentro (assertEsJurado)."
+    },
+    "POST /eventos/:eventoId/torneo/:torneoId/cerrar-ronda": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_torneo",
+        "editar_evento"
+      ]
+    },
+    "GET /eventos/:eventoId/torneo/:torneoId/tabla-jurado": {
+      "estado": "sesion",
+      "motivo": "Las llaves y la tabla son públicas en la página del evento; aquí sólo se leen con sesión para el panel."
+    },
     "GET /eventos/:eventoId/motivos": {
       "estado": "exige",
       "acciones": [
@@ -1334,6 +1494,12 @@
       "motivo": "Publicar o despublicar exige el permiso `publicar_evento` sobre el rol del miembro, no el de editar."
     },
     "POST /eventos/:id/padron": {
+      "estado": "exige",
+      "acciones": [
+        "editar_evento"
+      ]
+    },
+    "PUT /eventos/:id/padron/mapeo": {
       "estado": "exige",
       "acciones": [
         "editar_evento"

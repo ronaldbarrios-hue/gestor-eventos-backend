@@ -64,6 +64,28 @@ const clientes = {
   get bd()       { return require('../core/db/mysql.js').bd; },
 };
 
+/* ── Lado Postgres: dos caminos ────────────────────────────────────────────
+ *
+ * El de arriba (`clientes.supabase`) entra por la API de PostgREST, con
+ * `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` (el "service_role" del panel).
+ *
+ * Pero para leer y comparar filas no hace falta el panel: alcanza con la
+ * MISMA cadena `PG_URL` que ya usaste para `generar-datos.mjs` y
+ * `generar-esquema.mjs` — una conexión directa a Postgres, sin pasar por la
+ * API. Si `PG_URL` está en el .env, este script la usa y ni siquiera pide
+ * las otras dos variables. */
+let _poolPg = null;
+function poolPg() {
+  if (_poolPg) return _poolPg;
+  const { Pool } = require('pg');
+  const PG_URL = process.env.PG_URL;
+  _poolPg = new Pool({
+    connectionString: PG_URL,
+    ssl: /supabase\.(co|com)/.test(PG_URL) ? { rejectUnauthorized: false } : undefined,
+  });
+  return _poolPg;
+}
+
 /* TODAS las tablas de `db/esquema/01_tablas.sql` (70 al escribir esto), no un
    subconjunto. Antes esta lista traía sólo 24 y el script imprimía "Todo
    cuadra" igual, sin decir que dejaba fuera torneos, oauth_tokens,
@@ -164,6 +186,18 @@ function normalizar(v) {
 
   const s = String(v);
 
+  /* Números guardados como texto — NUMERIC/DECIMAL vuelven así de los dos
+     lados (node-pg no convierte NUMERIC a número, por precisión; MySQL
+     tampoco convierte DECIMAL por defecto). El problema: Postgres devuelve
+     la precisión que la fila tenga guardada («1500»), MySQL la escala fija
+     de la columna («1500.00») — mismo valor, texto distinto. Sin esto,
+     TODA columna de dinero (precio, monto, valor, comisión…) sale como
+     "diferente" aunque no haya cambiado un centavo. */
+  if (/^-?\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (Number.isFinite(n)) return Number.isInteger(n) ? n : Number(n.toFixed(6));
+  }
+
   /* Fechas en texto: los dos motores las devuelven así con `dateStrings`.
      Se pasan a ISO para que `+00` y `.000000` no cuenten como diferencia. */
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s)) {
@@ -215,6 +249,21 @@ async function leerSupabase(tabla) {
   return filas;
 }
 
+async function leerPostgresDirecto(tabla) {
+  /* Conexión directa: sin el límite de 1.000 filas de PostgREST, así que no
+     hace falta paginar. */
+  const clave = claveDe(tabla);
+  const orden = clave.map(c => `"${c}"`).join(', ');
+  const { rows } = await poolPg().query(`SELECT * FROM "${tabla}" ORDER BY ${orden} ASC`);
+  return rows;
+}
+
+/* Cuál de los dos caminos usar: si hay `PG_URL`, ese manda — no pide las
+   variables de Supabase ni las usa aunque estén puestas. */
+function leerOrigen(tabla) {
+  return process.env.PG_URL ? leerPostgresDirecto(tabla) : leerSupabase(tabla);
+}
+
 async function leerMysql(tabla) {
   const orden = claveDe(tabla).map(c => `\`${c}\``).join(', ');
   return clientes.bd('datos').consultar(`SELECT * FROM \`${tabla}\` ORDER BY ${orden} ASC`);
@@ -225,7 +274,7 @@ async function leerMysql(tabla) {
 async function compararTabla(tabla, { detalle }) {
   let pg, my;
   try {
-    [pg, my] = await Promise.all([leerSupabase(tabla), leerMysql(tabla)]);
+    [pg, my] = await Promise.all([leerOrigen(tabla), leerMysql(tabla)]);
   } catch (e) {
     return { tabla, estado: 'ERROR', nota: e.message };
   }
@@ -275,6 +324,10 @@ async function main() {
 
   if (!clientes.bd('datos').configurada()) {
     console.error('\nMySQL no está configurada. Sin las dos bases no hay nada que comparar.\n');
+    process.exit(1);
+  }
+  if (!process.env.PG_URL && !(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)) {
+    console.error('\nFalta PG_URL (o, en su defecto, SUPABASE_URL + SUPABASE_SERVICE_KEY). Sin el lado de Postgres no hay nada que comparar.\n');
     process.exit(1);
   }
 

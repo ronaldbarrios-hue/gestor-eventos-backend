@@ -12,3 +12,12 @@ dist/
 db/esquema/03_datos.sql
 db/esquema/_datos_json/
 datos-crudos.sql
+
+# Igual: hashes de contraseña de cuentas reales. Se regenera con
+# db/migraciones/generar-usuarios.mjs. Se pega en gestek_auth y no en Git.
+db/migraciones/salida-usuarios.sql
+
+# Copia local de archivos reales de usuarios (fotos, documentos) descargados
+# de Supabase Storage para la migración Camino A. Datos personales reales,
+# NUNCA va a Git.
+.archivos/

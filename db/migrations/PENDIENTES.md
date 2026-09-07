@@ -4,6 +4,7 @@
 
 | Nº | Qué hace | Estado |
 |---|---|---|
+| 0103 | Formato de torneo "puntaje jurado" (show de talento): jurado, criterios, rondas | ✅ aplicada el 2026-09-05 |
 | 0102 | Una notificación que lleva a algún sitio (`notificaciones.link`) | ✅ aplicada el 2026-09-04 |
 | 0100 | Los descuentos del agente se mudan a donde se cobran | ✅ aplicada el 2026-09-04 |
 | 0101 | Tirar cuatro tablas que nunca se usaron | ✅ aplicada el 2026-09-04 |

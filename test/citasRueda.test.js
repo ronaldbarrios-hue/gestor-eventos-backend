@@ -23,8 +23,14 @@ const LIMPIO = SRC.replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
 test('nadie escribe notas en la cita de otro', () => {
-  /* Sin el filtro por `user_id`, cualquiera con boleta del evento escribiría
-     en la cita ajena cambiando el id de la URL. */
+  /* Sin filtro por persona, cualquiera con boleta del evento escribiría en la
+     cita ajena cambiando el id de la URL.
+
+     El filtro pasó de `.eq('user_id', ...)` a `filtroDeMio(req.user)`, que
+     comprueba cuenta O correo. No afloja nada: quien reservó por correo y
+     luego se hizo una cuenta ES el dueño de esa cita, y con el filtro viejo no
+     podía ni leer su propia nota. Lo que esta prueba cuida es que haya UN
+     filtro por persona, no cuál. */
   const i = LIMPIO.indexOf("'/:eventoId/networking/citas/:citaId/notas'");
   assert.ok(i > 0, 'no existe la ruta de notas');
   /* Hasta el final de la ruta y no 1200 caracteres: desde que la misma ruta
@@ -32,7 +38,9 @@ test('nadie escribe notas en la cita de otro', () => {
      ventana fija haría que esta prueba dejara de mirar el filtro sin dejar de
      pasar. Ese es el fallo que la prueba existe para impedir. */
   const bloque = LIMPIO.slice(i, LIMPIO.indexOf('\nrouter.', i + 10));
-  assert.match(bloque, /\.eq\('user_id', req\.user\.id\)/,
+  const filtraPorPersona = /\.eq\('user_id', req\.user\.id\)/.test(bloque)
+    || /\.or\(filtroDeMio\(req\.user\)\)/.test(bloque);
+  assert.ok(filtraPorPersona,
     'la ruta de notas no filtra por la persona: se puede escribir en la cita de otro');
 });
 

@@ -11,6 +11,7 @@ const {
 const { zonasDelEvento } = require('../lib/aforoZonas.js');
 const { camposDeCierre, informeDeCitas } = require('../lib/cierreDeCita.js');
 const { ESTADOS_EN_AGENDA, armarAgenda, resumenDeAgenda } = require('../lib/agendaDeMesa.js');
+const { filtroDeMio } = require('../lib/quienSoyEnElEvento.js');
 const {
   MENSAJE_APAGADA, ruedaEncendida,
   topeValido, alcanzoElTope, mensajeDeTope,
@@ -249,7 +250,13 @@ router.get('/:eventoId/networking/mis-citas', sesion('Rueda de negocios: hace fa
         expositor:networking_expositores!expositor_id(id, nombre, stand, logo_url))
     `)
     .eq('evento_id', eventoId)
-    .eq('user_id', req.user.id)
+    /* Por cuenta O por correo. Comprar una boleta es anónimo a propósito, y
+       desde la 0108 el equipo puede sentar a alguien en la rueda con sólo su
+       correo: esa cita nace con `guest_email` y `user_id` en nulo. Cuando esa
+       persona se hace una cuenta con el mismo correo, buscar sólo por
+       `user_id` le enseñaba CERO citas teniendo tres — sin un solo error.
+       `/me/boletas` ya miraba por los dos lados; esto es lo mismo. */
+    .or(filtroDeMio(req.user))
     /* Antes sólo las `confirmada`. Con eso, una cita PEDIDA y todavía sin
        aprobar no aparecía en ningún sitio: la persona la solicitaba y la
        pantalla se quedaba igual que antes de pedirla. Lo único que no se
@@ -274,10 +281,14 @@ router.get('/:eventoId/networking/mis-citas', sesion('Rueda de negocios: hace fa
  *
  * ── El filtro que no se puede quitar ─────────────────────────────────────
  *
- * `.eq('user_id', req.user.id)`. Sin él, cualquiera con una boleta del evento
- * podría escribir en la cita de otro con sólo cambiar el id de la URL — y las
- * notas de una rueda de negocios son de lo más sensible que se guarda aquí:
- * con quién hablaste y qué te pareció.
+ * La cita tiene que ser SUYA. Sin ese filtro, cualquiera con una boleta del
+ * evento podría escribir en la cita de otro con sólo cambiar el id de la URL —
+ * y las notas de una rueda de negocios son de lo más sensible que se guarda
+ * aquí: con quién hablaste y qué te pareció.
+ *
+ * «Suya» es por cuenta O por correo (`filtroDeMio`), no sólo por `user_id`:
+ * quien reservó por correo y después se hizo una cuenta seguía siendo el dueño
+ * de esa cita, y con el filtro viejo no podía ni leer su propia nota.
  */
 router.patch('/:eventoId/networking/citas/:citaId/notas', sesion('Rueda de negocios: hace falta tener una boleta del evento, no un permiso. Y la cita tiene que ser suya.'), async (req, res) => {
   const { eventoId, citaId } = req.params;
@@ -320,7 +331,7 @@ router.patch('/:eventoId/networking/citas/:citaId/notas', sesion('Rueda de negoc
     .update(cambios)
     .eq('id', citaId)
     .eq('evento_id', eventoId)
-    .eq('user_id', req.user.id)
+    .or(filtroDeMio(req.user))
     .select('id, notas, resultado, expectativa_monto, expectativa_moneda, expectativa_plazo, hubo_acuerdo, resultado_nota')
     .maybeSingle();
 
@@ -389,7 +400,10 @@ router.post('/:eventoId/networking/horarios/:horarioId/reservar', sesion('Rueda 
       .from('networking_citas')
       .select('id, estado')
       .eq('evento_id', eventoId)
-      .eq('user_id', req.user.id);
+      /* También las que tenga por correo: si no, quien compró como invitado y
+         luego se hizo cuenta empezaría el tope de cero y podría llevarse el
+         doble de citas que los demás. */
+      .or(filtroDeMio(req.user));
     /* Si no se pueden contar, no se deja pasar: un tope que se salta cuando la
        base tose no es un tope. Al revés que el modo, aquí equivocarse por
        exceso llena la agenda de una empresa y vacía la de otras. */
@@ -579,7 +593,10 @@ router.delete('/:eventoId/networking/citas/:citaId', sesion('Su propia cita: el 
     .from('networking_citas')
     .delete()
     .eq('id', citaId)
-    .eq('user_id', req.user.id);
+    /* Mismo motivo que en «mis citas»: quien la reservó por correo y luego se
+       hizo cuenta no podía cancelarla desde su cuenta — y esa casilla se
+       quedaba ocupada toda la jornada. */
+    .or(filtroDeMio(req.user));
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });

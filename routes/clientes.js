@@ -31,6 +31,8 @@ router.use(verifySupabaseJWT);
 
 /* Owner o miembro con permiso. Por defecto 'gestionar_clientes'
    (editar/importar); el listado acepta también 'ver_clientes'. */
+const { rutaDe, paraExportar, BUCKET_PRIVADO, SEGUNDOS_FIRMA } = require('../lib/archivoDeFormulario.js');
+
 const PERMS_CLIENTES = ['gestionar_clientes'];
 
 function assertOwner(eventoId, userId, perms = PERMS_CLIENTES) {
@@ -1437,7 +1439,14 @@ router.get('/:eventoId/clientes/exportar', sesion("Exportar es leer la lista ent
         /* La respuesta se busca por id del campo, que es como se guarda. Se
            prueba tambien por etiqueta para no perder lo respondido antes de
            que existieran los ids. */
-        ...(campos || []).map(c => aTexto(r[c.id] ?? r[c.etiqueta])),
+        /* `paraExportar` es la pieza que hace que marcar un campo como
+           sensible signifique algo. Un archivo privado NO da su enlace aquí:
+           esta hoja circula por correo, y un enlace que no caduca dentro de
+           ella es la filtración que todo esto viene a evitar. Se dice que el
+           archivo existe —que es el dato que hace falta para saber quién
+           adjuntó y quién no— y se abre desde el panel, firmado y con registro
+           de quién lo vio. */
+        ...(campos || []).map(c => aTexto(paraExportar(r[c.id] ?? r[c.etiqueta]))),
       ];
     });
 
@@ -1449,6 +1458,67 @@ router.get('/:eventoId/clientes/exportar', sesion("Exportar es leer la lista ent
       total: datos.length,
       preguntas: (campos || []).length,
     });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* GET /eventos/:eventoId/clientes/:ticketId/archivo?campo=... — abrir un adjunto privado
+ *
+ * ── Por qué esto es una ruta y no un enlace ─────────────────────────────
+ *
+ * Un archivo marcado como sensible vive en un bucket sin lectura pública, y en
+ * `respuestas` no queda una URL sino una referencia (`privado:ruta`). Abrirlo
+ * pasa por aquí, que comprueba tres cosas antes de firmar nada:
+ *
+ *   · quién pregunta tiene permiso sobre los asistentes de ESTE evento;
+ *   · la referencia sale de la boleta que se pide, y no de la URL — así nadie
+ *     abre el documento de otro cambiando un parámetro;
+ *   · y la ruta se valida antes de firmarla: llegó de fuera, la escribió el
+ *     navegador de quien subió, y un `../` leería otro bucket.
+ *
+ * El enlace firmado dura diez minutos: lo que tarda alguien en abrirlo, y poco
+ * para que sirva de algo si se reenvía. Ésa es la diferencia con el bucket
+ * público, donde el enlace no caduca nunca.
+ *
+ * No se descarga el archivo por el servidor a propósito: pasar un PDF de 15 MB
+ * por aquí para reenviarlo es gastar la máquina en algo que el almacenamiento
+ * hace mejor. Se firma y que lo baje el navegador.
+ */
+router.get('/:eventoId/clientes/:ticketId/archivo', exige(['ver_clientes', 'gestionar_clientes']), async (req, res) => {
+  const { eventoId, ticketId } = req.params;
+  const campoId = String(req.query?.campo || '').trim();
+  if (!campoId) return res.status(400).json({ error: 'Falta el campo.' });
+
+  try {
+    await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);
+
+    const { data: ticket, error } = await supabase
+      .from('tickets').select('id, respuestas')
+      .eq('id', ticketId).eq('evento_id', eventoId).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!ticket) return res.status(404).json({ error: 'Esa boleta no es de este evento.' });
+
+    const valor = ticket.respuestas?.[campoId];
+    const ruta = rutaDe(valor);
+    if (!ruta) {
+      /* O no hay archivo, o lo que hay es un enlace público que no necesita
+         firma. Las dos cosas se contestan igual: aquí no hay nada que abrir. */
+      return res.status(404).json({ error: 'Esa respuesta no tiene un archivo privado.' });
+    }
+
+    const { data, error: eFirma } = await supabase.storage
+      .from(BUCKET_PRIVADO).createSignedUrl(ruta, SEGUNDOS_FIRMA);
+    if (eFirma) return res.status(500).json({ error: eFirma.message });
+
+    /* Queda anotado quién lo abrió. Un documento sensible que cualquiera del
+       equipo puede ver sin que quede rastro es la mitad de una política de
+       privacidad; la otra mitad es poder contestar quién lo vio. */
+    auditar(req, eventoId, 'cliente.ver-archivo', {
+      entidad: 'ticket', entidadId: ticketId, detalle: { campo: campoId },
+    });
+
+    res.json({ url: data.signedUrl, expira_en: SEGUNDOS_FIRMA });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
   "censado_el": "2026-09-07",
-  "total": 320,
+  "total": 323,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -192,6 +192,10 @@
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
     "GET /eventos/publicos/expositor/:codigo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/expositor/:codigo/citas": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
@@ -800,6 +804,18 @@
       ]
     },
     "DELETE /eventos/:eventoId/tickets/:ticketId": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "GET /eventos/:eventoId/tickets/:ticketId/boletas-sin-equipo": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "POST /eventos/:eventoId/tickets/:ticketId/crear-equipos": {
       "estado": "exige",
       "acciones": [
         "gestionar_tickets"

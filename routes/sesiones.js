@@ -39,6 +39,7 @@ const {
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
 const { otorgarPuntos, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
+const { porEtiqueta, prellenarValidando } = require('../lib/heredarRespuestas.js');
 
 const publico = express.Router();
 
@@ -155,6 +156,79 @@ publico.get('/slug/:slug/sesiones', async (req, res) => {
   });
 
   res.json({ sesiones, preguntas, almacenamiento_listo: true });
+});
+
+/* GET /eventos/publicos/slug/:slug/sesiones/:sesionId/prellenar?codigo=XXX
+ *
+ * Lo que esta persona YA contestó al comprar su boleta, para no volvérselo a
+ * preguntar en el taller.
+ *
+ * ── El hueco que tapa ───────────────────────────────────────────────────
+ *
+ * La identidad ya se hereda —quien va con su código no vuelve a escribir su
+ * nombre ni su correo—, pero las respuestas del formulario no viajaban a
+ * ninguna parte. Si el formulario general pregunta «empresa» y el taller
+ * vuelve a preguntar «empresa», la persona la escribe dos veces, y las dos
+ * respuestas quedan en cajas distintas: `tickets.respuestas` y
+ * `sesion_inscripciones.respuestas`. Después ni siquiera cuadran.
+ *
+ * ── Qué lo sujeta ───────────────────────────────────────────────────────
+ *
+ * Mismo criterio que el prellenado por documento, que ya resolvió este mismo
+ * problema de fondo —contestar datos personales a partir de un identificador—:
+ *
+ *   · El código de la boleta ES la credencial de esa boleta. Es el mismo que
+ *     abre la ficha del expositor y el panel del capitán; no se inventa una
+ *     puerta nueva.
+ *   · Se devuelven SÓLO los campos que ESTE formulario pregunta. Lo que la
+ *     persona contestó de más no sale nunca.
+ *   · Se cruza por ETIQUETA, que es lo único que une dos campos que viven en
+ *     filas distintas y no comparten id.
+ *   · No viajan las casillas: un consentimiento se da para algo concreto, y
+ *     arrastrarlo a otra inscripción es firmar por alguien.
+ */
+publico.get('/slug/:slug/sesiones/:sesionId/prellenar', async (req, res) => {
+  const codigo = String(req.query?.codigo || '').trim().toUpperCase();
+  if (codigo.length < 4) return res.json({ respuestas: {} });
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, estado, deleted_at').eq('slug', req.params.slug).maybeSingle();
+  if (!evento || evento.estado !== 'publicado' || evento.deleted_at) {
+    return res.status(404).json({ error: 'Este evento no existe o no está publicado.' });
+  }
+
+  const { data: sesion } = await supabase
+    .from('agenda_sessions').select(COLS_SESION)
+    .eq('id', req.params.sesionId).eq('evento_id', evento.id).maybeSingle();
+  if (!sesion) return res.status(404).json({ error: 'Sub-evento no encontrado.' });
+
+  /* Sin preguntas propias no hay nada que prellenar, y con el modo 'evento' el
+     formulario que se pinta es el del evento —el mismo que ya contestó—, así
+     que tampoco hace falta pedir nada aquí. */
+  const camposDestino = await camposDeSesion(evento.id, sesion);
+  if (!camposDestino.length) return res.json({ respuestas: {} });
+
+  const { data: ticket } = await supabase
+    .from('tickets').select('id, estado, respuestas, ticket_type_id')
+    .eq('codigo', codigo).eq('evento_id', evento.id).maybeSingle();
+  /* Un código que no existe se contesta igual que uno sin respuestas: no se
+     distingue «no está» de «no contestó nada», que es lo que haría útil
+     probar códigos. */
+  if (!ticket || !['pagado', 'usado', 'emitido'].includes(ticket.estado)) {
+    return res.json({ respuestas: {} });
+  }
+
+  /* Cómo se llamaba cada campo DONDE se contestó: los del evento, más los del
+     tipo de boleta que compró. */
+  const { data: camposEvento } = await supabase
+    .from('event_form_fields').select(COLUMNAS_CAMPO)
+    .eq('evento_id', evento.id).is('session_id', null).is('torneo_id', null)
+    .order('orden', { ascending: true });
+
+  const sabido = porEtiqueta(camposEvento || [], ticket.respuestas || {});
+  const respuestas = prellenarValidando({ camposDestino, sabido });
+
+  res.json({ respuestas, cuantas: Object.keys(respuestas).length });
 });
 
 /* Apuntarse a un sub-evento.

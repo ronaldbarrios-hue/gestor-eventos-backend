@@ -15,7 +15,8 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
    tenían su propia copia recortada, y por eso `grupo`, `ayuda` y `buscable` se
    guardaban, se editaban en el panel… y no llegaban nunca a la página pública.
    El servidor es la autoridad, pero sólo si sirve lo que guarda. */
-const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
+const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO, COLUMNAS_CAMPO_CON_SENSIBLE } = require('../lib/formularioCampos.js');
+const { bucketDe, formatosDe, rutaNueva, MAX_BYTES } = require('../lib/archivoDeFormulario.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { ESTADOS_EN_AGENDA, armarAgenda, resumenDeAgenda } = require('../lib/agendaDeMesa.js');
@@ -155,6 +156,39 @@ router.get('/ticket/:codigo', async (req, res) => {
       .eq('evento_id', data.evento.id)
       .order('orden', { ascending: true });
     data.evento.campos_formulario = campos || [];
+
+    /* ── A qué actividades está inscrita esta boleta ──────────────────────
+     *
+     * Dentro de un evento NO se emite una boleta por taller. Sería un código
+     * más por actividad, y quien llega a la puerta del Encuentro de Mujeres
+     * con tres QR en el teléfono no sabe cuál enseñar — y la persona de la
+     * puerta tampoco. La escarapela es una y sirve para todo: el escáner del
+     * taller lee ESE mismo QR y busca la inscripción por `ticket_id`.
+     *
+     * Lo que faltaba era decirlo. La inscripción existía en la base y no se
+     * veía en ninguna parte: quien se apuntaba a dos talleres se quedaba sin
+     * forma de comprobar que quedó apuntado, y sin saber a qué hora ni dónde.
+     * Va en la boleta porque es donde se mira antes de entrar.
+     *
+     * Si la 0055 no está aplicada, esto no existe y la boleta se enseña igual:
+     * es información de más, no la boleta. */
+    const { data: inscripciones } = await supabase
+      .from('sesion_inscripciones')
+      .select('id, estado, asistio_at, sesion:agenda_sessions!session_id(id, titulo, inicio, fin, ubicacion)')
+      .eq('ticket_id', data.id)
+      .neq('estado', 'cancelada');
+
+    data.actividades = (inscripciones || [])
+      .filter(i => i.sesion)
+      .map(i => ({
+        inscripcion_id: i.id,
+        estado: i.estado,
+        /* Que ya entró se dice: en un evento de dos días, «¿fui a ése?» es una
+           pregunta real, y la respuesta está aquí. */
+        asistio: Boolean(i.asistio_at),
+        ...i.sesion,
+      }))
+      .sort((a, b) => new Date(a.inicio) - new Date(b.inicio));
   }
 
   /* Puntos, historial y qué puede reclamar: es lo que vuelve híbrida la
@@ -412,6 +446,60 @@ router.get('/expositor/:codigo', async (req, res) => {
     pagada: ticket.estado === 'pagado' || ticket.estado === 'usado',
     ticket: { codigo: req.params.codigo.toUpperCase().trim(), nombre: ticket.guest_nombre, email: ticket.guest_email },
     evento,
+  });
+});
+
+/* POST /eventos/publicos/slug/:slug/archivo/destino  { campo_id }
+ *
+ * A dónde va este archivo. Lo decide el SERVIDOR, no el navegador.
+ *
+ * ── Por qué no lo elige quien sube ──────────────────────────────────────
+ *
+ * Si el navegador supiera «este campo es sensible → sube al bucket privado»,
+ * bastaría con no creérselo: subir el documento al bucket público y guardar su
+ * URL. Y no fallaría nada — la respuesta se guardaría igual, la pantalla se
+ * vería igual, y el archivo quedaría con un enlace eterno en el CSV. Nadie lo
+ * notaría hasta que circulara.
+ *
+ * Así que el navegador pregunta a dónde, y sólo puede subir a donde le digan:
+ * la ruta lleva el id del evento y la hora, y las políticas del bucket privado
+ * no dejan leer ni sobrescribir nada.
+ *
+ * Contesta también los formatos y el tope, para que la pantalla los diga ANTES
+ * de que alguien elija un archivo de 40 MB y espere a que falle.
+ */
+router.post('/slug/:slug/archivo/destino', async (req, res) => {
+  const campoId = String(req.body?.campo_id || '').trim();
+  if (!campoId) return res.status(400).json({ error: 'Falta el campo.' });
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, estado, deleted_at').eq('slug', req.params.slug).maybeSingle();
+  if (!evento || evento.estado !== 'publicado' || evento.deleted_at) {
+    return res.status(404).json({ error: 'Este evento no existe o no está publicado.' });
+  }
+
+  /* Con `sensible` y sin ella: mientras la 0115 no esté aplicada la columna no
+     existe, y sin este apaño el formulario entero se caería al elegir un
+     archivo. Sin la migración no hay campos sensibles —tampoco hay bucket
+     privado donde ponerlos—, así que todo va al público, que es lo de hoy. */
+  const pedir = (cols) => supabase
+    .from('event_form_fields').select(cols)
+    .eq('id', campoId).eq('evento_id', evento.id).maybeSingle();
+  let { data: campo, error } = await pedir(COLUMNAS_CAMPO_CON_SENSIBLE);
+  if (error) ({ data: campo } = await pedir(COLUMNAS_CAMPO));
+
+  if (!campo) return res.status(404).json({ error: 'Esa pregunta no es de este evento.' });
+  if (campo.tipo !== 'archivo' && campo.tipo !== 'foto') {
+    return res.status(400).json({ error: 'Esa pregunta no pide un archivo.' });
+  }
+
+  const extension = String(req.body?.extension || '').toLowerCase();
+  res.json({
+    bucket: bucketDe(campo),
+    privado: Boolean(campo.sensible),
+    ruta: rutaNueva({ eventoId: evento.id, campoId, extension }),
+    formatos: formatosDe(campo),
+    max_bytes: MAX_BYTES,
   });
 });
 

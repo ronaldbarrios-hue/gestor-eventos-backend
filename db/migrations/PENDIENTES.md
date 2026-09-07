@@ -2,8 +2,23 @@
 
 **No queda ninguna.**
 
+> **Ojo con el número 0103.** Hay DOS archivos con él:
+> `0103_solicitud_de_cambio.sql` y `0103_torneo_calificacion_jurado.sql`. Los
+> dos están aplicados, así que no rompe nada hoy — pero quien ordene la carpeta
+> por nombre para saber qué falta correr verá dos entradas con el mismo número y
+> no sabrá cuál es cuál. Conviene renumerar el segundo antes de que alguien
+> reconstruya la base desde cero.
+
+
 | Nº | Qué hace | Estado |
 |---|---|---|
+| 0113 | El interruptor de la rueda, el tope de citas por participante y las franjas bloqueadas | ✅ aplicada el 2026-09-06 |
+| 0112 | Recordar la cita una hora antes (`networking_citas.recordatorio_at`) | ✅ aplicada el 2026-09-06 |
+| 0111 | De dónde vino cada inscripción (`tickets.origen`) | ✅ aplicada el 2026-09-05 |
+| 0110 | Qué pasó en la reunión y qué negocio se espera | ✅ aplicada el 2026-09-05 |
+| 0109 | Los roles hacen lo que dicen que hacen | ✅ aplicada el 2026-09-05 |
+| 0108 | Sentar a alguien en la rueda con sólo su correo | ✅ aplicada el 2026-09-05 |
+| 0107 | Límite de caracteres y de palabras en las preguntas | ✅ aplicada el 2026-09-05 |
 | 0103 | Formato de torneo "puntaje jurado" (show de talento): jurado, criterios, rondas | ✅ aplicada el 2026-09-05 |
 | 0102 | Una notificación que lleva a algún sitio (`notificaciones.link`) | ✅ aplicada el 2026-09-04 |
 | 0100 | Los descuentos del agente se mudan a donde se cobran | ✅ aplicada el 2026-09-04 |

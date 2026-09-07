@@ -76,9 +76,33 @@ test('dos fechas que difieren en un segundo son distintas', () => {
   );
 });
 
-test('un número y su texto NO se confunden', () => {
-  /* Una columna numérica cargada como texto es un fallo de la migración. */
-  assert.notEqual(normalizar(10), normalizar('10'));
+test('un número y su texto SÍ se comparan igual — y por qué', () => {
+  /* Esta prueba decía lo contrario y quedó al revés con el arreglo de las
+     columnas de dinero. Merece explicación, porque los dos criterios eran
+     defendibles y uno tuvo que ceder.
+
+     Lo que pedía antes: «una columna numérica cargada como texto es un fallo
+     de la migración», y comparar 10 con '10' lo cazaba.
+
+     Lo que pasa de verdad: NUMERIC/DECIMAL vuelven como TEXTO de los dos
+     lados —node-pg no convierte NUMERIC por precisión, MySQL tampoco convierte
+     DECIMAL—, y cada motor lo escribe distinto: Postgres da la precisión de la
+     fila («1500»), MySQL la escala de la columna («1500.00»). Con el criterio
+     viejo, TODA columna de dinero salía «diferente» sin haber cambiado un
+     centavo, y un informe que marca todo enseña a no leerlo. */
+  assert.equal(normalizar(10), normalizar('10'));
+  assert.equal(normalizar('1500'), normalizar('1500.00'));
+
+  /* Lo que NO se puede perder: que un número y algo que no lo es sigan siendo
+     distintos. Aquí sólo se relaja el TIPO, no el valor. */
+  assert.notEqual(normalizar('10'), normalizar('10 '));
+  assert.notEqual(normalizar('10'), normalizar('diez'));
+  assert.notEqual(normalizar(10), normalizar(11));
+
+  /* Y el tipo declarado de la columna se compara aparte, en el esquema
+     (`db/esquema/01_tablas.sql`), que es donde de verdad se ve si un NUMERIC
+     acabó siendo VARCHAR. Comparando fila a fila nunca se vio: '10' y 10 se
+     leían igual en cuanto la columna tuviera un solo valor redondo. */
 });
 
 /* ── La huella ────────────────────────────────────────────────────────── */

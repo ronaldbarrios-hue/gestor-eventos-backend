@@ -1,5 +1,6 @@
 const express = require('express');
 const supabase = require('../lib/supabase.js');
+const { avisosDePublicacion } = require('../lib/avisosDePublicacion.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { slugify, uniqueEventoSlug } = require('../lib/slug.js');
 const { otorgarBadge } = require('../lib/gamificacion.js');
@@ -680,111 +681,21 @@ router.post('/:id/estado', sesion('Publicar o despublicar exige el permiso `publ
    *
    * Va después de escribir el estado: un fallo contando lo que falta no puede
    * impedir una publicación que ya se autorizó. */
+  /* Qué le falta a lo que se acaba de publicar.
+   *
+   * Publicar sólo comprobaba el PERMISO. Se puede publicar un evento sin una
+   * sola forma de inscribirse, y entonces alguien llega a la página, la lee
+   * entera y no encuentra qué pulsar.
+   *
+   * No se BLOQUEA: hay motivos legítimos para publicar antes de abrir
+   * inscripciones. Se avisa, que es lo que faltaba.
+   *
+   * El cálculo vive en `lib/avisosDePublicacion.js` y no aquí porque hay DOS
+   * caminos para publicar —éste y la herramienta del agente— y el segundo hacía
+   * su propio `update`: publicaba sin un solo aviso. */
   let avisos = [];
   if (estado === 'publicado') {
-    try {
-      const { count } = await supabase
-        .from('ticket_types')
-        .select('id', { count: 'exact', head: true })
-        .eq('evento_id', req.params.id).eq('activo', true);
-      if (!count) {
-        avisos.push('No hay tipos de boleta activos: nadie puede inscribirse desde la página.');
-      }
-
-      /* Boletas de pago sin cuenta de cobro conectada.
-       *
-       * Las dos pasarelas lo rechazan antes de emitir nada —así que no se
-       * pierde ninguna venta a medias— pero quien compra se lleva «el
-       * organizador aún no conectó Mercado Pago» después de llenar el
-       * formulario entero. El organizador no se entera hasta que alguien se
-       * queja, y para entonces ya pasaron los primeros compradores.
-       *
-       * Se avisa aquí porque publicar es el momento en que todavía se puede
-       * arreglar sin que nadie lo haya visto. */
-      const { data: dePago } = await supabase
-        .from('ticket_types').select('id, precio')
-        .eq('evento_id', req.params.id).eq('activo', true).gt('precio', 0).limit(1);
-      if (dePago?.length) {
-        const { data: cobro } = await supabase
-          .from('profiles').select('mp_access_token, wompi_public_key')
-          .eq('id', data.owner_id).maybeSingle();
-        if (!cobro?.mp_access_token && !cobro?.wompi_public_key) {
-          avisos.push('Hay boletas de pago y no tienes cuenta de cobro conectada: nadie podrá pagar. Conecta Mercado Pago o Wompi en Comercial → Pagos.');
-        }
-      }
-
-      /* Un plano a medias. Una unidad vendible sin localidad no la puede
-         comprar nadie —el servidor no sabe qué cobrar— y el plano se ve lleno.
-         Es un fallo silencioso: la venta no falla, simplemente no ocurre. */
-      const { data: vendibles } = await supabase
-        .from('espacios').select('id').eq('evento_id', req.params.id).eq('modo', 'vendible');
-      if (vendibles?.length) {
-        const { data: conPrecio } = await supabase
-          .from('ticket_type_espacios').select('espacio_id')
-          .in('espacio_id', vendibles.map(e => e.id));
-        const sinPrecio = vendibles.length - new Set((conPrecio || []).map(x => x.espacio_id)).size;
-        if (sinPrecio > 0) {
-          avisos.push(`${sinPrecio} ${sinPrecio === 1 ? 'sitio del plano no tiene' : 'sitios del plano no tienen'} tipo de boleta asignado: se ven en el mapa y no se pueden comprar.`);
-        }
-      }
-      if (!data.fecha_inicio) avisos.push('El evento no tiene fecha de inicio.');
-      if (!data.location_nombre && data.modalidad !== 'virtual') {
-        avisos.push('No hay lugar. Es de lo primero que preguntan.');
-      }
-      if (data.modalidad !== 'fisico' && !data.url_virtual) {
-        avisos.push('Es un evento en línea y no tiene enlace de conexión.');
-      }
-
-      /* Y lo mismo para los sub-eventos.
-       *
-       * Estos avisos sólo miraban el evento. Un sub-evento también se puede
-       * publicar en un estado que no lleva a ninguna parte, y con la misma
-       * forma de fallar: no hay error, hay una actividad a la que nadie se
-       * puede apuntar.
-       *
-       * Los dos casos son de la base de hoy, no inventados. */
-      const { data: subs } = await supabase
-        .from('agenda_sessions')
-        .select('id, titulo, requiere_inscripcion, formulario_modo, ticket_type_id')
-        .eq('evento_id', req.params.id);
-
-      const conInscripcion = (subs || []).filter(s => s.requiere_inscripcion);
-
-      /* «Preguntas propias» y ninguna escrita: se comporta igual que
-         «no preguntar nada», y quien lo eligió cree que sí pregunta. */
-      const propios = conInscripcion.filter(s => s.formulario_modo === 'propio');
-      if (propios.length) {
-        const { data: conCampos } = await supabase
-          .from('event_form_fields')
-          .select('session_id')
-          .in('session_id', propios.map(s => s.id));
-        const tienen = new Set((conCampos || []).map(c => c.session_id));
-        for (const s of propios.filter(x => !tienen.has(x.id))) {
-          avisos.push(`«${s.titulo}» pide preguntas propias y no tiene ninguna: apuntarse será sólo un botón.`);
-        }
-      }
-
-      /* Atado a una boleta que está pausada: la actividad se ve y no se puede
-         entrar, y el motivo está en otra pantalla. */
-      const conBoleta = conInscripcion.filter(s => s.ticket_type_id);
-      if (conBoleta.length) {
-        const { data: tipos } = await supabase
-          .from('ticket_types').select('id, nombre, activo')
-          .in('id', conBoleta.map(s => s.ticket_type_id));
-        const porId = new Map((tipos || []).map(t => [t.id, t]));
-        for (const s of conBoleta) {
-          const t = porId.get(s.ticket_type_id);
-          if (t && t.activo === false) {
-            avisos.push(`«${s.titulo}» sólo admite la boleta «${t.nombre}», que está pausada: nadie podrá apuntarse.`);
-          }
-        }
-      }
-    } catch (e) {
-      /* Que no se pueda contar lo que falta no cambia que ya está publicado.
-         Se apunta y se sigue: un aviso ausente es un aviso, no un error. */
-      console.error(`[evento] no se pudieron calcular los avisos de publicación: ${e.message}`);
-    }
-
+    avisos = await avisosDePublicacion(req.params.id, data);
     dispatch(req.user.id, 'evento.publicado', { evento_id: data.id, titulo: data.titulo, slug: data.slug });
   }
 

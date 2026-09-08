@@ -28,6 +28,7 @@ const { hashToken } = require('../lib/apitoken.js');
 const supabase = require('../lib/supabase.js');
 const oauth = require('../lib/oauth.js');
 const agente = require('../lib/agente.js');
+const alcance = require('../lib/alcanceMcp.js');
 
 const router = express.Router();
 
@@ -58,19 +59,20 @@ function comoMCP(t) {
   };
 }
 
-/* Herramientas que no tienen sentido fuera del panel: `solicitar_formulario`
-   pinta un formulario en la pantalla de Gestbot, y en Claude no hay pantalla
-   donde pintarlo. Se filtra en vez de dejar que Claude la llame y se quede
-   esperando algo que nunca llega. */
-const SOLO_PANEL = new Set(['solicitar_formulario']);
-
-const TOOLS_MCP = (agente.TOOLS || [])
-  .filter(t => t?.name && !t.name.startsWith('_') && !SOLO_PANEL.has(t.name))
-  .map(comoMCP);
+/* Las herramientas que ve ESTE token.
+ *
+ * Antes era una lista fija calculada al arrancar: todos los tokens veían las 73,
+ * incluidas emitir cortesías, marcar boletas como pagadas y sacar gente del
+ * equipo. La columna `api_tokens.scopes` existía y no la miraba nadie.
+ *
+ * Lo que nunca sale —`solicitar_formulario`, que pinta un formulario en la
+ * pantalla del chat y por MCP no tiene dónde pintarlo— vive ahora en
+ * `lib/alcanceMcp.js` y no en una segunda lista aquí. */
+const toolsDe = (scopes) => alcance.herramientasPara(agente.TOOLS || [], scopes).map(comoMCP);
 
 /* ── Métodos ──────────────────────────────────────────────────────────── */
 
-async function manejar(peticion, ownerId) {
+async function manejar(peticion, ownerId, scopes = null) {
   const { id = null, method, params = {} } = peticion || {};
 
   switch (method) {
@@ -94,13 +96,16 @@ async function manejar(peticion, ownerId) {
       return ok(id, {});
 
     case 'tools/list':
-      return ok(id, { tools: TOOLS_MCP });
+      return ok(id, { tools: toolsDe(scopes) });
 
     case 'tools/call': {
       const nombre = params?.name;
       const args = params?.arguments || {};
       if (!nombre) return err(id, E_PARAMS, 'Falta el nombre de la herramienta.');
-      if (!TOOLS_MCP.some(t => t.name === nombre)) {
+      /* Se comprueba la LLAMADA, no que estuviera en la lista que se enseñó:
+         un cliente MCP puede llamar a `tools/call` con cualquier nombre.
+         Filtrar la lista es cortesía; comprobar aquí es la seguridad. */
+      if (!alcance.puedeEjecutar(nombre, scopes, agente.TOOLS || [])) {
         return err(id, E_PARAMS, `Herramienta desconocida: ${nombre}`);
       }
 
@@ -176,6 +181,10 @@ async function autenticar(req, res, next) {
       .then(() => {}, () => {});
     req.apiOwner = tok.owner_id;
     req.mcpVia = 'token';
+    /* Lo que este token puede hacer. Un token sin alcances —los de antes de
+       que existiera esta columna— los tiene todos: quitarle permisos a algo
+       que ya funcionaba, sin avisar, rompe una integración en marcha. */
+    req.mcpScopes = Array.isArray(tok.scopes) ? tok.scopes : null;
     return next();
   }
 
@@ -199,7 +208,7 @@ router.post('/mcp', autenticar, sesion('El servidor MCP se autentica con su prop
   try {
     const respuestas = [];
     for (const p of peticiones) {
-      const r = await manejar(p, req.apiOwner);
+      const r = await manejar(p, req.apiOwner, req.mcpScopes);
       if (r) respuestas.push(r);   // las notificaciones no responden
     }
     /* Un lote entero de notificaciones no lleva cuerpo: 202 y nada más. */
@@ -235,4 +244,4 @@ module.exports = router;
 
 /* Para las pruebas: el protocolo se comprueba sin levantar el servidor ni
    tocar la base. */
-module.exports._test = { manejar, TOOLS_MCP, comoMCP, PROTOCOLO, autenticar };
+module.exports._test = { manejar, toolsDe, comoMCP, PROTOCOLO, autenticar };

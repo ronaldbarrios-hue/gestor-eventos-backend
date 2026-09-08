@@ -10,6 +10,8 @@ const { signTicketQR } = require('../lib/qr.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
+const espaciosLib = require('../lib/espacios.js');
+const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 /* `COLUMNAS_CAMPO` y no una lista escrita a mano: las dos consultas de abajo
    tenían su propia copia recortada, y por eso `grupo`, `ayuda` y `buscable` se
@@ -447,6 +449,126 @@ router.get('/expositor/:codigo', async (req, res) => {
     ticket: { codigo: req.params.codigo.toUpperCase().trim(), nombre: ticket.guest_nombre, email: ticket.guest_email },
     evento,
   });
+});
+
+/* ── El plano, para quien compra ────────────────────────────────────────
+ *
+ * Tres rutas: ver qué hay libre, retener mientras se paga, y soltar.
+ *
+ * Están aquí y no en `routes/espacios.js` porque **quien compra no tiene
+ * cuenta**. Pedirle que se registre para elegir silla es perder la venta.
+ */
+
+/* GET /eventos/publicos/slug/:slug/mapa
+ *
+ * El estado del plano, YA AGREGADO: id del espacio y si está libre. Lo que no
+ * sale es de quién es cada reserva — `sesion_compra` identifica un carrito y
+ * `ticket_id` lleva a una persona. Un mapa que dijera «vendida a X» sería una
+ * lista de asistentes servida sin autenticación.
+ */
+router.get('/slug/:slug/mapa', async (req, res) => {
+  const { data: evento } = await supabase
+    .from('eventos').select('id, estado, deleted_at').eq('slug', req.params.slug).maybeSingle();
+  if (!evento || evento.deleted_at || evento.estado !== 'publicado') {
+    return res.status(404).json({ error: 'Evento no disponible.' });
+  }
+
+  const { data: espacios, error } = await supabase
+    .from('espacios').select(espaciosLib.COLUMNAS)
+    .eq('evento_id', evento.id).order('orden', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+
+  /* Sin espacios no hay plano, y eso NO es un error: la inmensa mayoría de los
+     eventos se venden por aforo. Se contesta vacío y el frontend enseña el
+     formulario de siempre. */
+  if (!espacios?.length) return res.json({ hay_plano: false, unidades: [], secciones: [] });
+
+  /* Los errores se miran: una consulta fallida aquí enseñaría el plano entero
+     libre, y la gente intentaría comprar sillas vendidas. */
+  const { data: reservas, error: eRes } = await supabase
+    .from('espacio_reservas').select('espacio_id, estado, expira_at')
+    .eq('evento_id', evento.id).in('estado', ['retenido', 'vendido']);
+  if (eRes) return res.status(500).json({ error: eRes.message });
+
+  const unidades = espaciosLib.mapaPublico({ espacios, reservas });
+
+  const { data: loc, error: eLoc } = await supabase
+    .from('ticket_type_espacios').select('ticket_type_id, espacio_id')
+    .in('espacio_id', unidades.map(u => u.id));
+  if (eLoc) return res.status(500).json({ error: eLoc.message });
+  const precioDe = new Map(loc.map(l => [l.espacio_id, l.ticket_type_id]));
+
+  const resumen = espaciosLib.resumenPorPadre(unidades);
+
+  res.json({
+    hay_plano: true,
+    /* Las secciones van con su cuenta de libres: es el número que se mira antes
+       de abrir el plano, y el que decide si merece la pena abrirlo. */
+    secciones: espacios
+      .filter(e => e.modo !== 'vendible')
+      .map(e => ({
+        id: e.id, nombre: e.nombre, tipo: e.tipo, parent_id: e.parent_id,
+        ...(resumen.get(e.id) || { total: 0, libres: 0 }),
+      })),
+    unidades: unidades.map(u => ({ ...u, ticket_type_id: precioDe.get(u.id) || null })),
+    minutos_retencion: espaciosLib.MINUTOS_RETENCION,
+  });
+});
+
+/* POST /eventos/publicos/slug/:slug/retener  { espacio_id, sesion }
+ *
+ * Lo difícil de todo esto, y son cuatro líneas — porque el trabajo lo hace la
+ * base. `retener_espacio` es una función de Postgres con un índice único parcial
+ * detrás: la segunda persona que pida la misma silla choca contra el índice
+ * DURANTE la escritura, no después de comprobar. No hay ventana.
+ */
+router.post('/slug/:slug/retener', async (req, res) => {
+  const sesion = espaciosLib.sesionValida(req.body?.sesion);
+  if (!sesion) return res.status(400).json({ error: 'Falta identificar el carrito.' });
+  if (!req.body?.espacio_id) return res.status(400).json({ error: 'Falta la silla.' });
+
+  const { data: evento } = await supabase
+    .from('eventos').select('id, estado, deleted_at').eq('slug', req.params.slug).maybeSingle();
+  if (!evento || evento.deleted_at || evento.estado !== 'publicado') {
+    return res.status(404).json({ error: 'Evento no disponible.' });
+  }
+
+  const { data, error } = await supabase.rpc('retener_espacio', {
+    p_espacio: req.body.espacio_id,
+    p_evento : evento.id,
+    p_sesion : sesion,
+    p_minutos: espaciosLib.MINUTOS_RETENCION,
+  });
+
+  if (error) {
+    const t = espaciosLib.traducirError(error);
+    if (t) return res.status(t.estado).json({ error: t.mensaje });
+    return res.status(500).json({ error: error.message });
+  }
+
+  const r = Array.isArray(data) ? data[0] : data;
+  res.json({ ok: true, espacio_id: req.body.espacio_id, expira_at: r?.expira_at || null });
+});
+
+/* POST /eventos/publicos/slug/:slug/soltar  { espacio_id, sesion }
+ *
+ * Cerrar el formulario tiene que devolver la silla. Sin esto, cada persona que
+ * se lo piensa deja una silla bloqueada diez minutos, y en una preventa eso es
+ * un mapa en rojo sin una sola venta.
+ */
+router.post('/slug/:slug/soltar', async (req, res) => {
+  const sesion = espaciosLib.sesionValida(req.body?.sesion);
+  if (!sesion || !req.body?.espacio_id) return res.json({ ok: false });
+
+  const { data, error } = await supabase.rpc('liberar_espacio', {
+    p_espacio: req.body.espacio_id,
+    p_sesion : sesion,
+  });
+  /* Soltar nunca es un error para quien llama: si ya no era suya, ya está
+     soltada. Devolver un 400 aquí haría que cerrar una ventana enseñara un
+     mensaje rojo por algo que salió bien. */
+  if (error) console.error(`[espacios] soltar: ${error.message}`);
+  res.json({ ok: Boolean(data) });
 });
 
 /* POST /eventos/publicos/slug/:slug/archivo/destino  { campo_id }
@@ -1504,6 +1626,16 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   if (falloForm) return res.status(400).json({ error: falloForm });
   const respuestasLimpias = normalizarRespuestas(camposReq, respuestas);
 
+  /* La silla, si el evento vende por plano. La comprobación vive en
+     `lib/sillaDeLaCompra.js` y no aquí: hay TRES caminos para emitir una
+     boleta —éste, Mercado Pago y Wompi— y la primera versión sólo cubría
+     éste. O sea que un concierto, que es de pago, habría emitido la boleta y
+     dejado la silla retenida hasta caducar. */
+  const silla = await sillaDeLaCompra.comprobarAntes({
+    body: req.body, eventoId: evento.id, tipoId: tipo.id,
+  });
+  if (silla.error) return res.status(silla.estado).json({ error: silla.error });
+
   const codigo = generarCodigo();
   const estado = esGratis ? 'pagado' : 'emitido';
 
@@ -1546,6 +1678,15 @@ router.post('/slug/:slug/reservar', async (req, res) => {
        persona se queda sin sitio Y sin boleta. */
     if (ofertaMia) await devolverOferta(ofertaMia.id);
     return res.status(500).json({ error: e3.message });
+  }
+
+  /* La retención pasa a venta. Después de emitir porque hace falta el id de la
+     boleta. Si caducó en el hueco —milisegundos, pero pasa— se deshace la
+     boleta: una venta sin sitio se descubre en la puerta. */
+  if (!(await sillaDeLaCompra.confirmarDespues({ ...silla, ticketId: ticket.id }))) {
+    await supabase.from('tickets').delete().eq('id', ticket.id);
+    if (ofertaMia) await devolverOferta(ofertaMia.id);
+    return res.status(409).json({ error: sillaDeLaCompra.SE_PERDIO });
   }
 
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });

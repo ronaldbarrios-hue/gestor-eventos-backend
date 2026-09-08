@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { generarToken } = require('../lib/apitoken.js');
+const alcance = require('../lib/alcanceMcp.js');
+const agente = require('../lib/agente.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -24,7 +26,19 @@ router.get('/integraciones/tokens', async (req, res) => {
     .eq('owner_id', req.user.id)
     .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ tokens: data || [], tipos_webhook: TIPOS_WEBHOOK });
+  res.json({
+    tokens: data || [],
+    tipos_webhook: TIPOS_WEBHOOK,
+    /* Qué se le puede conceder a Claude, con cuántas herramientas trae cada
+       grupo: sin el número, «Crear y editar» no dice si son tres cosas o
+       cuarenta. El catálogo viaja con la respuesta para que la pantalla no
+       mantenga su propia copia — que es como se separan las listas aquí. */
+    alcances: alcance.catalogo(agente.TOOLS || []),
+    /* La dirección que se pega en Claude. Sale del servidor y no se escribe en
+       el frontend: si se escribiera allí, cambiar de dominio dejaría una
+       instrucción que manda a la nada. */
+    mcp_url: `${req.protocol}://${req.get('host')}/mcp`,
+  });
 });
 
 router.post('/integraciones/tokens', async (req, res) => {
@@ -32,10 +46,16 @@ router.post('/integraciones/tokens', async (req, res) => {
   if (!nombre) return res.status(400).json({ error: 'Poné un nombre al token.' });
 
   const { token, hash, prefix } = generarToken();
+  /* Qué podrá hacer. Se limpia en `lib/alcanceMcp.js` para que la ruta que
+     crea y la que comprueba no puedan separarse: un alcance inventado que se
+     guarda y luego no se reconoce deja un token que no puede hacer nada y no
+     dice por qué. */
+  const scopes = alcance.alcancesValidos(req.body?.scopes);
+
   const { data, error } = await supabase
     .from('api_tokens')
-    .insert({ owner_id: req.user.id, nombre, token_hash: hash, prefix })
-    .select('id, nombre, prefix, created_at').single();
+    .insert({ owner_id: req.user.id, nombre, token_hash: hash, prefix, scopes })
+    .select('id, nombre, prefix, scopes, created_at').single();
   if (error) return res.status(500).json({ error: error.message });
   /* token completo se muestra UNA sola vez */
   res.status(201).json({ token: { ...data, valor: token } });

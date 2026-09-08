@@ -174,6 +174,7 @@ app.use('/',                 require('./routes/sugerencias.js'));
 app.use('/eventos',          require('./routes/equipo.js'));
 app.use('/eventos',          require('./routes/roles.js'));
 app.use('/eventos',          require('./routes/tickets.js'));
+app.use('/eventos',          require('./routes/espacios.js'));
 app.use('/eventos',          require('./routes/clientes.js'));
 app.use('/eventos',          require('./routes/chat.js'));
 app.use('/eventos',          require('./routes/agenda.js'));

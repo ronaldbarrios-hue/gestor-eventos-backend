@@ -7,6 +7,7 @@
    de integridad y de eventos). Inerte hasta entonces. */
 const express = require('express');
 const supabase = require('../lib/supabase.js');
+const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
 const { precioDeCompra } = require('../lib/precioTicket.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
@@ -153,6 +154,13 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
     });
   }
 
+  /* La silla, si el evento vende por plano. Antes de emitir, para que quien se
+     quedó sin ella se entere cuando todavía puede elegir otra. */
+  const silla = await sillaDeLaCompra.comprobarAntes({
+    body: req.body, eventoId: evento.id, tipoId: tipo.id,
+  });
+  if (silla.error) return res.status(silla.estado).json({ error: silla.error });
+
   const { data: ticket, error: eT } = await supabase.from('tickets').insert({
     ticket_type_id: tipo.id, evento_id: evento.id,
     guest_email: email ? email.toLowerCase().trim() : null, guest_nombre: nombre ? nombre.trim() : null,
@@ -166,6 +174,15 @@ router.post('/eventos/publicos/slug/:slug/comprar-wompi', verifySupabaseJWTOptio
     if (ofertaMiaW) await devolverOferta(ofertaMiaW.id);
     return res.status(500).json({ error: eT.message });
   }
+  /* Vendida al crear la boleta y no al confirmar el pago: la boleta ya ocupa
+     sitio en cuanto existe, y el viaje a la pasarela puede durar más que la
+     retención. */
+  if (!(await sillaDeLaCompra.confirmarDespues({ ...silla, ticketId: ticket.id }))) {
+    await supabase.from('tickets').delete().eq('id', ticket.id);
+    if (ofertaMiaW) await devolverOferta(ofertaMiaW.id);
+    return res.status(409).json({ error: sillaDeLaCompra.SE_PERDIO });
+  }
+
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
+const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
 const { horaDelEscaneo } = require('../lib/horaDeEscaneo.js');
@@ -274,6 +275,11 @@ router.patch('/:eventoId/clientes/:ticketId', exige(PERMS_CLIENTES), async (req,
       if (delta < 0) {
         ofrecerCupoAlSiguiente({ eventoId, ticketTypeId: antes.ticket_type_id })
           .catch(() => {});
+        /* Y su silla, si la tenía. Va con la MISMA condición que el aforo y no
+           con una regla propia: si un día cambia qué estados ocupan, la silla
+           y el cupo tienen que cambiar juntos o uno de los dos deja de
+           cuadrar. */
+        sillaDeLaCompra.liberarPorTicket(ticketId).catch(() => {});
       }
     }
 
@@ -468,6 +474,9 @@ router.post('/:eventoId/clientes/:ticketId/reembolsar', exige(['reembolsar']), a
        reutilizar `ajustarAforo`, un día uno de los dos dejaría de cuadrar. */
     await ajustarAforo(eventoId, t.ticket_type_id, -1);
     ofrecerCupoAlSiguiente({ eventoId, ticketTypeId: t.ticket_type_id }).catch(() => {});
+    /* Un reembolso también devuelve la silla: si no, queda ocupada para
+       siempre y la única salida es que alguien la libere a mano. */
+    sillaDeLaCompra.liberarPorTicket(ticketId).catch(() => {});
 
     auditar(req, eventoId, 'cliente.reembolsar', {
       entidad: 'ticket', entidadId: t.id,

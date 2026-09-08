@@ -11,6 +11,7 @@ const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const espaciosLib = require('../lib/espacios.js');
+const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 /* `COLUMNAS_CAMPO` y no una lista escrita a mano: las dos consultas de abajo
    tenían su propia copia recortada, y por eso `grupo`, `ayuda` y `buscable` se
@@ -1625,45 +1626,15 @@ router.post('/slug/:slug/reservar', async (req, res) => {
   if (falloForm) return res.status(400).json({ error: falloForm });
   const respuestasLimpias = normalizarRespuestas(camposReq, respuestas);
 
-  /* ── La silla, si el evento vende por plano ───────────────────────────
-   *
-   * Se comprueba ANTES de emitir: que exista la retención, que sea de este
-   * carrito y que no haya caducado. Si algo de eso falla, la persona se entera
-   * ahora —cuando puede elegir otra— y no después de pagar. */
-  const espacioId = req.body?.espacio_id || null;
-  const sesionEspacio = espaciosLib.sesionValida(req.body?.sesion_espacio);
-
-  if (espacioId) {
-    if (!sesionEspacio) return res.status(400).json({ error: 'Falta identificar el carrito de la silla.' });
-
-    const { data: reserva } = await supabase
-      .from('espacio_reservas')
-      .select('id, estado, expira_at, sesion_compra, espacio:espacios!espacio_id(id, nombre, evento_id)')
-      .eq('espacio_id', espacioId).in('estado', ['retenido', 'vendido'])
-      .maybeSingle();
-
-    if (!reserva || reserva.estado === 'vendido') {
-      return res.status(409).json({ error: 'Esa silla ya se vendió. Elige otra en el plano.' });
-    }
-    if (reserva.sesion_compra !== sesionEspacio) {
-      return res.status(409).json({ error: 'Esa silla la está comprando otra persona. Elige otra.' });
-    }
-    if (!reserva.expira_at || new Date(reserva.expira_at) <= new Date()) {
-      return res.status(409).json({ error: 'Se acabó el tiempo para esa silla. Vuelve al plano y tómala otra vez.' });
-    }
-    if (reserva.espacio?.evento_id !== evento.id) {
-      return res.status(400).json({ error: 'Esa silla no es de este evento.' });
-    }
-
-    /* Y que la silla sea de la localidad que se está comprando. Sin esto se
-       paga una entrada de gradería y se guarda una silla de platea, y no
-       falla nada: son dos tablas que nadie cruza. */
-    const { data: loc } = await supabase
-      .from('ticket_type_espacios').select('ticket_type_id').eq('espacio_id', espacioId).maybeSingle();
-    if (loc && loc.ticket_type_id !== tipo.id) {
-      return res.status(400).json({ error: 'Esa silla no corresponde a la boleta que elegiste.' });
-    }
-  }
+  /* La silla, si el evento vende por plano. La comprobación vive en
+     `lib/sillaDeLaCompra.js` y no aquí: hay TRES caminos para emitir una
+     boleta —éste, Mercado Pago y Wompi— y la primera versión sólo cubría
+     éste. O sea que un concierto, que es de pago, habría emitido la boleta y
+     dejado la silla retenida hasta caducar. */
+  const silla = await sillaDeLaCompra.comprobarAntes({
+    body: req.body, eventoId: evento.id, tipoId: tipo.id,
+  });
+  if (silla.error) return res.status(silla.estado).json({ error: silla.error });
 
   const codigo = generarCodigo();
   const estado = esGratis ? 'pagado' : 'emitido';
@@ -1709,23 +1680,13 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     return res.status(500).json({ error: e3.message });
   }
 
-  /* La retención pasa a venta. Va DESPUÉS de emitir porque `confirmar_espacio`
-     necesita el id de la boleta.
-     Entre la comprobación de arriba y esta línea pasan milisegundos, pero la
-     retención puede haber caducado justo ahí. Si eso ocurre se deshace la
-     boleta: es una venta sin sitio, y descubrirlo en la puerta —con la persona
-     delante y su asiento ocupado— es mucho peor que un reintento. */
-  if (espacioId) {
-    const { data: confirmada, error: eConf } = await supabase.rpc('confirmar_espacio', {
-      p_espacio: espacioId, p_sesion: sesionEspacio, p_ticket: ticket.id,
-    });
-    if (eConf || !confirmada) {
-      await supabase.from('tickets').delete().eq('id', ticket.id);
-      if (ofertaMia) await devolverOferta(ofertaMia.id);
-      return res.status(409).json({
-        error: 'Se acabó el tiempo para esa silla y la tomó otra persona. No se te cobró nada; elige otra en el plano.',
-      });
-    }
+  /* La retención pasa a venta. Después de emitir porque hace falta el id de la
+     boleta. Si caducó en el hueco —milisegundos, pero pasa— se deshace la
+     boleta: una venta sin sitio se descubre en la puerta. */
+  if (!(await sillaDeLaCompra.confirmarDespues({ ...silla, ticketId: ticket.id }))) {
+    await supabase.from('tickets').delete().eq('id', ticket.id);
+    if (ofertaMia) await devolverOferta(ofertaMia.id);
+    return res.status(409).json({ error: sillaDeLaCompra.SE_PERDIO });
   }
 
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });

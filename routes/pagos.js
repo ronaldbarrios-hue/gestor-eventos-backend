@@ -7,6 +7,7 @@
 const express = require('express');
 const crypto  = require('crypto');
 const supabase = require('../lib/supabase.js');
+const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
 const { precioDeCompra } = require('../lib/precioTicket.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
@@ -239,6 +240,13 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
   /* El mismo candado que en la reserva: el token se quema antes de emitir, y
      sólo una petición se lo lleva. Aquí importa igual aunque falte pagar,
      porque la boleta ya ocupa sitio en cuanto existe. */
+  /* La silla, si el evento vende por plano. Se comprueba ANTES de emitir para
+     que quien se quedó sin ella se entere cuando todavía puede elegir otra. */
+  const silla = await sillaDeLaCompra.comprobarAntes({
+    body: req.body, eventoId: evento.id, tipoId: tipo.id,
+  });
+  if (silla.error) return res.status(silla.estado).json({ error: silla.error });
+
   if (ofertaMiaPago && !(await consumirOferta(ofertaMiaPago.id))) {
     return res.status(409).json({
       error: 'Ese enlace de cupo ya se usó. Si acabas de empezar la compra, continúala desde el correo o desde «Mi boleta».',
@@ -265,6 +273,15 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
     if (ofertaMiaPago) await devolverOferta(ofertaMiaPago.id);
     return res.status(500).json({ error: e3.message });
   }
+  /* La silla pasa a vendida AL CREAR la boleta, no al confirmar el pago: la
+     boleta ya ocupa sitio en cuanto existe —así cuenta el aforo— y el viaje a
+     la pasarela puede durar más que la retención. */
+  if (!(await sillaDeLaCompra.confirmarDespues({ ...silla, ticketId: ticket.id }))) {
+    await supabase.from('tickets').delete().eq('id', ticket.id);
+    if (ofertaMiaPago) await devolverOferta(ofertaMiaPago.id);
+    return res.status(409).json({ error: sillaDeLaCompra.SE_PERDIO });
+  }
+
   const qr_token = signTicketQR({ ticket_id: ticket.id, evento_id: evento.id, codigo: ticket.codigo });
   await supabase.from('tickets').update({ qr_token }).eq('id', ticket.id);
 

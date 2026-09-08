@@ -32,6 +32,17 @@ const sinComentarios = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*--
 const SQL = leer('db/migrations/0117_la_silla_que_se_compra.sql');
 const PUB = leer('routes/eventos.publicos.js');
 const PANEL = leer('routes/espacios.js');
+const SILLA = leer('lib/sillaDeLaCompra.js');
+
+/* Los TRES caminos por los que se emite una boleta. Ninguno pasa por los
+   otros, y ésa es la trampa: la primera versión de esto sólo cubría el
+   primero — o sea que un concierto, que es de pago, habría emitido la boleta y
+   dejado la silla retenida hasta caducar. */
+const CAMINOS = [
+  ['routes/eventos.publicos.js', PUB],
+  ['routes/pagos.js', leer('routes/pagos.js')],
+  ['routes/wompi.js', leer('routes/wompi.js')],
+];
 
 /* ── 1 · La garantía ─────────────────────────────────────────────────── */
 
@@ -98,30 +109,79 @@ test('soltar una silla exige ser quien la tiene', () => {
 
 /* ── 2 · El ciclo de compra ──────────────────────────────────────────── */
 
-test('la silla se comprueba ANTES de emitir la boleta', () => {
+test('los TRES caminos de compra atan la silla', () => {
+  /* Gratis, Mercado Pago y Wompi. Si uno se queda fuera, por ahí entra la
+     doble venta que todo el módulo existe para impedir. */
+  for (const [nombre, src] of CAMINOS) {
+    const r = sinComentarios(src);
+    assert.match(r, /sillaDeLaCompra\.comprobarAntes\(/, `${nombre} no comprueba la silla`);
+    assert.match(r, /sillaDeLaCompra\.confirmarDespues\(/, `${nombre} no la ata a la boleta`);
+  }
+});
+
+test('y la comprueban ANTES de emitir', () => {
   /* Para que quien se quedó sin ella se entere cuando todavía puede elegir
      otra, y no después de pagar. */
-  const r = sinComentarios(PUB);
-  const iComprueba = r.indexOf("espacio_reservas");
-  const iEmite = r.indexOf("const codigo = generarCodigo()");
-  assert.ok(iComprueba > 0 && iEmite > 0 && iComprueba < iEmite,
-    'la silla se comprueba después de emitir');
+  for (const [nombre, src] of CAMINOS) {
+    const r = sinComentarios(src);
+    assert.ok(r.indexOf('comprobarAntes') < r.indexOf('confirmarDespues'),
+      `${nombre}: se ata la silla antes de comprobarla`);
+  }
+});
+
+test('la comprobación vive en UN sitio', () => {
+  /* Copiada en los tres, se separan: uno acabaría comprobando la localidad y
+     los otros no. */
+  assert.match(SILLA, /function comprobarAntes/);
+  for (const [nombre, src] of CAMINOS) {
+    assert.doesNotMatch(sinComentarios(src), /from\('espacio_reservas'\)[\s\S]{0,200}sesion_compra/,
+      `${nombre} tiene su propia copia de la comprobación`);
+  }
 });
 
 test('y si caduca entre la comprobación y el cobro, la boleta se deshace', () => {
   /* Pasan milisegundos, pero la retención puede caducar justo ahí. Una venta
-     sin sitio se descubre en la puerta, con la persona delante. */
-  const r = sinComentarios(PUB);
-  assert.match(r, /confirmar_espacio/);
-  assert.match(r, /from\('tickets'\)\.delete\(\)\.eq\('id', ticket\.id\)/);
-  /* Y se devuelve la oferta de cupo, si venía con una. */
-  assert.match(r, /if \(eConf \|\| !confirmada\)[\s\S]{0,300}devolverOferta/);
+     sin sitio se descubre en la puerta, con la persona delante. En los tres
+     caminos, y devolviendo la oferta de cupo si venía con una. */
+  for (const [nombre, src] of CAMINOS) {
+    const r = sinComentarios(src);
+    assert.match(r, /from\('tickets'\)\.delete\(\)\.eq\('id', ticket\.id\)/, `${nombre} no deshace la boleta`);
+    assert.match(r, /devolverOferta/, `${nombre} no devuelve la oferta de cupo`);
+    assert.match(r, /sillaDeLaCompra\.SE_PERDIO/, `${nombre} no dice qué pasó`);
+  }
+  assert.match(SILLA, /confirmar_espacio/);
+});
+
+test('anular una boleta devuelve su silla', () => {
+  /* La silla pasa a vendida AL CREAR la boleta —así cuenta el aforo, y el
+     viaje a la pasarela dura más que la retención—. La contrapartida es que
+     una compra abandonada la deja ocupada hasta que alguien anule. */
+  assert.match(SILLA, /function liberarPorTicket/);
+  assert.match(SILLA, /\.eq\('ticket_id', ticketId\)\.eq\('estado', 'vendido'\)/);
+});
+
+test('anular o reembolsar desde el panel la devuelve, con la MISMA regla que el aforo', () => {
+  /* Si un día cambia qué estados ocupan, la silla y el cupo tienen que cambiar
+     juntos o uno de los dos deja de cuadrar. Por eso va dentro del mismo
+     `delta < 0` y no con una condición propia. */
+  const c = leer('routes/clientes.js');
+  assert.match(c, /if \(delta < 0\) \{[\s\S]{0,500}sillaDeLaCompra\.liberarPorTicket\(ticketId\)/);
+  /* Y el reembolso por la pasarela, que es otro camino. */
+  assert.equal((c.match(/liberarPorTicket/g) || []).length, 2);
+});
+
+test('liberar la silla no puede tumbar una anulación', () => {
+  /* Si esto falla, la anulación de la boleta ya ocurrió. Hacerla fracasar por
+     la silla es cambiar un problema pequeño por uno grande. */
+  const fn = SILLA.slice(SILLA.indexOf('async function liberarPorTicket'));
+  assert.match(fn, /console\.error/);
+  assert.doesNotMatch(fn, /throw/);
 });
 
 test('la silla tiene que ser de la localidad que se compra', () => {
   /* Sin esto se paga una entrada de gradería y se guarda una silla de platea, y
      no falla nada: son dos tablas que nadie cruza. */
-  assert.match(sinComentarios(PUB), /ticket_type_espacios[\s\S]{0,200}loc\.ticket_type_id !== tipo\.id/);
+  assert.match(sinComentarios(SILLA), /ticket_type_espacios[\s\S]{0,300}loc\.ticket_type_id !== tipoId/);
 });
 
 test('el mapa público no dice de quién es cada silla', () => {

@@ -7,7 +7,12 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://ficticio.supabas
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'falsa';
 
 const { _test } = require('../routes/mcp.js');
-const { manejar, TOOLS_MCP, comoMCP } = _test;
+const { manejar, toolsDe, comoMCP } = _test;
+
+/* Lo que ve un token SIN alcances guardados: todas. Es el comportamiento de los
+   tokens que existían antes de que hubiera alcances, y el que estas pruebas
+   comprobaban cuando la lista era fija. */
+const TOOLS_MCP = toolsDe(null);
 
 /* Un conector MCP falla de la peor manera: Claude se conecta, no ve
    herramientas o recibe un esquema que no entiende, y no dice por qué. Estas

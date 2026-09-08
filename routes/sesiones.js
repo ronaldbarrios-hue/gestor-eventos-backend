@@ -35,6 +35,7 @@ const { assertPermiso } = require('../lib/acceso.js');
 const {
   validarFormulario, normalizarRespuestas,
   TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  MAX_CAMPOS_FORMULARIO,
 } = require('../lib/formularioCampos.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
@@ -450,10 +451,12 @@ panel.get('/:eventoId/sesiones/participacion', sesion("Panel del evento: la ruta
 
 const PERMS_EDITAR_FORM = ['gestionar_agenda', 'editar_evento'];
 
-/* Tope propio y más bajo que el del evento (60). Estas preguntas son "cortas y
-   sobre la actividad": si alguien necesita treinta, lo que quiere es el
-   formulario del evento, y para eso está el modo 'evento'. */
-const MAX_CAMPOS_SUBEVENTO = 12;
+/* El mismo tope que los demás. Tenía uno propio de 12, con esta justificación:
+   «si alguien necesita treinta, lo que quiere es el formulario del evento».
+   Puede ser cierto a veces y no es asunto nuestro decidirlo: un taller que pide
+   quince datos es un taller que pide quince datos, y mandarlo al formulario del
+   EVENTO se los pediría a todo el mundo, no sólo a quien va a ese taller. */
+const MAX_CAMPOS_SUBEVENTO = MAX_CAMPOS_FORMULARIO;
 
 async function sesionDelEvento(eventoId, sesionId) {
   const { data } = await supabase

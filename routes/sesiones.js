@@ -34,7 +34,8 @@ const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/
 const { assertPermiso } = require('../lib/acceso.js');
 const {
   validarFormulario, normalizarRespuestas,
-  TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  TIPOS_CAMPO, GRUPOS, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  MAX_CAMPOS_FORMULARIO,
 } = require('../lib/formularioCampos.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
@@ -450,10 +451,12 @@ panel.get('/:eventoId/sesiones/participacion', sesion("Panel del evento: la ruta
 
 const PERMS_EDITAR_FORM = ['gestionar_agenda', 'editar_evento'];
 
-/* Tope propio y más bajo que el del evento (60). Estas preguntas son "cortas y
-   sobre la actividad": si alguien necesita treinta, lo que quiere es el
-   formulario del evento, y para eso está el modo 'evento'. */
-const MAX_CAMPOS_SUBEVENTO = 12;
+/* El mismo tope que los demás. Tenía uno propio de 12, con esta justificación:
+   «si alguien necesita treinta, lo que quiere es el formulario del evento».
+   Puede ser cierto a veces y no es asunto nuestro decidirlo: un taller que pide
+   quince datos es un taller que pide quince datos, y mandarlo al formulario del
+   EVENTO se los pediría a todo el mundo, no sólo a quien va a ese taller. */
+const MAX_CAMPOS_SUBEVENTO = MAX_CAMPOS_FORMULARIO;
 
 async function sesionDelEvento(eventoId, sesionId) {
   const { data } = await supabase
@@ -485,6 +488,10 @@ panel.get('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: 
       /* El catálogo viaja con la respuesta, igual que en el formulario del
          evento: el panel no mantiene su propia copia. */
       tipos: TIPOS_CAMPO,
+      /* `grupos` como sugerencia, igual que en el formulario del evento. La
+         columna `grupo` es de `event_form_fields` desde la 0055, o sea que
+         estos formularios ya la guardaban — lo que faltaba era ofrecerla. */
+      grupos: GRUPOS,
       max_campos: MAX_CAMPOS_SUBEVENTO,
     });
   } catch (e) { fallo(res, e); }

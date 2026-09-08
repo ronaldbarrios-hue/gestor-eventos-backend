@@ -5,8 +5,9 @@ const { assertPermiso } = require('../lib/acceso.js');
 const { exige, sesion } = require('../core/permisos');
 const { validarCriterios, validarRondas, crearBaseCalificacion, poblarPrimeraRonda } = require('./torneoJurado.js');
 const {
-  TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  TIPOS_CAMPO, GRUPOS, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
   validarFormulario, normalizarRespuestas,
+  MAX_CAMPOS_FORMULARIO,
 } = require('../lib/formularioCampos.js');
 
 const router = express.Router();
@@ -905,9 +906,12 @@ router.get('/:eventoId/torneo/:torneoId/posiciones', sesion('Las llaves y la tab
  * —que ni siquiera se ven en esa pantalla—.
  */
 
-/* Un torneo pide menos que el registro del evento y más que un sub-evento: hay
-   que describir un equipo entero, no contestar cuatro cosas de una charla. */
-const MAX_CAMPOS_TORNEO = 20;
+/* El mismo tope que los demás formularios, y por eso se importa en vez de
+   escribirse aquí. Tenía uno propio de 20 con esta justificación: «un torneo
+   pide menos que el registro del evento y más que un sub-evento». Era una
+   suposición, y un formulario de 21 preguntas para una batalla de pitch la
+   desmintió — describir una startup pide más que comprar una entrada. */
+const MAX_CAMPOS_TORNEO = MAX_CAMPOS_FORMULARIO;
 
 const AVISO_0095 = 'Falta aplicar la migración 0095 para tener formulario propio por torneo.';
 const falta0095 = (error) => /torneo_id|column .* does not exist/i.test(String(error?.message || ''));
@@ -945,6 +949,10 @@ router.get('/:eventoId/torneo/:torneoId/formulario', exige(PERMS_TORNEO), async 
 
     res.json({
       torneo, campos: data || [], tipos: TIPOS_CAMPO,
+      /* `grupos` como sugerencia, igual que en el formulario del evento. La
+         columna `grupo` es de `event_form_fields` desde la 0055, o sea que
+         estos formularios ya la guardaban — lo que faltaba era ofrecerla. */
+      grupos: GRUPOS,
       max_campos: MAX_CAMPOS_TORNEO, listo: true,
     });
   } catch (e) {

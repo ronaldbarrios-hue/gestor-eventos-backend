@@ -15,7 +15,7 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
    tenían su propia copia recortada, y por eso `grupo`, `ayuda` y `buscable` se
    guardaban, se editaban en el panel… y no llegaban nunca a la página pública.
    El servidor es la autoridad, pero sólo si sirve lo que guarda. */
-const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO, COLUMNAS_CAMPO_CON_SENSIBLE } = require('../lib/formularioCampos.js');
+const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
 const { bucketDe, formatosDe, rutaNueva, MAX_BYTES } = require('../lib/archivoDeFormulario.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
@@ -478,15 +478,18 @@ router.post('/slug/:slug/archivo/destino', async (req, res) => {
     return res.status(404).json({ error: 'Este evento no existe o no está publicado.' });
   }
 
-  /* Con `sensible` y sin ella: mientras la 0115 no esté aplicada la columna no
-     existe, y sin este apaño el formulario entero se caería al elegir un
-     archivo. Sin la migración no hay campos sensibles —tampoco hay bucket
-     privado donde ponerlos—, así que todo va al público, que es lo de hoy. */
-  const pedir = (cols) => supabase
-    .from('event_form_fields').select(cols)
+  /* Aquí hubo un apaño que pedía la columna `sensible` y se caía a la lista
+     sin ella: la 0115 estaba escrita y sin aplicar, y sin ese apaño elegir un
+     archivo tiraba el formulario entero. La 0115 está aplicada, `sensible`
+     está en `COLUMNAS_CAMPO`, y el apaño sobra.
+
+     La pregunta puede ser del formulario del evento, de un sub-evento o de un
+     torneo: las tres viven en esta tabla y se distinguen por `session_id` y
+     `torneo_id`. Se filtra por `evento_id` y no por ninguna de las dos, que es
+     lo que hace que un adjunto funcione igual en los tres. */
+  const { data: campo } = await supabase
+    .from('event_form_fields').select(COLUMNAS_CAMPO)
     .eq('id', campoId).eq('evento_id', evento.id).maybeSingle();
-  let { data: campo, error } = await pedir(COLUMNAS_CAMPO_CON_SENSIBLE);
-  if (error) ({ data: campo } = await pedir(COLUMNAS_CAMPO));
 
   if (!campo) return res.status(404).json({ error: 'Esa pregunta no es de este evento.' });
   if (campo.tipo !== 'archivo' && campo.tipo !== 'foto') {

@@ -72,7 +72,7 @@ const toolsDe = (scopes) => alcance.herramientasPara(agente.TOOLS || [], scopes)
 
 /* ── Métodos ──────────────────────────────────────────────────────────── */
 
-async function manejar(peticion, ownerId, scopes = null) {
+async function manejar(peticion, ownerId, scopes = null, via = 'claude') {
   const { id = null, method, params = {} } = peticion || {};
 
   switch (method) {
@@ -112,7 +112,7 @@ async function manejar(peticion, ownerId, scopes = null) {
       /* `acciones` es el registro que lleva el panel; aquí se recoge y se
          descarta, pero el ejecutor lo exige. */
       const acciones = [];
-      const resultado = await agente.ejecutarTool(ownerId, nombre, args, acciones);
+      const resultado = await agente.ejecutarTool(ownerId, nombre, args, acciones, via);
 
       /* MCP distingue «la llamada falló» de «la herramienta devolvió un
          error»: lo segundo va con isError, para que el modelo pueda leer el
@@ -208,7 +208,10 @@ router.post('/mcp', autenticar, sesion('El servidor MCP se autentica con su prop
   try {
     const respuestas = [];
     for (const p of peticiones) {
-      const r = await manejar(p, req.apiOwner, req.mcpScopes);
+      /* `via` distingue en la auditoría lo que hizo Claude por OAuth de lo que hizo
+         con un token pegado a mano, y las dos de lo que se hizo en el panel. */
+      const r = await manejar(p, req.apiOwner, req.mcpScopes,
+        req.mcpVia === 'oauth' ? 'claude-oauth' : 'claude-token');
       if (r) respuestas.push(r);   // las notificaciones no responden
     }
     /* Un lote entero de notificaciones no lleva cuerpo: 202 y nada más. */

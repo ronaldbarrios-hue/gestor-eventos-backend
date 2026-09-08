@@ -51,11 +51,19 @@ create table if not exists public.espacios (
   -- Cuánta gente admite una unidad vendible. Una silla, 1. Una mesa de
   -- ringside, 4. Un palco, 8.
   --
-  -- OJO para quien siga esto: hoy una unidad vendible emite UNA boleta, y esa
-  -- boleta admite `capacidad` personas. El escáner de la puerta todavía cuenta
-  -- una entrada por boleta, así que un palco de 8 cuenta 1 en el aforo. Está
-  -- así a propósito para no tocar el check-in en la misma tanda, pero hay que
-  -- resolverlo antes de vender palcos en un recinto con aforo legal.
+  -- Una unidad vendible emite UNA boleta, y esa boleta admite `capacidad`
+  -- personas.
+  --
+  -- El AFORO ya lo cuenta bien: `lib/cuantasPersonas.js` hace que doce mesas de
+  -- cuatro sumen 48 al aforo del evento y 12 a `vendidos` del tipo de boleta,
+  -- que son dos números distintos a propósito —el cupo se agota por unidades,
+  -- el recinto se llena por personas—.
+  --
+  -- Lo que SIGUE pendiente es el escáner de la puerta: cuenta una entrada por
+  -- boleta, así que un palco de ocho marca una sola asistencia. No es un
+  -- problema de aforo (ése ya cuadra) sino de saber cuánta gente entró de
+  -- verdad, y de decidir si el QR se escanea una vez o una por persona. Esa
+  -- decisión es de producto, no de código.
   capacidad   int not null default 1 check (capacidad > 0),
   -- Dónde está dibujado. Sólo en las hojas que se pintan; un pabellón de feria
   -- no necesita coordenadas. { x, y, rot }

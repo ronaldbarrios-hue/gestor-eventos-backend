@@ -8,6 +8,7 @@ const express = require('express');
 const crypto  = require('crypto');
 const supabase = require('../lib/supabase.js');
 const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
+const { personasDeTicket } = require('../lib/cuantasPersonas.js');
 const { precioDeCompra } = require('../lib/precioTicket.js');
 const { enlaceBoleta } = require('../lib/enlacePublico.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
@@ -683,8 +684,10 @@ async function procesarPago(pago) {
     const { data: ev } = await supabase
       .from('eventos').select('aforo_vendido').eq('id', ticket.evento_id).single();
     if (ev) {
+      /* Personas, no boletas: una mesa de cuatro entra con una boleta. */
+      const personas = await personasDeTicket(ticket.id);
       await supabase.from('eventos')
-        .update({ aforo_vendido: (ev.aforo_vendido || 0) + 1 })
+        .update({ aforo_vendido: (ev.aforo_vendido || 0) + personas })
         .eq('id', ticket.evento_id);
     }
     const { data: tt } = await supabase
@@ -709,8 +712,14 @@ async function procesarPago(pago) {
       const { data: ev } = await supabase
         .from('eventos').select('aforo_vendido, slug, titulo').eq('id', ticketRefund.evento_id).single();
       if (ev && ev.aforo_vendido > 0) {
+        /* Se devuelven las MISMAS personas que se sumaron. Restar 1 de un palco
+           de ocho dejaría el aforo siete plazas por encima para siempre, y la
+           diferencia sólo se vería el día del evento contando cabezas.
+           Se mira antes de liberar la silla: después ya no habría capacidad que
+           consultar. */
+        const personas = await personasDeTicket(ticketRefund.id);
         await supabase.from('eventos')
-          .update({ aforo_vendido: ev.aforo_vendido - 1 })
+          .update({ aforo_vendido: Math.max(0, ev.aforo_vendido - personas) })
           .eq('id', ticketRefund.evento_id);
       }
       const { data: tipoCt } = await supabase

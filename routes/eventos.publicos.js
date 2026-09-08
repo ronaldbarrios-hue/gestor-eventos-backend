@@ -12,6 +12,7 @@ const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
 const espaciosLib = require('../lib/espacios.js');
 const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
+const { personasDeEspacio } = require('../lib/cuantasPersonas.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
 /* `COLUMNAS_CAMPO` y no una lista escrita a mano: las dos consultas de abajo
    tenían su propia copia recortada, y por eso `grupo`, `ayuda` y `buscable` se
@@ -1706,7 +1707,14 @@ router.post('/slug/:slug/reservar', async (req, res) => {
        infinito. */
     if (cotiz.promocion?.id) await consumirPromocion(cotiz.promocion.id);
 
-    await supabase.from('eventos').update({ aforo_vendido: (evento.aforo_vendido || 0) + 1 }).eq('id', evento.id);
+    /* El aforo cuenta PERSONAS, no boletas. Una mesa de ringside es una boleta
+       y cuatro personas; doce mesas vendidas dejaban `aforo_vendido: 12` con 48
+       personas entrando. En un recinto con aforo legal eso es creer que quedan
+       36 sitios que no existen. */
+    const personas = await personasDeEspacio(espacioId);
+    await supabase.from('eventos')
+      .update({ aforo_vendido: (evento.aforo_vendido || 0) + personas })
+      .eq('id', evento.id);
 
     enviarEmailEvento({
       evento,

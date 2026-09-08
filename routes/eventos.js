@@ -697,6 +697,51 @@ router.post('/:id/estado', sesion('Publicar o despublicar exige el permiso `publ
       if (data.modalidad !== 'fisico' && !data.url_virtual) {
         avisos.push('Es un evento en línea y no tiene enlace de conexión.');
       }
+
+      /* Y lo mismo para los sub-eventos.
+       *
+       * Estos avisos sólo miraban el evento. Un sub-evento también se puede
+       * publicar en un estado que no lleva a ninguna parte, y con la misma
+       * forma de fallar: no hay error, hay una actividad a la que nadie se
+       * puede apuntar.
+       *
+       * Los dos casos son de la base de hoy, no inventados. */
+      const { data: subs } = await supabase
+        .from('agenda_sessions')
+        .select('id, titulo, requiere_inscripcion, formulario_modo, ticket_type_id')
+        .eq('evento_id', req.params.id);
+
+      const conInscripcion = (subs || []).filter(s => s.requiere_inscripcion);
+
+      /* «Preguntas propias» y ninguna escrita: se comporta igual que
+         «no preguntar nada», y quien lo eligió cree que sí pregunta. */
+      const propios = conInscripcion.filter(s => s.formulario_modo === 'propio');
+      if (propios.length) {
+        const { data: conCampos } = await supabase
+          .from('event_form_fields')
+          .select('session_id')
+          .in('session_id', propios.map(s => s.id));
+        const tienen = new Set((conCampos || []).map(c => c.session_id));
+        for (const s of propios.filter(x => !tienen.has(x.id))) {
+          avisos.push(`«${s.titulo}» pide preguntas propias y no tiene ninguna: apuntarse será sólo un botón.`);
+        }
+      }
+
+      /* Atado a una boleta que está pausada: la actividad se ve y no se puede
+         entrar, y el motivo está en otra pantalla. */
+      const conBoleta = conInscripcion.filter(s => s.ticket_type_id);
+      if (conBoleta.length) {
+        const { data: tipos } = await supabase
+          .from('ticket_types').select('id, nombre, activo')
+          .in('id', conBoleta.map(s => s.ticket_type_id));
+        const porId = new Map((tipos || []).map(t => [t.id, t]));
+        for (const s of conBoleta) {
+          const t = porId.get(s.ticket_type_id);
+          if (t && t.activo === false) {
+            avisos.push(`«${s.titulo}» sólo admite la boleta «${t.nombre}», que está pausada: nadie podrá apuntarse.`);
+          }
+        }
+      }
     } catch (e) {
       /* Que no se pueda contar lo que falta no cambia que ya está publicado.
          Se apunta y se sigue: un aviso ausente es un aviso, no un error. */

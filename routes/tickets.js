@@ -85,7 +85,38 @@ router.get('/:eventoId/tickets', exige(PERMS_TICKETS), async (req, res) => {
       .order('orden', { ascending: true })
       .order('created_at', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ tickets: data || [] });
+
+    /* A qué actividad pertenece cada boleta.
+     *
+     * «Sería inteligente que en boletas salga la etiqueta si es boleta de
+     * entrada principal, y boletas para sub-eventos.» En la lista de FESTECH
+     * hay cuatro tipos —el registro general, el encuentro de mujeres, el
+     * DemoDay y la batalla de pitch— y se ven exactamente igual.
+     *
+     * No hace falta columna nueva: `agenda_sessions.ticket_type_id` existe
+     * desde la 0059 y ya la usa el registro para saber qué preguntas aplican.
+     * Se le da la vuelta y se cuenta quién apunta a cada tipo. Un tipo al que
+     * no apunta ninguna actividad es la entrada al evento; los demás son la
+     * puerta de una actividad concreta.
+     *
+     * Se deriva y no se guarda un `es_principal` a mano porque un campo así se
+     * queda viejo: alguien crea la actividad después, o la borra, y la etiqueta
+     * sigue diciendo lo de antes. */
+    const { data: sesiones } = await supabase
+      .from('agenda_sessions')
+      .select('id, titulo, ticket_type_id')
+      .eq('evento_id', eventoId)
+      .not('ticket_type_id', 'is', null);
+
+    const porTipo = new Map();
+    for (const s of sesiones || []) {
+      if (!porTipo.has(s.ticket_type_id)) porTipo.set(s.ticket_type_id, []);
+      porTipo.get(s.ticket_type_id).push({ id: s.id, titulo: s.titulo });
+    }
+
+    res.json({
+      tickets: (data || []).map(t => ({ ...t, sesiones: porTipo.get(t.id) || [] })),
+    });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

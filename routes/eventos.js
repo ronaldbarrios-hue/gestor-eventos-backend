@@ -690,6 +690,43 @@ router.post('/:id/estado', sesion('Publicar o despublicar exige el permiso `publ
       if (!count) {
         avisos.push('No hay tipos de boleta activos: nadie puede inscribirse desde la página.');
       }
+
+      /* Boletas de pago sin cuenta de cobro conectada.
+       *
+       * Las dos pasarelas lo rechazan antes de emitir nada —así que no se
+       * pierde ninguna venta a medias— pero quien compra se lleva «el
+       * organizador aún no conectó Mercado Pago» después de llenar el
+       * formulario entero. El organizador no se entera hasta que alguien se
+       * queja, y para entonces ya pasaron los primeros compradores.
+       *
+       * Se avisa aquí porque publicar es el momento en que todavía se puede
+       * arreglar sin que nadie lo haya visto. */
+      const { data: dePago } = await supabase
+        .from('ticket_types').select('id, precio')
+        .eq('evento_id', req.params.id).eq('activo', true).gt('precio', 0).limit(1);
+      if (dePago?.length) {
+        const { data: cobro } = await supabase
+          .from('profiles').select('mp_access_token, wompi_public_key')
+          .eq('id', data.owner_id).maybeSingle();
+        if (!cobro?.mp_access_token && !cobro?.wompi_public_key) {
+          avisos.push('Hay boletas de pago y no tienes cuenta de cobro conectada: nadie podrá pagar. Conecta Mercado Pago o Wompi en Comercial → Pagos.');
+        }
+      }
+
+      /* Un plano a medias. Una unidad vendible sin localidad no la puede
+         comprar nadie —el servidor no sabe qué cobrar— y el plano se ve lleno.
+         Es un fallo silencioso: la venta no falla, simplemente no ocurre. */
+      const { data: vendibles } = await supabase
+        .from('espacios').select('id').eq('evento_id', req.params.id).eq('modo', 'vendible');
+      if (vendibles?.length) {
+        const { data: conPrecio } = await supabase
+          .from('ticket_type_espacios').select('espacio_id')
+          .in('espacio_id', vendibles.map(e => e.id));
+        const sinPrecio = vendibles.length - new Set((conPrecio || []).map(x => x.espacio_id)).size;
+        if (sinPrecio > 0) {
+          avisos.push(`${sinPrecio} ${sinPrecio === 1 ? 'sitio del plano no tiene' : 'sitios del plano no tienen'} tipo de boleta asignado: se ven en el mapa y no se pueden comprar.`);
+        }
+      }
       if (!data.fecha_inicio) avisos.push('El evento no tiene fecha de inicio.');
       if (!data.location_nombre && data.modalidad !== 'virtual') {
         avisos.push('No hay lugar. Es de lo primero que preguntan.');

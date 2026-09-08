@@ -310,6 +310,15 @@ router.post('/eventos/publicos/slug/:slug/comprar', verifySupabaseJWTOptional, p
       pendingUrl       : `${publicBaseUrl()}/mi-ticket/${ticket.codigo}?pago=pendiente`,
     });
   } catch (e) {
+    /* La pasarela falló DESPUÉS de emitir la boleta y de atar la silla. Sin
+       deshacerlo, quien compra ve un error y se queda con una boleta sin pagar
+       y —peor— con una silla marcada como vendida para siempre: nadie más la
+       puede comprar y él no tiene nada.
+       Ocurre por lo tonto: la cuenta de cobro no está conectada. Un evento de
+       pago sin pasarela llega hasta aquí. */
+    await supabase.from('tickets').delete().eq('id', ticket.id);
+    await sillaDeLaCompra.liberarPorTicket(ticket.id);
+    if (ofertaMiaPago) await devolverOferta(ofertaMiaPago.id);
     return res.status(502).json({ error: `Mercado Pago rechazó la preferencia: ${e.message}` });
   }
   await supabase.from('payment_transactions').insert({

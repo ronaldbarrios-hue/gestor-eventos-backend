@@ -99,6 +99,20 @@ test('confirmar la venta sólo lo hace el servidor', () => {
   assert.ok(linea && !linea.includes('anon'), 'anon puede confirmar una venta sin pagar');
 });
 
+test('y se revoca POR NOMBRE, que es lo único que cierra la puerta', () => {
+  /* `revoke ... from public` quita el permiso del pseudo-rol PUBLIC. NO quita
+     el que Supabase concede a `anon` y `authenticated` por defecto sobre las
+     funciones nuevas del esquema `public`.
+
+     Comprobado contra la base tras aplicar la primera versión de esta
+     migración: `has_function_privilege('anon', 'confirmar_espacio', 'EXECUTE')`
+     devolvía **true**. Cualquiera con la llave pública podía marcar una silla
+     como vendida SIN PAGAR — justo lo que los `revoke ... from public` de
+     arriba pretendían impedir, y no impedían. */
+  assert.match(SQL, /revoke execute on function public\.confirmar_espacio\(uuid, text, uuid\) from anon, authenticated;/);
+  assert.match(SQL, /revoke execute on function public\.liberar_espacios_caducados\(\)\s+from anon, authenticated;/);
+});
+
 test('soltar una silla exige ser quien la tiene', () => {
   /* Sin comprobar la sesión, cualquiera con el id de un espacio libera la silla
      que otro está pagando. */

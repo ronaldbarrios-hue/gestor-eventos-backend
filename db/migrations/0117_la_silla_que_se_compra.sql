@@ -275,6 +275,26 @@ revoke all on function public.liberar_espacio(uuid, text) from public;
 revoke all on function public.confirmar_espacio(uuid, text, uuid) from public;
 revoke all on function public.liberar_espacios_caducados() from public;
 
+-- Y por NOMBRE, que es lo que de verdad cierra la puerta.
+--
+-- `revoke ... from public` quita el permiso del pseudo-rol PUBLIC. No quita el
+-- que Supabase concede a `anon` y `authenticated` por defecto sobre las
+-- funciones nuevas del esquema `public`: ésos son roles con nombre y hay que
+-- revocarlos uno a uno.
+--
+-- Comprobado contra la base después de aplicar la primera versión de esta
+-- migración: `has_function_privilege('anon', 'confirmar_espacio', 'EXECUTE')`
+-- devolvía **true**. O sea que cualquiera con la llave pública podía marcar una
+-- silla como vendida SIN PAGAR — que es exactamente lo que estas cuatro líneas
+-- de más abajo pretendían impedir.
+--
+-- Se comprueba, no se supone:
+--   select p.proname, has_function_privilege('anon', p.oid, 'EXECUTE')
+--     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--    where n.nspname='public' and p.proname like '%espacio%';
+revoke execute on function public.confirmar_espacio(uuid, text, uuid) from anon, authenticated;
+revoke execute on function public.liberar_espacios_caducados()        from anon, authenticated;
+
 grant execute on function public.retener_espacio(uuid, uuid, text, int) to anon, authenticated, service_role;
 grant execute on function public.liberar_espacio(uuid, text)            to anon, authenticated, service_role;
 grant execute on function public.confirmar_espacio(uuid, text, uuid)    to service_role;

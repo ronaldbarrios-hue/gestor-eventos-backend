@@ -100,6 +100,19 @@ test('contar lo que falta no puede tumbar una publicación autorizada', () => {
   assert.doesNotMatch(BLOQUE, /throw/);
 });
 
+test('un evento YA publicado también recibe sus avisos', () => {
+  /* Los avisos describen el ESTADO de hoy —«hay boletas de pago y ninguna
+     cuenta de cobro»— y no el acto de publicar. Un evento ya publicado con ese
+     problema lo tiene AHORA, y encima lleva tiempo teniéndolo.
+     Antes se salía con un `ok` limpio: preguntando por el concierto de prueba
+     contestó `ya_publicado: true` y nada más, con 124 boletas de pago y cero
+     pasarelas. */
+  const fn = AGENTE.slice(AGENTE.indexOf('async publicar_evento'));
+  const salida = fn.slice(0, fn.indexOf('const { data, error }'));
+  assert.match(salida, /ya_publicado: true/);
+  assert.match(salida, /avisos: await avisosDePublicacion/);
+});
+
 test('los DOS caminos de publicar avisan lo mismo', () => {
   /* El panel y la herramienta del agente. La segunda hace su propio `update`
      contra la base, así que no pasaba por los avisos: comprobado publicando un
@@ -109,7 +122,11 @@ test('los DOS caminos de publicar avisan lo mismo', () => {
   assert.match(RUTA, /avisosDePublicacion\(req\.params\.id, data\)/);
   assert.match(AGENTE, /avisosDePublicacion\(data\.id, data\)/);
   /* Y la herramienta los devuelve, no sólo los calcula. */
-  const fn = AGENTE.slice(AGENTE.indexOf('async publicar_evento'), AGENTE.indexOf('async publicar_evento') + 2200);
+  /* Hasta el final de la función, no una ventana de N caracteres: añadir cinco
+     líneas dentro la dejaba fuera del corte, y la prueba fallaba por cómo mide
+     y no por lo que mide. */
+  const desde = AGENTE.indexOf('async publicar_evento');
+  const fn = AGENTE.slice(desde, AGENTE.indexOf('\n  },', desde));
   assert.match(fn, /avisos,/);
   /* Con los campos que los avisos necesitan: sin `owner_id` no se puede mirar
      si hay cuenta de cobro. */

@@ -132,22 +132,33 @@ test('el destino lo decide el servidor, no el navegador', () => {
   assert.match(r, /campo\.tipo !== 'archivo' && campo\.tipo !== 'foto'/);
 });
 
-test('sin la 0115 el formulario no se cae', () => {
-  /* La columna no existe todavía y PostgREST contesta error. Sin migración no
-     hay campos sensibles —ni bucket donde ponerlos—, así que todo va al
-     público, que es lo de hoy. */
-  const r = sinComentarios(leer('routes/eventos.publicos.js'));
-  assert.match(r, /if \(error\) \(\{ data: campo \} = await pedir\(COLUMNAS_CAMPO\)\);/);
+test('`sensible` viaja en la lista de columnas de siempre', () => {
+  /* Estuvo en una segunda lista, `COLUMNAS_CAMPO_CON_SENSIBLE`, mientras la
+     0115 no estaba aplicada: esta se usa en 34 consultas y meterle una columna
+     que la base no tiene las rompe todas en el hueco entre desplegar y migrar.
+     La 0115 está aplicada y verificada, asi que la segunda lista ya no protege
+     de nada — solo deja dos nombres para lo mismo y un formulario que devuelve
+     `sensible` o no segun cual use quien escriba la consulta. */
+  const l = leer('lib/formularioCampos.js');
+  const linea = l.split(/\r?\n/).find(x => x.startsWith('const COLUMNAS_CAMPO ='));
+  assert.ok(linea && linea.includes('sensible'), 'COLUMNAS_CAMPO no trae `sensible`');
+  /* Sin comentarios: el nombre viejo sigue en la explicación de arriba a
+     propósito — cuenta por qué estuvo aparte y cuándo volvería a hacer falta
+     ese patrón. Lo que no puede quedar es la segunda lista de verdad. */
+  assert.doesNotMatch(sinComentarios(l), /COLUMNAS_CAMPO_CON_SENSIBLE/, 'quedan dos listas para lo mismo');
 });
 
-test('la columna nueva no entra en la lista que usan 34 consultas', () => {
-  /* Meterla ahí las rompe TODAS en el hueco entre desplegar y migrar, y no con
-     un error claro: con un formulario que deja de cargar en media plataforma. */
-  const l = leer('lib/formularioCampos.js');
-  const linea = l.split('\n').find(x => x.startsWith('const COLUMNAS_CAMPO ='));
-  assert.ok(linea && !linea.includes('sensible'),
-    'COLUMNAS_CAMPO lleva `sensible`: rompe todo hasta que la 0115 esté aplicada');
-  assert.match(l, /COLUMNAS_CAMPO_CON_SENSIBLE/);
+test('un adjunto funciona igual en el evento, en un sub-evento y en un torneo', () => {
+  /* Las preguntas de los tres viven en `event_form_fields` y se distinguen por
+     `session_id` y `torneo_id`. La ruta que autoriza la subida filtra por
+     `evento_id` y por ninguna de las dos: filtrar por `session_id is null`
+     dejaria los adjuntos de un taller sin destino, y sin error — con un
+     formulario que no deja adjuntar y nadie sabe por que. */
+  const r = sinComentarios(leer('routes/eventos.publicos.js'));
+  const i = r.indexOf("slug/:slug/archivo/destino");
+  const bloque = r.slice(i, i + 900);
+  assert.match(bloque, /\.eq\('evento_id', evento\.id\)/);
+  assert.doesNotMatch(bloque, /session_id|torneo_id/);
 });
 
 test('abrir un archivo privado pide permiso y deja rastro', () => {

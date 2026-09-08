@@ -5,7 +5,7 @@ const { assertPermiso } = require('../lib/acceso.js');
 const { exige, sesion } = require('../core/permisos');
 const { validarCriterios, validarRondas, crearBaseCalificacion, poblarPrimeraRonda } = require('./torneoJurado.js');
 const {
-  TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  TIPOS_CAMPO, GRUPOS, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
   validarFormulario, normalizarRespuestas,
   MAX_CAMPOS_FORMULARIO,
 } = require('../lib/formularioCampos.js');
@@ -949,6 +949,10 @@ router.get('/:eventoId/torneo/:torneoId/formulario', exige(PERMS_TORNEO), async 
 
     res.json({
       torneo, campos: data || [], tipos: TIPOS_CAMPO,
+      /* `grupos` como sugerencia, igual que en el formulario del evento. La
+         columna `grupo` es de `event_form_fields` desde la 0055, o sea que
+         estos formularios ya la guardaban — lo que faltaba era ofrecerla. */
+      grupos: GRUPOS,
       max_campos: MAX_CAMPOS_TORNEO, listo: true,
     });
   } catch (e) {

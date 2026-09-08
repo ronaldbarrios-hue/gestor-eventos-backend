@@ -34,7 +34,7 @@ const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/
 const { assertPermiso } = require('../lib/acceso.js');
 const {
   validarFormulario, normalizarRespuestas,
-  TIPOS_CAMPO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  TIPOS_CAMPO, GRUPOS, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
   MAX_CAMPOS_FORMULARIO,
 } = require('../lib/formularioCampos.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
@@ -488,6 +488,10 @@ panel.get('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: 
       /* El catálogo viaja con la respuesta, igual que en el formulario del
          evento: el panel no mantiene su propia copia. */
       tipos: TIPOS_CAMPO,
+      /* `grupos` como sugerencia, igual que en el formulario del evento. La
+         columna `grupo` es de `event_form_fields` desde la 0055, o sea que
+         estos formularios ya la guardaban — lo que faltaba era ofrecerla. */
+      grupos: GRUPOS,
       max_campos: MAX_CAMPOS_SUBEVENTO,
     });
   } catch (e) { fallo(res, e); }

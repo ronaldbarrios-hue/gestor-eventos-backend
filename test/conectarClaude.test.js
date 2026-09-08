@@ -108,7 +108,9 @@ test('los alcances del token llegan hasta la comprobación', () => {
      permisos que el servidor no aplica — que es peor que no tenerlos. */
   const r = sinComentarios(MCP);
   assert.match(r, /req\.mcpScopes = Array\.isArray\(tok\.scopes\)/);
-  assert.match(r, /manejar\(p, req\.apiOwner, req\.mcpScopes\)/);
+  /* La llamada se parte en dos líneas para pasar también el `via` que
+     distingue en la auditoría lo de OAuth de lo del token pegado a mano. */
+  assert.match(r.replace(/\s+/g, ' '), /manejar\(p, req\.apiOwner, req\.mcpScopes,/);
 });
 
 test('sólo hay UNA lista de lo que nunca sale', () => {

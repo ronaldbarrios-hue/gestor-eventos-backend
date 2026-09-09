@@ -7,6 +7,7 @@ const { ocupacion, zonasDelEvento, agendaPorZona } = require('../lib/aforoZonas.
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
+const { emitirPuestos, modoDelTipo } = require('../lib/emitirPuestos.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
@@ -1775,6 +1776,23 @@ router.post('/slug/:slug/reservar', async (req, res) => {
     await supabase.from('eventos')
       .update({ aforo_vendido: (evento.aforo_vendido || 0) + personas })
       .eq('id', evento.id);
+
+    /* Y sus puestos (0118), por lo mismo que el aforo: una mesa de cuatro tiene
+       que llegar a la puerta con cuatro sitios que marcar. Este camino no pasa
+       por `confirmarTicketPagado`, que es donde se crean en las boletas de
+       pago, así que si faltara aquí las mesas gratuitas —cortesías, palcos de
+       patrocinador— llegarían sin puestos y nadie se enteraría hasta esa noche.
+
+       El modo se pide con `modoDelTipo` y no se añade al select del tipo: sin
+       la 0118 aplicada, esa columna rompería el select ENTERO en mitad de una
+       compra. Así, como mucho se pierde el modo. */
+    if (personas > 1) {
+      await emitirPuestos({
+        ticket, eventoId: evento.id, personas,
+        modo: await modoDelTipo(tipo.id),
+        titular: { nombre: ticket.guest_nombre, email: ticket.guest_email },
+      });
+    }
 
     enviarEmailEvento({
       evento,

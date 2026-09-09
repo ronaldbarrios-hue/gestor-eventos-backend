@@ -21,7 +21,7 @@ const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
    tenían su propia copia recortada, y por eso `grupo`, `ayuda` y `buscable` se
    guardaban, se editaban en el panel… y no llegaban nunca a la página pública.
    El servidor es la autoridad, pero sólo si sirve lo que guarda. */
-const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO } = require('../lib/formularioCampos.js');
+const { validarFormulario, normalizarRespuestas, COLUMNAS_CAMPO, camposDelEvento } = require('../lib/formularioCampos.js');
 const { bucketDe, formatosDe, rutaNueva, MAX_BYTES } = require('../lib/archivoDeFormulario.js');
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
@@ -215,12 +215,7 @@ router.get('/ticket/:codigo', async (req, res) => {
   if (!data) return res.status(404).json({ error: 'Boleta no encontrada.' });
 
   if (data.evento?.id) {
-    const { data: campos } = await supabase
-      .from('event_form_fields')
-      .select(COLUMNAS_CAMPO)
-      .eq('evento_id', data.evento.id)
-      .order('orden', { ascending: true });
-    data.evento.campos_formulario = campos || [];
+    data.evento.campos_formulario = await camposDelEvento(data.evento.id);
 
     /* ── A qué actividades está inscrita esta boleta ──────────────────────
      *
@@ -394,10 +389,7 @@ router.post('/slug/:slug/prellenar', authLimiter, async (req, res) => {
   const cfgPadron = ev.padron ?? ev.page_json?.padron ?? null;
   const mapeo = cfgPadron?.mapeo && typeof cfgPadron.mapeo === 'object' ? cfgPadron.mapeo : null;
 
-  const { data: campos } = await supabase
-    .from('event_form_fields').select('id, etiqueta')
-    .eq('evento_id', ev.id).is('session_id', null).order('orden', { ascending: true });
-  const listaCampos = campos || [];
+  const listaCampos = await camposDelEvento(ev.id, { columnas: 'id, etiqueta' });
 
   const hash = hashDocumento(ev.id, doc);
   if (!hash) return res.json({ encontrado: false, respuestas: {}, faltan: listaCampos.map(c => ({ id: c.id, etiqueta: c.etiqueta })) });
@@ -435,10 +427,7 @@ router.post('/ticket/:codigo/formulario', async (req, res) => {
   /* COLUMNAS_CAMPO y no una lista recortada a mano: sin `visible_si` aquí,
      `validarFormulario` no puede saber que un campo estaba OCULTO por su
      condición, y lo exige igual — el mismo bug que en /reservar y /comprar. */
-  const { data: campos } = await supabase
-    .from('event_form_fields')
-    .select(COLUMNAS_CAMPO)
-    .eq('evento_id', ticket.evento_id);
+  const campos = await camposDelEvento(ticket.evento_id, { ordenar: false });
 
   /* Antes aquí solo se comprobaba que un obligatorio no llegara vacío: un campo
      de correo aceptaba "hola", uno de número aceptaba letras y una selección
@@ -705,6 +694,10 @@ router.post('/slug/:slug/archivo/destino', async (req, res) => {
      torneo: las tres viven en esta tabla y se distinguen por `session_id` y
      `torneo_id`. Se filtra por `evento_id` y no por ninguna de las dos, que es
      lo que hace que un adjunto funcione igual en los tres. */
+  /* SIN `is('session_id', null)`, a propósito y a diferencia de las demás: aquí
+     se busca UN campo por su id para recibir su adjunto, y un campo de la
+     inscripción a un taller también puede pedir un archivo. Filtrar aquí
+     rompería justo el caso que el comentario de arriba dice que se quería. */
   const { data: campo } = await supabase
     .from('event_form_fields').select(COLUMNAS_CAMPO)
     .eq('id', campoId).eq('evento_id', evento.id).maybeSingle();
@@ -878,12 +871,23 @@ router.get('/slug/:slug', async (req, res) => {
     .filter(t => t.activo)
     .sort((a, b) => (a.orden || 0) - (b.orden || 0));
 
-  const { data: camposForm } = await supabase
-    .from('event_form_fields')
-    .select(COLUMNAS_CAMPO)
-    .eq('evento_id', evento.id)
-    .order('orden', { ascending: true });
-  evento.campos_formulario = camposForm || [];
+  evento.campos_formulario = await camposDelEvento(evento.id);
+
+  /* ── ¿Hay padrón de ediciones anteriores? ────────────────────────────────
+   *
+   * El formulario público ofrecía SIEMPRE «¿Ya viniste a un evento nuestro?
+   * Escribe tu documento». En un evento sin padrón eso es pedirle la cédula a
+   * alguien para nada: la consulta no puede encontrar nada, y de paso es el
+   * dato más sensible del formulario pedido antes que el nombre.
+   *
+   * Se manda sólo si HAY, y con `head: true`: la cuenta exacta no importa —lo
+   * único que se decide con esto es si se enseña un campo— y traer las filas
+   * sería leer el padrón entero de un evento grande en cada visita. */
+  const { count: enPadron } = await supabase
+    .from('padron_previo')
+    .select('id', { count: 'exact', head: true })
+    .eq('evento_id', evento.id);
+  evento.tiene_padron = (enPadron || 0) > 0;
 
   /* Banderas para mostrar botones opcionales en la página pública, solo
      cuando el módulo correspondiente está realmente configurado. */
@@ -1456,6 +1460,9 @@ router.get('/slug/:slug/agenda', async (req, res) => {
   const conPropio = lista.filter(s => s.formulario_modo === 'propio').map(s => s.id);
   const preguntas = {};
   if (conPropio.length) {
+    /* Ésta va a buscar precisamente lo contrario que `camposDelEvento`: las
+       preguntas DE las sesiones. `in('session_id', …)` ya excluye las del
+       evento, así que no hay filtro que añadir. */
     const { data: campos } = await supabase
       .from('event_form_fields')
       .select('id, session_id, etiqueta, requerido, tipo, opciones, ayuda, orden')
@@ -1711,9 +1718,7 @@ router.post('/slug/:slug/reservar', async (req, res) => {
      `validarFormulario` no tiene forma de saber que un campo estaba OCULTO
      por su condición, y lo exige igual — el campo pide una respuesta que la
      persona nunca llegó a ver en el formulario. */
-  const { data: camposReq } = await supabase
-    .from('event_form_fields')
-    .select(COLUMNAS_CAMPO).eq('evento_id', evento.id);
+  const camposReq = await camposDelEvento(evento.id, { ordenar: false });
   const respuestas = req.body.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
 
   /* validarFormulario ya salta los campos de otro tipo de boleta: un

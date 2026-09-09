@@ -38,6 +38,7 @@ const {
 const { authLimiter } = require('../config/security.js');
 const { hashDocumento, emparejar } = require('../lib/padronPrevio.js');
 const { conZonas } = require('../lib/zonasTabla.js');
+const miRegistro = require('../lib/miRegistroAnterior.js');
 const { generarCodigo } = require('../lib/codigos.js');
 
 function clientIp(req) {
@@ -421,28 +422,38 @@ router.post('/slug/:slug/prellenar', authLimiter, async (req, res) => {
   res.json({ encontrado: Object.keys(respuestas).length > 0, respuestas, faltan });
 });
 
-/* POST /eventos/publicos/slug/:slug/prellenar-boleta  { codigo }
+/* POST /eventos/publicos/slug/:slug/prellenar-boleta
+ *     { codigo }  ó  { documento, email }
  *
- * Traer los datos con el CÓDIGO DE UNA BOLETA, en vez de con la cédula.
+ * Traer los datos de un registro anterior, de la base de registrados del
+ * evento — no del Excel que subió el organizador.
  *
- * ── Por qué es mejor que el padrón ───────────────────────────────────────
+ * ── Por qué la base de registrados y no el padrón ────────────────────────
  *
- * El prellenado por documento sólo funciona si el organizador subió un padrón,
- * y le pide a alguien su número de cédula antes de que haya escrito su nombre.
- * El código, en cambio, lo tiene la persona en su correo: es suyo, se pega, y
- * no hace falta que nadie haya subido nada.
+ * El padrón es una lista que el organizador sube a mano, y está desactualizada
+ * desde el momento en que alguien se registra. Quien ya se inscribió está en
+ * `tickets`, con sus respuestas tal como las escribió: ése es el dato bueno, y
+ * además existe sin que nadie tenga que subir nada.
  *
  * Y resuelve el caso que de verdad duele: un evento con varias boletas
  * —la entrada general y tres actividades— donde quien ya se registró tiene que
  * volver a teclear diez preguntas para inscribirse a la siguiente.
  *
- * ── Y por qué el código solo es suficiente ───────────────────────────────
+ * ── El código basta solo; el documento NO ────────────────────────────────
  *
- * Porque no abre ninguna puerta nueva: `/eventos/publicos/ticket/:codigo` ya
- * devuelve HOY las `respuestas` de esa boleta a quien tenga el código. Pedir
- * aquí además el correo sería más estricto que la puerta de al lado, y dejaría
- * fuera un caso legítimo —quien se registra esta vez con otro correo— sin
- * cerrar nada que no esté ya abierto.
+ * El código es una llave larga y aleatoria, y no abre ninguna puerta nueva:
+ * `/eventos/publicos/ticket/:codigo` ya devuelve HOY las `respuestas` de esa
+ * boleta a quien lo tenga.
+ *
+ * Una cédula no es eso. No es un secreto —está impresa, se fotocopia, se deja
+ * en porterías— y al otro lado están las respuestas del formulario, que en una
+ * ficha de caracterización incluyen fecha de nacimiento, comuna, identidad de
+ * género, autorreconocimiento étnico, situación de víctima y discapacidad: lo
+ * que la Ley 1581 llama datos sensibles.
+ *
+ * Con el documento suelto esto sería un buscador de personas. Por eso va
+ * SIEMPRE con el correo: las dos cosas las tiene quien es dueño de los datos, y
+ * ninguna de las dos sola abre nada.
  *
  * Lo que sí se acota:
  *
@@ -471,28 +482,46 @@ router.post('/slug/:slug/prellenar-boleta', authLimiter, async (req, res) => {
     faltan: campos.map(c => ({ id: c.id, etiqueta: c.etiqueta })),
   });
 
-  /* Un código corto es un tanteo, y contestar a algo que no puede existir gasta
-     base por nada. */
-  if (codigo.length < 4) return nada();
+  /* Se busca la boleta anterior por una de las dos llaves. Una sola ruta y una
+     sola respuesta para las dos: separadas, una acabaría devolviendo un campo
+     que la otra no, y la pantalla tendría que saber cuál preguntó. */
+  let boleta = null;
+  let deEvento = ev.id;
 
-  const { data: boleta } = await supabase
-    .from('tickets')
-    .select('respuestas, guest_nombre, guest_email, evento:eventos!evento_id(id, owner_id)')
-    .eq('codigo', codigo).maybeSingle();
+  if (codigo) {
+    /* Un código corto es un tanteo, y contestar a algo que no puede existir
+       gasta base por nada. */
+    if (codigo.length < 4) return nada();
 
-  /* Del mismo organizador o nada. Sin esta comprobación, un código de otra
-     empresa traería aquí los datos de una persona que no tiene nada que ver
-     con este evento. */
-  if (!boleta || boleta.evento?.owner_id !== ev.owner_id) return nada();
+    const { data } = await supabase
+      .from('tickets')
+      .select('respuestas, guest_nombre, guest_email, evento:eventos!evento_id(id, owner_id)')
+      .eq('codigo', codigo).maybeSingle();
 
-  /* Las respuestas se cruzan POR ETIQUETA y no por id de campo: la boleta
-     puede ser de otra edición, donde «Ciudad de residencia» era otra pregunta
-     con otro id. Es el mismo cruce que ya usan la inscripción a un sub-evento
-     y la ficha del expositor. */
-  const sabido = porEtiqueta(
-    await camposDelEvento(boleta.evento.id),
-    boleta.respuestas || {},
-  );
+    /* Del mismo organizador o nada. Sin esta comprobación, un código de otra
+       empresa traería aquí los datos de una persona que no tiene nada que ver
+       con este evento. */
+    if (!data || data.evento?.owner_id !== ev.owner_id) return nada();
+    boleta = data;
+    deEvento = data.evento.id;
+  } else {
+    /* Documento MÁS correo, nunca el documento solo. Una cédula no es un
+       secreto —está impresa, se fotocopia, se deja en porterías— y al otro lado
+       están las respuestas del formulario, que en una ficha de caracterización
+       incluyen datos sensibles. Con el documento suelto esto sería un buscador
+       de personas. */
+    boleta = await miRegistro.porDocumentoYCorreo({
+      eventoId: ev.id, campos,
+      documento: req.body?.documento, email: req.body?.email,
+    });
+    if (!boleta) return nada();
+  }
+
+  /* Las respuestas se cruzan POR ETIQUETA y no por id de campo: la boleta puede
+     ser de otra edición, donde «Ciudad de residencia» era otra pregunta con
+     otro id. Es el mismo cruce que ya usan la inscripción a un sub-evento y la
+     ficha del expositor. */
+  const sabido = porEtiqueta(await camposDelEvento(deEvento), boleta.respuestas || {});
   const respuestas = prellenar({ camposDestino: campos, sabido, yaEscrito: {} });
 
   res.json({
@@ -508,8 +537,6 @@ router.post('/slug/:slug/prellenar-boleta', authLimiter, async (req, res) => {
   });
 });
 
-/* POST /eventos/publicos/ticket/:codigo/formulario — completa las respuestas
-   del formulario personalizado de UNA boleta ya existente. */
 router.post('/ticket/:codigo/formulario', async (req, res) => {
   const codigo = req.params.codigo.toUpperCase().trim();
   const respuestas = req.body?.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};

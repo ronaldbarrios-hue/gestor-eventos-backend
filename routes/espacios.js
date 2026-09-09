@@ -24,6 +24,7 @@ const {
   armarArbol, MAX_POR_LOTE,
 } = require('../lib/espacios.js');
 const geometria = require('../lib/geometriaDelPlano.js');
+const recinto = require('../lib/recintoDeConcierto.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -183,6 +184,47 @@ router.post('/:eventoId/espacios/generar', exige(PERMS), async (req, res) => {
     auditar(req, eventoId, 'espacio.generar', {
       entidad: 'espacio', entidadId: parent_id,
       detalle: { dentro_de: padre.nombre, cuantas: filas.length },
+    });
+    res.status(201).json({ creados: data?.length || 0 });
+  } catch (e) { fallo(res, e); }
+});
+
+/* ── POST /eventos/:eventoId/espacios/plantilla — el recinto de concierto ─
+ *
+ * Nadie empieza bien delante de un lienzo vacío. Esto deja la tarima, la
+ * general y los anillos de tribunas ya colocados, con la numeración de un
+ * recinto real —101, 102… 201, 202…— para después calcar encima el plano de
+ * verdad y mover lo que haga falta.
+ *
+ * NO es el recinto: es por dónde se empieza.
+ */
+router.post('/:eventoId/espacios/plantilla', exige(PERMS), async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await puedo(eventoId, req.user.id);
+
+    /* Sobre un plano que ya tiene cosas, no. La plantilla no sabe qué hay
+       puesto, así que soltaría treinta bloques encima de lo que alguien montó
+       —o peor, encima de sillas ya vendidas— y deshacerlo sería borrarlos uno
+       a uno. Se dice qué pasa en vez de dejar el plano hecho un desastre. */
+    const { count } = await supabase
+      .from('espacios').select('id', { count: 'exact', head: true }).eq('evento_id', eventoId);
+    if (count) {
+      return res.status(409).json({
+        error: 'Este evento ya tiene plano. La plantilla es para empezar de cero.',
+      });
+    }
+
+    const { espacios, error: malo } = recinto.plantillaDeConcierto(req.body || {});
+    if (malo) return res.status(400).json({ error: malo });
+
+    const { data, error } = await supabase
+      .from('espacios').insert(espacios.map(e => filaEspacio(e, eventoId))).select('id');
+    if (error) return res.status(500).json({ error: error.message });
+
+    auditar(req, eventoId, 'espacio.plantilla', {
+      entidad: 'espacio',
+      detalle: { creados: data?.length || 0, abertura: req.body?.abertura, anillos: req.body?.anillos },
     });
     res.status(201).json({ creados: data?.length || 0 });
   } catch (e) { fallo(res, e); }

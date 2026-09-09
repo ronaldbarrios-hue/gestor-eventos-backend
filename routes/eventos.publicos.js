@@ -10,6 +10,7 @@ const { signTicketQR } = require('../lib/qr.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
+const verificarBoleta = require('../lib/verificarBoleta.js');
 const espaciosLib = require('../lib/espacios.js');
 const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
 const { personasDeEspacio } = require('../lib/cuantasPersonas.js');
@@ -117,6 +118,65 @@ router.get('/', async (req, res) => {
      por defecto. El organizador la configura en Asistentes → Tarjeta, la
      previsualiza, la guarda… y el asistente nunca veía su marca ni su logo,
      ni en pantalla ni en la versión impresa. */
+/* GET /eventos/publicos/verificar/:codigo — «¿esta boleta es real?»
+ *
+ * Para quien está a punto de COMPRARLE una entrada a otra persona. La reventa
+ * ocurre fuera de GESTEK —el dinero no pasa por aquí— y lo único que la
+ * plataforma asegura es que la boleta existe, es de este evento, es de este
+ * sitio, no se ha usado y no está anulada.
+ *
+ * ── Es una superficie distinta de `/ticket/:codigo`, y a propósito ─────
+ *
+ * En GESTEK el código de la boleta ES la credencial: `/ticket/:codigo` devuelve
+ * la entrada entera con su `qr_token`. Mandar aquí a quien va a comprar sería
+ * regalarle la boleta: confirmaría que es real quedándose con ella.
+ *
+ * Ésta dice lo justo para confiar y nada que sirva para entrar. Ver
+ * `lib/verificarBoleta.js` para qué se omite y por qué.
+ *
+ * Lleva `authLimiter` porque contesta sobre la existencia de un código: sin
+ * límite, probar códigos hasta dar con uno bueno es cuestión de tiempo.
+ */
+router.get('/verificar/:codigo', authLimiter, async (req, res) => {
+  const codigo = String(req.params.codigo || '').trim().toUpperCase().replace(/\s+/g, '');
+  /* Un código corto no se busca: es un tanteo, y contestar «no existe» a algo
+     que no puede existir gasta base por nada. */
+  if (codigo.length < 4) return res.json(verificarBoleta.respuestaPublica({ ticket: null }));
+
+  const { data: ticket, error } = await supabase
+    .from('tickets')
+    /* `id` se pide para poder buscar su sitio, y NO se devuelve: ver
+       `respuestaPublica`. Es una llave más y no hace falta para confiar. */
+    .select(`id, codigo, estado, guest_nombre, ticket_type_id,
+             tipo:ticket_types!ticket_type_id(nombre, precio),
+             evento:eventos!evento_id(titulo, fecha_inicio, location_nombre, estado, deleted_at)`)
+    .eq('codigo', codigo).maybeSingle();
+  /* El error se mira: sin esto, una consulta fallida diría «no encontramos esta
+     boleta» sobre una entrada perfectamente válida, y quien está comprando se
+     echaría atrás por un fallo nuestro. */
+  if (error) return res.status(500).json({ error: 'No pudimos comprobarla ahora. Intenta de nuevo.' });
+
+  /* Un evento borrado se trata como si la boleta no existiera: enseñar el
+     título de algo que ya no está sólo confunde. */
+  if (!ticket || ticket.evento?.deleted_at) {
+    return res.json(verificarBoleta.respuestaPublica({ ticket: null }));
+  }
+
+  /* El sitio, si el evento vende por plano. Es la mitad de lo que se compra en
+     un concierto y lo que hay que poder cotejar con lo que dijo el vendedor. */
+  let espacio = null;
+  const { data: reserva } = await supabase
+    .from('espacio_reservas')
+    .select('espacio:espacios!espacio_id(nombre)')
+    .eq('ticket_id', ticket.id).eq('estado', 'vendido').maybeSingle();
+  if (reserva?.espacio) espacio = reserva.espacio;
+
+  res.json(verificarBoleta.respuestaPublica({
+    ticket, evento: ticket.evento, tipo: ticket.tipo, espacio,
+    esGratis: Number(ticket.tipo?.precio || 0) === 0,
+  }));
+});
+
 router.get('/ticket/:codigo', async (req, res) => {
   const codigo = req.params.codigo.toUpperCase().trim();
   if (!codigo || codigo.length < 4) return res.status(400).json({ error: 'Código inválido.' });

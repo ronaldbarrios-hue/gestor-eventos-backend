@@ -9,6 +9,7 @@ const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { emitirPuestos, modoDelTipo } = require('../lib/emitirPuestos.js');
 const geometria = require('../lib/geometriaDelPlano.js');
+const rolDeBoleta = require('../lib/rolDeBoleta.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
@@ -26,7 +27,7 @@ const { bucketDe, formatosDe, rutaNueva, MAX_BYTES } = require('../lib/archivoDe
 const { avisarExpositorSiAplica } = require('../lib/avisoExpositor.js');
 const { validarOferta, consumirOferta, devolverOferta, hayCupoLibre } = require('../lib/waitlistOferta.js');
 const { ESTADOS_EN_AGENDA, armarAgenda, resumenDeAgenda } = require('../lib/agendaDeMesa.js');
-const { prellenarFicha } = require('../lib/heredarRespuestas.js');
+const { prellenarFicha, porEtiqueta, prellenar } = require('../lib/heredarRespuestas.js');
 const { loQueYaContesto } = require('../lib/loQueYaContesto.js');
 const { limpiarOrigen } = require('../lib/origenDeRegistro.js');
 const { conSitio } = require('../lib/eventoSitio.js');
@@ -202,13 +203,24 @@ router.get('/ticket/:codigo', async (req, res) => {
                                modalidad, url_virtual, timezone)
     `;
 
-  let { data, error } = await supabase
-    .from('tickets').select(COLS(', crea')).eq('codigo', codigo).maybeSingle();
-
-  if (error && /crea/i.test(error.message || '')) {
-    console.error(`[ticket] sin \`crea\` (¿falta la 0093?): ${error.message}`);
+  /* Las columnas de más, de la más completa a la más vieja.
+   *
+   * Esto era un `if` con un reintento para `crea`. Al añadir `instrucciones`
+   * (0121) haría falta otro `if` anidado, y al siguiente otro: tres escaleras
+   * de `if` para lo mismo es como se acaba con una rama que nadie prueba.
+   *
+   * En lista, añadir una columna nueva es poner una línea arriba. Y el último
+   * intento no lleva ninguna, así que una base sin ninguna de las dos sigue
+   * enseñando la boleta — que es lo único que no puede fallar aquí: ésta es la
+   * página que alguien abre en la puerta del evento. */
+  const EXTRAS = [', crea, instrucciones', ', crea', ''];
+  let data = null;
+  let error = null;
+  for (const extra of EXTRAS) {
     ({ data, error } = await supabase
-      .from('tickets').select(COLS('')).eq('codigo', codigo).maybeSingle());
+      .from('tickets').select(COLS(extra)).eq('codigo', codigo).maybeSingle());
+    if (!error) break;
+    console.error(`[ticket] sin \`${extra.trim() || 'columnas de más'}\`: ${error.message}`);
   }
 
   if (error) return res.status(500).json({ error: error.message });
@@ -407,6 +419,93 @@ router.post('/slug/:slug/prellenar', authLimiter, async (req, res) => {
 
   const { respuestas, faltan } = emparejar(fila.datos, listaCampos, mapeo);
   res.json({ encontrado: Object.keys(respuestas).length > 0, respuestas, faltan });
+});
+
+/* POST /eventos/publicos/slug/:slug/prellenar-boleta  { codigo }
+ *
+ * Traer los datos con el CÓDIGO DE UNA BOLETA, en vez de con la cédula.
+ *
+ * ── Por qué es mejor que el padrón ───────────────────────────────────────
+ *
+ * El prellenado por documento sólo funciona si el organizador subió un padrón,
+ * y le pide a alguien su número de cédula antes de que haya escrito su nombre.
+ * El código, en cambio, lo tiene la persona en su correo: es suyo, se pega, y
+ * no hace falta que nadie haya subido nada.
+ *
+ * Y resuelve el caso que de verdad duele: un evento con varias boletas
+ * —la entrada general y tres actividades— donde quien ya se registró tiene que
+ * volver a teclear diez preguntas para inscribirse a la siguiente.
+ *
+ * ── Y por qué el código solo es suficiente ───────────────────────────────
+ *
+ * Porque no abre ninguna puerta nueva: `/eventos/publicos/ticket/:codigo` ya
+ * devuelve HOY las `respuestas` de esa boleta a quien tenga el código. Pedir
+ * aquí además el correo sería más estricto que la puerta de al lado, y dejaría
+ * fuera un caso legítimo —quien se registra esta vez con otro correo— sin
+ * cerrar nada que no esté ya abierto.
+ *
+ * Lo que sí se acota:
+ *
+ *   · Sólo boletas del MISMO ORGANIZADOR. Un código de otra empresa no
+ *     prellena aquí, aunque exista.
+ *   · Sólo las respuestas a las preguntas que ESTE formulario hace, cruzadas
+ *     por etiqueta. Lo que se supiera de más no sale nunca.
+ *   · `authLimiter`, porque contesta sobre la existencia de un código y probar
+ *     códigos es barato.
+ *   · Por POST: un código en la query string queda escrito en los logs del
+ *     servidor y en el historial del navegador.
+ *   · Y no distingue «no existe» de «es de otro organizador»: distinguirlas es
+ *     justo lo que haría útil ir probando.
+ */
+router.post('/slug/:slug/prellenar-boleta', authLimiter, async (req, res) => {
+  const codigo = String(req.body?.codigo || '').trim().toUpperCase().replace(/\s+/g, '');
+
+  const { data: ev } = await supabase
+    .from('eventos').select('id, owner_id').eq('slug', req.params.slug).maybeSingle();
+  if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
+
+  const campos = await camposDelEvento(ev.id);
+  const nada = () => res.json({
+    encontrado: false,
+    respuestas: {},
+    faltan: campos.map(c => ({ id: c.id, etiqueta: c.etiqueta })),
+  });
+
+  /* Un código corto es un tanteo, y contestar a algo que no puede existir gasta
+     base por nada. */
+  if (codigo.length < 4) return nada();
+
+  const { data: boleta } = await supabase
+    .from('tickets')
+    .select('respuestas, guest_nombre, guest_email, evento:eventos!evento_id(id, owner_id)')
+    .eq('codigo', codigo).maybeSingle();
+
+  /* Del mismo organizador o nada. Sin esta comprobación, un código de otra
+     empresa traería aquí los datos de una persona que no tiene nada que ver
+     con este evento. */
+  if (!boleta || boleta.evento?.owner_id !== ev.owner_id) return nada();
+
+  /* Las respuestas se cruzan POR ETIQUETA y no por id de campo: la boleta
+     puede ser de otra edición, donde «Ciudad de residencia» era otra pregunta
+     con otro id. Es el mismo cruce que ya usan la inscripción a un sub-evento
+     y la ficha del expositor. */
+  const sabido = porEtiqueta(
+    await camposDelEvento(boleta.evento.id),
+    boleta.respuestas || {},
+  );
+  const respuestas = prellenar({ camposDestino: campos, sabido, yaEscrito: {} });
+
+  res.json({
+    encontrado: Object.keys(respuestas).length > 0 || Boolean(boleta.guest_nombre),
+    respuestas,
+    /* Nombre y correo se devuelven aparte porque no son preguntas del
+       organizador: son lo que la plataforma necesita para emitir la boleta. */
+    nombre: boleta.guest_nombre || null,
+    email: boleta.guest_email || null,
+    faltan: campos
+      .filter(c => respuestas[c.id] === undefined)
+      .map(c => ({ id: c.id, etiqueta: c.etiqueta })),
+  });
 });
 
 /* POST /eventos/publicos/ticket/:codigo/formulario — completa las respuestas
@@ -870,6 +969,38 @@ router.get('/slug/:slug', async (req, res) => {
   evento.ticket_types = (evento.ticket_types || [])
     .filter(t => t.activo)
     .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+
+  /* Qué ES cada boleta: la entrada al evento, una actividad de dentro, o un
+     complemento. Sin esto la lista sale plana y quien compra elige a ojo.
+   *
+   * Va en su PROPIA consulta y con reintento, no dentro del select de arriba:
+   * `rol` es de la 0121 y `crea` de la 0093, y pedir una columna que un
+   * despliegue no tenga rompería el select ENTERO — o sea, la página pública
+   * del evento se quedaría sin boletas. Es la misma trampa que ya costó una
+   * vez con `modo_entrada`, y aquí el precio sería la página entera.
+   *
+   * Sin ninguna de las dos, la lista se pinta como hasta ahora. */
+  if (evento.ticket_types.length) {
+    const ids = evento.ticket_types.map(t => t.id);
+    const papeles = await (async () => {
+      const conRol = await supabase.from('ticket_types').select('id, crea, rol, instrucciones').in('id', ids);
+      if (!conRol.error) return conRol.data;
+      const soloCrea = await supabase.from('ticket_types').select('id, crea').in('id', ids);
+      return soloCrea.error ? [] : soloCrea.data;
+    })();
+    const porId = new Map((papeles || []).map(p => [p.id, p]));
+    evento.ticket_types = evento.ticket_types.map(t => ({
+      ...t,
+      rol: rolDeBoleta.rolValido(porId.get(t.id)?.rol),
+      /* Lo que la boleta trae, dicho con lo que la base ya sabía: una que crea
+         un equipo es una postulación, una que crea un stand trae un stand. */
+      trae: rolDeBoleta.queTrae(porId.get(t.id)?.crea),
+      /* Qué tiene que hacer quien compre ESTA boleta: un paso adicional, un
+         lugar donde presentarse. El evento ya tenía un mensaje de confirmación,
+         pero es uno para todo: con actividades, cada una tiene el suyo. */
+      instrucciones: porId.get(t.id)?.instrucciones || null,
+    }));
+  }
 
   evento.campos_formulario = await camposDelEvento(evento.id);
 

@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
   "censado_el": "2026-09-09",
-  "total": 347,
+  "total": 348,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -192,6 +192,10 @@
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
     "POST /eventos/publicos/slug/:slug/prellenar": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "POST /eventos/publicos/slug/:slug/prellenar-boleta": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },

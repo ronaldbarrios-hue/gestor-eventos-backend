@@ -43,9 +43,19 @@ const CAMPOS_EDITABLES = [
      porque el panel viejo, mientras no se despliegue el nuevo, es quien la
      escribe —y un trigger mantiene las dos de acuerdo. */
   'crea', 'crea_torneo_id',
+  /* 0121: qué papel juega en la lista de compra —la entrada al evento, una
+     actividad de dentro, o un complemento—. Es sólo presentación: no cambia
+     qué se emite, ni el precio, ni el cupo. */
+  'rol',
+  /* 0121: qué tiene que hacer quien compre ESTA boleta. El evento ya tenía un
+     mensaje de confirmación, pero es uno para todo; con actividades, cada una
+     tiene el suyo. */
+  'instrucciones',
 ];
 
 const CREA_VALIDO = ['nada', 'stand', 'equipo'];
+/* Del catálogo y no escrito a mano: dos listas de lo mismo se separan. */
+const ROL_VALIDO = Object.keys(require('../lib/rolDeBoleta.js').ROLES);
 
 function sanitize(body, defaults = {}) {
   const out = { ...defaults };
@@ -69,6 +79,19 @@ function sanitize(body, defaults = {}) {
   }
   if (out.crea === 'equipo' && !out.crea_torneo_id) {
     throw new Error('Elige a qué torneo entra el equipo.');
+  }
+
+  /* Un rol inventado se rechaza aquí y no en la base: el texto de un `check
+     constraint` no le dice nada a quien está mirando el panel. */
+  /* Un texto vacío se guarda como `null` y no como cadena vacía: así «no hay
+     instrucciones» es una sola cosa y no dos que se comprueban distinto. */
+  if ('instrucciones' in out) {
+    const t = String(out.instrucciones || '').trim();
+    out.instrucciones = t ? t.slice(0, 1000) : null;
+  }
+
+  if ('rol' in out && !ROL_VALIDO.includes(out.rol)) {
+    throw new Error(`El papel de la boleta sólo puede ser: ${ROL_VALIDO.join(', ')}.`);
   }
   return out;
 }

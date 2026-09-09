@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
-  "censado_el": "2026-09-07",
-  "total": 326,
+  "censado_el": "2026-09-09",
+  "total": 346,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -183,6 +183,10 @@
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
+    "GET /eventos/publicos/verificar/:codigo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
     "GET /eventos/publicos/ticket/:codigo": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
@@ -196,6 +200,18 @@
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
     "GET /eventos/publicos/expositor/:codigo": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /eventos/publicos/slug/:slug/mapa": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "POST /eventos/publicos/slug/:slug/retener": {
+      "estado": "publica",
+      "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "POST /eventos/publicos/slug/:slug/soltar": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
     },
@@ -258,6 +274,28 @@
     "POST /eventos/publicos/slug/:slug/waitlist": {
       "estado": "publica",
       "motivo": "Página pública del evento: se abre sin cuenta; lo que toca datos de una persona va por el código de su boleta."
+    },
+    "GET /recintos": {
+      "estado": "sesion",
+      "motivo": "Un recinto es de la cuenta que lo dibujó, no de un evento: el dueño se comprueba contra la fila."
+    },
+    "GET /recintos/:id": {
+      "estado": "sesion",
+      "motivo": "Un recinto es de la cuenta que lo dibujó, no de un evento: el dueño se comprueba contra la fila."
+    },
+    "POST /recintos": {
+      "estado": "sesion",
+      "motivo": "Un recinto es de la cuenta que lo dibujó, no de un evento: el dueño se comprueba contra la fila."
+    },
+    "DELETE /recintos/:id": {
+      "estado": "sesion",
+      "motivo": "Un recinto es de la cuenta que lo dibujó, no de un evento: el dueño se comprueba contra la fila."
+    },
+    "POST /eventos/:eventoId/espacios/desde-recinto": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
     },
     "GET /me/": {
       "estado": "sesion",
@@ -824,6 +862,72 @@
       ]
     },
     "POST /eventos/:eventoId/tickets/:ticketId/crear-equipos": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "GET /eventos/:eventoId/espacios": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "POST /eventos/:eventoId/espacios": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "POST /eventos/:eventoId/espacios/generar": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "POST /eventos/:eventoId/espacios/plantilla": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "PATCH /eventos/:eventoId/espacios/:id": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "PUT /eventos/:eventoId/espacios/geometria": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "PUT /eventos/:eventoId/localidades/:tipoId/color": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "DELETE /eventos/:eventoId/espacios/:id": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "PUT /eventos/:eventoId/espacios/:id/localidad": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "PUT /eventos/:eventoId/espacios/:id/localidad-en-cascada": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "POST /eventos/:eventoId/espacios/:id/liberar": {
       "estado": "exige",
       "acciones": [
         "gestionar_tickets"

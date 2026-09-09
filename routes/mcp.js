@@ -237,7 +237,18 @@ router.get('/mcp/estado', autenticar, sesion('El servidor MCP se autentica con s
     ok: true,
     servidor: SERVIDOR,
     protocolo: PROTOCOLO,
-    herramientas: TOOLS_MCP.length,
+    /* Las que puede usar ESTE token, no todas las que existen.
+     *
+     * Aquí ponía `TOOLS_MCP.length`, y esa constante desapareció al repartir
+     * las herramientas por alcance: la ruta entera moría con un
+     * `ReferenceError`. O sea que la pantalla con la que alguien comprueba «¿mi
+     * token sirve?» contestaba un 500 — justo la que se abre cuando algo va
+     * mal. Lo encontró el lint el día que se puso, no una prueba.
+     *
+     * Y de paso dice la verdad que hace falta: un token de sólo lectura tiene
+     * que ver un número menor, o el organizador no puede saber si su alcance
+     * quedó como quería. */
+    herramientas: toolsDe(req.mcpScopes).length,
     cuenta: req.apiOwner,
     via: req.mcpVia,
   });

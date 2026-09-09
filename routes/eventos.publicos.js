@@ -1811,7 +1811,19 @@ router.post('/slug/:slug/reservar', async (req, res) => {
        y cuatro personas; doce mesas vendidas dejaban `aforo_vendido: 12` con 48
        personas entrando. En un recinto con aforo legal eso es creer que quedan
        36 sitios que no existen. */
-    const personas = await personasDeEspacio(espacioId);
+    /* `silla.espacioId` y no un `espacioId` suelto.
+     *
+     * Ahí estaba el fallo, y era mío: escribí `personasDeEspacio(espacioId)`
+     * con una variable que NO existe en esta función. Leer una variable no
+     * declarada lanza `ReferenceError`, así que esta rama —la de las boletas
+     * GRATUITAS— moría con un 500 sin JSON, después de haber insertado ya la
+     * boleta. Quien se registraba quedaba registrado y veía «Request failed
+     * with status code 500», así que lo intentaba otra vez.
+     *
+     * No lo cazó nada: `npm test` no ejecuta esta ruta, el build de Node no
+     * mira variables no declaradas, y la rama sólo corre en un registro
+     * gratuito real. Lo cazó alguien intentando registrarse. */
+    const personas = await personasDeEspacio(silla.espacioId);
     await supabase.from('eventos')
       .update({ aforo_vendido: (evento.aforo_vendido || 0) + personas })
       .eq('id', evento.id);

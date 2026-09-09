@@ -23,6 +23,7 @@ const {
   COLUMNAS, validarEspacio, filaEspacio, generarUnidades,
   armarArbol, MAX_POR_LOTE,
 } = require('../lib/espacios.js');
+const geometria = require('../lib/geometriaDelPlano.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -67,21 +68,55 @@ router.get('/:eventoId/espacios', exige(PERMS), async (req, res) => {
       .in('estado', ['retenido', 'vendido']);
     if (eRes) return res.status(500).json({ error: eRes.message });
 
+    /* Las localidades de ESTE evento.
+     *
+     * Antes esta consulta no llevaba filtro: se traía `ticket_type_espacios`
+     * entera —la de todos los eventos de la plataforma— y se descartaba en
+     * JavaScript lo que no era de aquí. Funcionaba porque la tabla es joven, y
+     * habría ido creciendo hasta que abrir el plano de un evento pequeño
+     * costara traerse el de todos los demás.
+     *
+     * `ticket_type_espacios` no tiene `evento_id` —cuelga del tipo de boleta,
+     * que sí lo tiene—, así que el filtro son los tipos del evento: una lista
+     * corta, no una por cada silla. */
+    const { data: tipos, error: eTipos } = await supabase
+      .from('ticket_types').select('id, nombre, precio, currency').eq('evento_id', eventoId);
+    if (eTipos) return res.status(500).json({ error: eTipos.message });
+
+    /* El color, aparte. Es de la 0119, y pedirlo junto a lo demás haría que en
+       un despliegue sin la migración el select fallara ENTERO y el plano se
+       quedara sin precios. Sin color, la paleta reparte por posición. */
+    let colorDe = new Map();
+    try {
+      const { data: c } = await supabase.from('ticket_types').select('id, color').eq('evento_id', eventoId);
+      colorDe = new Map((c || []).map(x => [x.id, geometria.colorValido(x.color)]));
+    } catch { /* sin la 0119 */ }
+
+    const porPrecio = [...(tipos || [])].sort((a, b) => Number(b.precio || 0) - Number(a.precio || 0));
+    const conColor = new Map(porPrecio.map((t, i) => [t.id, {
+      ...t, color: colorDe.get(t.id) || geometria.colorPorDefecto(i),
+    }]));
+
     const { data: localidades, error: eLoc } = await supabase
       .from('ticket_type_espacios')
-      .select('ticket_type_id, espacio_id, ticket:ticket_types!ticket_type_id(id, nombre, precio, currency)');
+      .select('ticket_type_id, espacio_id')
+      .in('ticket_type_id', [...conColor.keys()]);
     if (eLoc) return res.status(500).json({ error: eLoc.message });
 
-    /* Se filtra aquí y no en la consulta: `ticket_type_espacios` no tiene
-       `evento_id` —cuelga del tipo de boleta, que sí lo tiene— y un `in` con
-       todos los ids de espacio sería una URL de kilómetros. */
     const deEsteEvento = new Set((espacios || []).map(e => e.id));
 
     res.json({
       espacios: espacios || [],
       arbol: armarArbol(espacios || []),
       reservas: reservas || [],
-      localidades: (localidades || []).filter(l => deEsteEvento.has(l.espacio_id)),
+      localidades: (localidades || [])
+        .filter(l => deEsteEvento.has(l.espacio_id))
+        .map(l => ({ ...l, ticket: conColor.get(l.ticket_type_id) || null })),
+      /* La leyenda del plano: las localidades con su color, de más cara a más
+         barata. Va aparte de `localidades` —que dice qué silla es de cuál—
+         porque el mapa necesita las dos cosas y unirlas obligaría a recorrer
+         dos mil sillas para saber que hay tres colores. */
+      leyenda: porPrecio.map(t => conColor.get(t.id)),
       max_por_lote: MAX_POR_LOTE,
     });
   } catch (e) { fallo(res, e); }

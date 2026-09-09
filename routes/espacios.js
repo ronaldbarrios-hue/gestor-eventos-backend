@@ -25,6 +25,8 @@ const {
 } = require('../lib/espacios.js');
 const geometria = require('../lib/geometriaDelPlano.js');
 const recinto = require('../lib/recintoDeConcierto.js');
+const llenar = require('../lib/llenarElBloque.js');
+const accesibles = require('../lib/sitiosAccesibles.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -113,6 +115,13 @@ router.get('/:eventoId/espacios', exige(PERMS), async (req, res) => {
       localidades: (localidades || [])
         .filter(l => deEsteEvento.has(l.espacio_id))
         .map(l => ({ ...l, ticket: conColor.get(l.ticket_type_id) || null })),
+      /* Los sitios accesibles y si están donde deben. Va con el plano y no en
+         una pantalla aparte porque es una revisión DEL plano: sacarla a otro
+         sitio la convierte en algo que nadie abre. */
+      accesibilidad: accesibles.revisar({
+        espacios: espacios || [],
+        localidades: new Map((localidades || []).map(l => [l.espacio_id, l.ticket_type_id])),
+      }),
       /* La leyenda del plano: las localidades con su color, de más cara a más
          barata. Va aparte de `localidades` —que dice qué silla es de cuál—
          porque el mapa necesita las dos cosas y unirlas obligaría a recorrer
@@ -266,6 +275,61 @@ router.patch('/:eventoId/espacios/:id', exige(PERMS), async (req, res) => {
 
     auditar(req, eventoId, 'espacio.editar', { entidad: 'espacio', entidadId: id });
     res.json({ espacio: data });
+  } catch (e) { fallo(res, e); }
+});
+
+/* ── POST /eventos/:eventoId/espacios/:id/butacas — llenar una tribuna ───
+ *
+ * Desde que la tribuna se traza sobre el plano real, el orden natural se
+ * invierte: primero está el bloque —con su forma y en su sitio— y lo que falta
+ * es llenarlo. Pedir entonces «12 filas de 20» y que salgan en otro lado es
+ * hacerle repetir a alguien el trabajo que ya hizo con el ratón.
+ */
+router.post('/:eventoId/espacios/:id/butacas', exige(PERMS), async (req, res) => {
+  const { eventoId, id } = req.params;
+  try {
+    await puedo(eventoId, req.user.id);
+
+    const { data: bloque } = await supabase
+      .from('espacios').select('id, evento_id, nombre, geometria').eq('id', id).maybeSingle();
+    if (!bloque || bloque.evento_id !== eventoId) {
+      return res.status(404).json({ error: 'Ese bloque no es de este evento.' });
+    }
+
+    /* Sobre una tribuna que ya tiene butacas, no: saldrían dos juegos de sillas
+       superpuestas con nombres repetidos, y separarlos después es borrarlas una
+       a una. Y si alguna estuviera vendida, ni eso. */
+    const { count } = await supabase
+      .from('espacios').select('id', { count: 'exact', head: true }).eq('parent_id', id);
+    if (count) {
+      return res.status(409).json({
+        error: `«${bloque.nombre}» ya tiene ${count} sitios dentro. Bórralos antes de volver a llenarla.`,
+      });
+    }
+
+    const { unidades, error: malo } = llenar.butacasDelBloque({
+      geometria: bloque.geometria,
+      filas: req.body?.filas, porFila: req.body?.porFila,
+      separacion: Number(req.body?.separacion) || undefined,
+      hueco: Number(req.body?.hueco) || undefined,
+      /* El prefijo por defecto lleva el nombre del bloque: «Fila A1» repetido
+         en veinte tribunas no identifica a nadie, y en la puerta hay que poder
+         leer de la boleta a qué sección va esa persona. */
+      prefijoFila: req.body?.prefijoFila || `${bloque.nombre} · Fila`,
+      desdeLaDerecha: Boolean(req.body?.desdeLaDerecha),
+      capacidad: req.body?.capacidad,
+    });
+    if (malo) return res.status(400).json({ error: malo });
+
+    const filas = unidades.map(u => ({ ...filaEspacio(u, eventoId), parent_id: id }));
+    const { data, error } = await supabase.from('espacios').insert(filas).select('id');
+    if (error) return res.status(500).json({ error: error.message });
+
+    auditar(req, eventoId, 'espacio.llenar', {
+      entidad: 'espacio', entidadId: id,
+      detalle: { bloque: bloque.nombre, creadas: data?.length || 0 },
+    });
+    res.status(201).json({ creadas: data?.length || 0 });
   } catch (e) { fallo(res, e); }
 });
 

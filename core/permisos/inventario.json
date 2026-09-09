@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
   "censado_el": "2026-09-09",
-  "total": 346,
+  "total": 347,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -892,6 +892,12 @@
       ]
     },
     "PATCH /eventos/:eventoId/espacios/:id": {
+      "estado": "exige",
+      "acciones": [
+        "gestionar_tickets"
+      ]
+    },
+    "POST /eventos/:eventoId/espacios/:id/butacas": {
       "estado": "exige",
       "acciones": [
         "gestionar_tickets"

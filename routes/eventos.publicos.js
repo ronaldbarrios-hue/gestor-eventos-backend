@@ -8,6 +8,7 @@ const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { emitirPuestos, modoDelTipo } = require('../lib/emitirPuestos.js');
+const geometria = require('../lib/geometriaDelPlano.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { notificar } = require('../lib/notificar.js');
 const { verifyTurnstile } = require('../lib/turnstile.js');
@@ -570,12 +571,45 @@ router.get('/slug/:slug/mapa', async (req, res) => {
       .filter(e => e.modo !== 'vendible')
       .map(e => ({
         id: e.id, nombre: e.nombre, tipo: e.tipo, parent_id: e.parent_id,
+        /* La forma del bloque. Es lo que dibuja el PRIMER nivel del mapa —«122»,
+           «GENERAL B», la tarima— y sin ella el público entra directo a dos mil
+           sillas sin saber dónde está mirando. */
+        geometria: e.geometria,
         ...(resumen.get(e.id) || { total: 0, libres: 0 }),
       })),
     unidades: unidades.map(u => ({ ...u, ticket_type_id: precioDe.get(u.id) || null })),
+    /* Las localidades con su color y su precio. En el mapa de un concierto el
+       color ES el precio —«la roja son 450 mil, la azul 180»— así que sin esto
+       el plano no dice lo único que hay que saber antes de elegir. */
+    localidades: await localidadesDelMapa(evento.id, [...new Set(loc.map(l => l.ticket_type_id))]),
     minutos_retencion: espaciosLib.MINUTOS_RETENCION,
   });
 });
+
+/* Las localidades que aparecen en el plano, con su color.
+ *
+ * `color` es de la 0119 y se pide en su PROPIA consulta a propósito: pedirla
+ * junto al nombre y el precio haría que, en un despliegue sin la migración, el
+ * select fallara ENTERO y el mapa se quedara sin precios. Sin ella, cada
+ * localidad recibe un color de la paleta por su posición —el organizador las
+ * ordena por precio— y el plano se ve igual de bien. */
+async function localidadesDelMapa(eventoId, ids) {
+  if (!ids.length) return [];
+  const { data } = await supabase.from('ticket_types')
+    .select('id, nombre, precio, currency').in('id', ids).order('precio', { ascending: false });
+  if (!data?.length) return [];
+
+  let colores = new Map();
+  try {
+    const { data: c } = await supabase.from('ticket_types').select('id, color').in('id', ids);
+    colores = new Map((c || []).map(x => [x.id, geometria.colorValido(x.color)]));
+  } catch { /* sin la 0119: paleta por posición */ }
+
+  return data.map((t, i) => ({
+    id: t.id, nombre: t.nombre, precio: t.precio, currency: t.currency,
+    color: colores.get(t.id) || geometria.colorPorDefecto(i),
+  }));
+}
 
 /* POST /eventos/publicos/slug/:slug/retener  { espacio_id, sesion }
  *

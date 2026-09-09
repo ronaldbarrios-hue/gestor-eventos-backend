@@ -139,6 +139,14 @@ app.use('/eventos/publicos/equipo', require('./routes/equipoTorneo.js'));
 app.use('/eventos/publicos', require('./routes/sesiones.js').publico);
 app.use('/eventos/publicos', require('./routes/legal.js').publico);
 app.use('/eventos/publicos', require('./routes/eventos.publicos.js'));
+/* Los recintos guardados. Van en la raíz y no bajo `/eventos` porque un recinto
+   no es de un evento: es de la cuenta, y se usa desde eventos que todavía no
+   existen.
+ *
+ * Y van DESPUÉS de las rutas públicas, no antes: este router autentica con
+ * `router.use`, y montado en `/` por delante dejaría la web pública entera en
+ * 401. Lo cazó `test/montaje.test.js` — que existe justo porque ya pasó. */
+app.use('/',                 require('./routes/recintos.js'));
 app.use('/me',               require('./routes/me.js'));
 app.use('/me',               require('./routes/integraciones.js'));
 app.use('/me',               require('./routes/sugerencias.js'));

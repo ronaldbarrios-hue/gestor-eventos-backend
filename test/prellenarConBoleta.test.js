@@ -91,3 +91,61 @@ test('sólo mira las preguntas del evento, no las de un taller', () => {
   assert.equal(/from\('event_form_fields'\)/.test(CUERPO), false,
     'la ruta arma su propia consulta de campos en vez de usar la función');
 });
+
+/* ── La segunda llave: documento MÁS correo ───────────────────────────── */
+
+const REG = leer('lib/miRegistroAnterior.js');
+
+test('el documento NUNCA basta solo', () => {
+  /* Una cédula no es un secreto —está impresa, se fotocopia, se deja en
+     porterías— y al otro lado están las respuestas del formulario, que en una
+     ficha de caracterización incluyen fecha de nacimiento, comuna, identidad
+     de género, autorreconocimiento étnico, situación de víctima y
+     discapacidad. Con el documento suelto esto sería un buscador de personas. */
+  assert.match(REG, /if \(!doc \|\| !correo\.includes\('@'\)\) return null;/);
+  assert.match(CUERPO, /porDocumentoYCorreo\(/);
+  /* Y en la ruta, la rama del documento pasa los dos. */
+  assert.match(CUERPO, /documento: req\.body\?\.documento, email: req\.body\?\.email/);
+});
+
+test('se busca por correo primero y el documento comprueba después', () => {
+  /* `guest_email` acota a un puñado de filas; el documento vive dentro de un
+     jsonb y buscarlo primero obligaría a recorrer las boletas del evento. Y
+     así el documento nunca decide solo: es la segunda comprobación. */
+  const i = REG.indexOf("eq('guest_email'");
+  const j = REG.indexOf('normalizar(t.respuestas');
+  assert.ok(i > 0 && j > i, 'el documento se comprueba antes que el correo');
+});
+
+test('el documento se compara sin puntos ni guiones', () => {
+  /* «1.099.123-4» y «10991234» son la misma cédula escrita por dos personas. */
+  const { normalizar } = require('../lib/miRegistroAnterior.js');
+  assert.equal(normalizar('1.099.123-4'), normalizar('10991234'));
+  assert.equal(normalizar(' 10 991 234 '), '10991234');
+  assert.equal(normalizar(null), '');
+});
+
+test('se miran TODAS las preguntas de documento, no sólo la primera', () => {
+  /* Un evento puede preguntar «documento del titular» y «del acompañante»;
+     mirar sólo la primera deja fuera a quien se registró por la otra. */
+  const { camposDocumento } = require('../lib/miRegistroAnterior.js');
+  const campos = [
+    { id: 'a', tipo: 'texto' },
+    { id: 'b', tipo: 'documento' },
+    { id: 'c', tipo: 'documento' },
+  ];
+  assert.deepEqual(camposDocumento(campos).map(c => c.id), ['b', 'c']);
+});
+
+test('la más reciente gana', () => {
+  /* Si alguien se registró dos veces, lo último que escribió es lo que quiere
+     volver a usar. */
+  assert.match(REG, /order\('created_at', \{ ascending: false \}\)/);
+});
+
+test('sale de las boletas del evento, no del padrón', () => {
+  /* El padrón es una lista que el organizador sube a mano y está
+     desactualizada desde que alguien se registra. */
+  assert.match(REG, /from\('tickets'\)/);
+  assert.equal(/padron_previo/.test(REG), false);
+});

@@ -227,6 +227,94 @@ router.patch('/:eventoId/espacios/:id', exige(PERMS), async (req, res) => {
   } catch (e) { fallo(res, e); }
 });
 
+/* ── PUT /eventos/:eventoId/espacios/geometria — mover muchos de una vez ──
+ *
+ * Arrastrar una sección son doscientas sillas que cambian de sitio a la vez. Con
+ * el PATCH de arriba eso serían doscientas peticiones por cada empujón del
+ * ratón: el editor iría a tirones y el servidor se llevaría una tormenta.
+ *
+ * Sólo toca `geometria`. Es lo que hace que esta ruta sea segura de usar desde
+ * un editor que dispara sin parar: no puede cambiar precios, ni modos, ni
+ * nombres, ni convertir una silla vendida en otra cosa. Mover de sitio una
+ * silla vendida SÍ se permite —el plano se corrige, la venta no se toca— y es
+ * justo lo que hace falta cuando el recinto se dibujó torcido.
+ */
+router.put('/:eventoId/espacios/geometria', exige(PERMS), async (req, res) => {
+  const { eventoId } = req.params;
+  try {
+    await puedo(eventoId, req.user.id);
+
+    const cambios = Array.isArray(req.body?.cambios) ? req.body.cambios : null;
+    if (!cambios?.length) return res.status(400).json({ error: 'No hay nada que mover.' });
+    if (cambios.length > MAX_POR_LOTE) {
+      return res.status(400).json({ error: `Son ${cambios.length} de una vez y el máximo es ${MAX_POR_LOTE}.` });
+    }
+
+    /* Que todos los ids sean de ESTE evento, comprobado contra la base y no
+       contra lo que dice quien llama. Sin esto, un id de otro evento en la
+       lista movería el plano de otra empresa. */
+    const ids = [...new Set(cambios.map(c => c.id).filter(Boolean))];
+    const { data: mios, error: eMios } = await supabase
+      .from('espacios').select('id').eq('evento_id', eventoId).in('id', ids);
+    if (eMios) return res.status(500).json({ error: eMios.message });
+    const permitido = new Set((mios || []).map(e => e.id));
+    if (permitido.size !== ids.length) {
+      return res.status(400).json({ error: 'Alguno de esos espacios no es de este evento.' });
+    }
+
+    let movidos = 0;
+    for (const c of cambios) {
+      const forma = geometria.formaDe(c.geometria);
+      /* Una geometría que no se reconoce se salta en vez de guardarse: dejar
+         entrar `{}` borraría la posición de la silla y el plano se rompería
+         justo donde alguien creía estar arreglándolo. */
+      if (!forma) continue;
+      const { error } = await supabase.from('espacios')
+        .update({ geometria: c.geometria }).eq('id', c.id).eq('evento_id', eventoId);
+      if (error) return res.status(500).json({ error: error.message });
+      movidos += 1;
+    }
+
+    /* Una sola anotación por lote, con el número. Doscientas líneas de auditoría
+       por arrastre harían ilegible el histórico del evento. */
+    auditar(req, eventoId, 'espacio.mover', { entidad: 'espacio', detalle: { movidos } });
+    res.json({ movidos });
+  } catch (e) { fallo(res, e); }
+});
+
+/* ── PUT /eventos/:eventoId/localidades/:tipoId/color ───────────────────
+ *
+ * El color de una localidad. Va aquí, junto al plano, porque es una decisión
+ * del plano: en el mapa de un concierto el color ES el precio.
+ */
+router.put('/:eventoId/localidades/:tipoId/color', exige(PERMS), async (req, res) => {
+  const { eventoId, tipoId } = req.params;
+  try {
+    await puedo(eventoId, req.user.id);
+
+    /* `null` es válido y quiere decir «vuelve al color de la paleta». Sin esa
+       opción, elegir un color sería irreversible. */
+    const color = req.body?.color == null || req.body.color === ''
+      ? null
+      : geometria.colorValido(req.body.color);
+    if (req.body?.color && !color) {
+      return res.status(400).json({ error: 'El color tiene que ser un código como #dc2626.' });
+    }
+
+    const { data, error } = await supabase.from('ticket_types')
+      .update({ color }).eq('id', tipoId).eq('evento_id', eventoId).select('id, color').maybeSingle();
+    if (error) {
+      /* Sin la 0119 aplicada la columna no existe. Se dice qué pasa en vez de
+         devolver un error de base que nadie sabe leer. */
+      return res.status(500).json({ error: 'No se pudo guardar el color. ¿Está aplicada la migración 0119?' });
+    }
+    if (!data) return res.status(404).json({ error: 'Esa localidad no es de este evento.' });
+
+    auditar(req, eventoId, 'localidad.color', { entidad: 'ticket_type', entidadId: tipoId, detalle: { color } });
+    res.json({ id: data.id, color: data.color });
+  } catch (e) { fallo(res, e); }
+});
+
 /* ── DELETE /eventos/:eventoId/espacios/:id ────────────────────────────── */
 router.delete('/:eventoId/espacios/:id', exige(PERMS), async (req, res) => {
   const { eventoId, id } = req.params;

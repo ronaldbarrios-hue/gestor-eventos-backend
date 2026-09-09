@@ -200,3 +200,46 @@ test('el paso de la rejilla lo sabe la geometría, no el dibujo', () => {
   /* Si sólo lo supiera el SVG, cambiarlo descolocaría los planos ya guardados. */
   assert.ok(g.PASO > g.LADO, 'sin pasillo entre sillas');
 });
+
+/* ── El generador, curvado ────────────────────────────────────────────── */
+
+const { generarUnidades } = require('../lib/espacios.js');
+
+test('la rejilla de siempre no cambia: nada de lo ya generado se mueve', () => {
+  const { unidades } = generarUnidades({ filas: 2, porFila: 3 });
+  assert.deepEqual(unidades[0].geometria, { x: 0, y: 0 });
+  assert.deepEqual(unidades[4].geometria, { x: 32, y: 32 });
+});
+
+test('en abanico las sillas salen colocadas y giradas, no en rejilla', () => {
+  const { unidades } = generarUnidades({
+    filas: 2, porFila: 5, forma: 'abanico',
+    curva: { radioPrimera: 200, separacion: 30, abertura: 90 },
+  });
+  assert.equal(unidades.length, 10);
+  for (const u of unidades) {
+    assert.ok(Number.isFinite(u.geometria.rot), 'una silla sin giro');
+    assert.ok(u.geometria.y < 0, 'el abanico no mira al escenario');
+  }
+  /* La segunda fila más lejos del escenario que la primera. */
+  const d = (u) => Math.hypot(u.geometria.x, u.geometria.y);
+  assert.ok(d(unidades[5]) > d(unidades[0]));
+});
+
+test('la geometría guarda sólo x, y y rot', () => {
+  /* `sillasEnAbanico` devuelve además la fila y el número que usó para
+     colocar, y eso ya vive en el nombre y en `orden`. El mismo dato en dos
+     sitios es como empiezan a discrepar. */
+  const { unidades } = generarUnidades({ filas: 1, porFila: 2, forma: 'abanico' });
+  assert.deepEqual(Object.keys(unidades[0].geometria).sort(), ['rot', 'x', 'y']);
+});
+
+test('el abanico respeta el tope por lote igual que la rejilla', () => {
+  const r = generarUnidades({ filas: 100, porFila: 100, forma: 'abanico' });
+  assert.match(r.error, /máximo/);
+});
+
+test('una forma desconocida cae en rejilla en vez de dejar sillas sin sitio', () => {
+  const { unidades } = generarUnidades({ filas: 1, porFila: 2, forma: 'espiral' });
+  assert.deepEqual(unidades[0].geometria, { x: 0, y: 0 });
+});

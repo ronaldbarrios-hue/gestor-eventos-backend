@@ -2,6 +2,7 @@ const express = require('express');
 const { exige, sesion, permisosDeMiembro, SELECT_PERMISOS } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const sillaDeLaCompra = require('../lib/sillaDeLaCompra.js');
+const { personasDeTicket } = require('../lib/cuantasPersonas.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { verifyTicketQR, signTicketQR } = require('../lib/qr.js');
 const { horaDelEscaneo } = require('../lib/horaDeEscaneo.js');
@@ -268,7 +269,10 @@ router.patch('/:eventoId/clientes/:ticketId', exige(PERMS_CLIENTES), async (req,
     const delta = ocupabaAntes === ocupaDespues ? 0 : (ocupaDespues ? +1 : -1);
 
     if (delta !== 0) {
-      await ajustarAforo(eventoId, antes.ticket_type_id, delta);
+      /* Cuántas personas mueve esta boleta. Se pregunta ANTES de liberar la
+         silla —dos líneas más abajo—: después ya no hay capacidad que mirar. */
+      const personas = await personasDeTicket(ticketId);
+      await ajustarAforo(eventoId, antes.ticket_type_id, delta, personas);
       /* Sólo al liberar: si acabamos de meter a alguien, no hay nada que
          ofrecer. Se hace en segundo plano —la respuesta del panel no tiene
          por qué esperar a que salga un correo. */
@@ -291,7 +295,20 @@ router.patch('/:eventoId/clientes/:ticketId', exige(PERMS_CLIENTES), async (req,
 
 /* Mueve los dos contadores a la vez, sin bajar de cero. Son columnas
    denormalizadas: si se desincronizan, el evento miente sobre su aforo. */
-async function ajustarAforo(eventoId, ticketTypeId, delta) {
+/* Mueve los dos contadores, y NO son el mismo número:
+ *
+ *   ticket_types.vendidos  cuántas UNIDADES  → 12 mesas
+ *   eventos.aforo_vendido  cuánta GENTE      → 48 personas
+ *
+ * El cupo de un tipo de boleta se agota por unidades («quedan 3 mesas»); el
+ * aforo del recinto se llena por personas. Confundirlos rompe una de las dos
+ * cuentas, y la que se rompía era el aforo: sumaba de uno en uno aunque la
+ * boleta fuera de un palco de ocho.
+ *
+ * `personas` lo pasa quien llama porque a veces la boleta ya se borró —o su
+ * silla ya se liberó— cuando toca ajustar, y entonces aquí ya no habría nada
+ * que consultar. */
+async function ajustarAforo(eventoId, ticketTypeId, delta, personas = 1) {
   if (ticketTypeId) {
     const { data: tt } = await supabase
       .from('ticket_types').select('vendidos').eq('id', ticketTypeId).maybeSingle();
@@ -305,7 +322,7 @@ async function ajustarAforo(eventoId, ticketTypeId, delta) {
     .from('eventos').select('aforo_vendido').eq('id', eventoId).maybeSingle();
   if (ev) {
     await supabase.from('eventos')
-      .update({ aforo_vendido: Math.max(0, (ev.aforo_vendido || 0) + delta) })
+      .update({ aforo_vendido: Math.max(0, (ev.aforo_vendido || 0) + delta * Math.max(1, personas)) })
       .eq('id', eventoId);
   }
 }
@@ -472,7 +489,8 @@ router.post('/:eventoId/clientes/:ticketId/reembolsar', exige(['reembolsar']), a
     /* El cupo vuelve a estar libre y se le ofrece a quien espera. Mismo camino
        que el cambio de estado de la lista: si esto se copiara en vez de
        reutilizar `ajustarAforo`, un día uno de los dos dejaría de cuadrar. */
-    await ajustarAforo(eventoId, t.ticket_type_id, -1);
+    const personasReembolso = await personasDeTicket(ticketId);
+    await ajustarAforo(eventoId, t.ticket_type_id, -1, personasReembolso);
     ofrecerCupoAlSiguiente({ eventoId, ticketTypeId: t.ticket_type_id }).catch(() => {});
     /* Un reembolso también devuelve la silla: si no, queda ocupada para
        siempre y la única salida es que alguien la libere a mano. */

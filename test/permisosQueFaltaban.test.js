@@ -140,3 +140,38 @@ test('cada permiso nuevo trae grupo y etiqueta', () => {
    propia prueba. Comprobarlo desde aquí leyendo sus archivos pasa en esta
    máquina y falla en integración continua, donde ese repo no está — me pasó
    hoy dos veces. Cada lado fija el suyo. */
+
+/* ── El torneo: una sola lista de permisos, no dos ────────────────────── */
+
+test('los permisos del torneo se escriben una vez', () => {
+  /* Estaban en `torneos.js` y en `torneoJurado.js`, iguales. En cuanto uno
+     cambió se separaron, y eso no da error: sólo que el jurado sigue pidiendo
+     más permiso que el resto del torneo, y nadie lo nota hasta que alguien no
+     puede tocar los criterios. */
+  const jurado = leer('routes/torneoJurado.js');
+  const torneos = leer('routes/torneos.js');
+
+  assert.match(jurado, /const PERMS_TORNEO_CONFIG = \['gestionar_torneo', 'editar_evento'\];/);
+  assert.match(jurado, /module\.exports\.PERMS_TORNEO_CONFIG/, 'no la exporta: la otra tendrá que copiarla');
+  assert.doesNotMatch(torneos, /const PERMS_TORNEO_CONFIG =/,
+    '`torneos.js` volvió a tener su propia copia');
+  assert.match(torneos, /PERMS_TORNEO_CONFIG,\n\} = require\('\.\/torneoJurado\.js'\)/,
+    'no la importa de donde vive');
+});
+
+test('quien gestiona el torneo puede crearlo, no sólo operarlo', () => {
+  /* `PERMS_TORNEO` —once rutas: equipos, partidos, resultados— aceptaba
+     `gestionar_torneo`, y crear el torneo y sus categorías pedía
+     `editar_evento`. El rol «Programación», que existe justo para esto, podía
+     OPERAR un torneo y no crearlo; y al abrir la pestaña la primera lectura,
+     `GET /torneo-categorias`, ya devolvía 403.
+
+     Esto AMPLÍA lo que puede `gestionar_torneo`, a propósito: el permiso se
+     llama «gestionar torneo» y crear uno es lo primero que eso significa. */
+  /* Se lee del texto y no con `require`: cargar la ruta arrastra supabase, y
+     este archivo comprueba fuentes, no arranca el servidor. */
+  const linea = leer('routes/torneoJurado.js')
+    .match(/const PERMS_TORNEO_CONFIG = \[([^\]]*)\]/)[1];
+  assert.match(linea, /'gestionar_torneo'/);
+  assert.match(linea, /'editar_evento'/, 'alguien perdió lo que ya podía');
+});

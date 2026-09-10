@@ -45,7 +45,18 @@ const { exige, sesion } = require('../core/permisos');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
-const PERMS_TORNEO_CONFIG = ['editar_evento'];
+/* Los dos permisos del torneo, y viven AQUI porque `torneos.js` ya importa de
+ * este archivo: al reves seria un ciclo. Estaban escritos en los dos, y hoy se
+ * separaron — se amplio `PERMS_TORNEO_CONFIG` en `torneos.js` y esta copia se
+ * quedo atras, que es el modo de fallo de siempre: nada da error, sólo que el
+ * jurado sigue pidiendo mas permiso que el resto del torneo.
+ *
+ * `PERMS_TORNEO_CONFIG` acepta `gestionar_torneo` a proposito. Era
+ * `['editar_evento']` mientras las once rutas que llevan equipos, partidos y
+ * resultados si aceptaban `gestionar_torneo`: el rol «Programacion», que existe
+ * justo para esto, podia OPERAR un torneo y no crearlo ni configurarlo. La
+ * asimetria era el fallo, no la proteccion. */
+const PERMS_TORNEO_CONFIG = ['gestionar_torneo', 'editar_evento'];
 const PERMS_TORNEO        = ['gestionar_torneo', 'editar_evento'];
 
 function assertGestionaTorneo(eventoId, userId) {
@@ -532,3 +543,7 @@ module.exports.validarCriterios = validarCriterios;
 module.exports.validarRondas = validarRondas;
 module.exports.crearBaseCalificacion = crearBaseCalificacion;
 module.exports.poblarPrimeraRonda = poblarPrimeraRonda;
+
+/* Para que `torneos.js` no vuelva a tener su propia copia. */
+module.exports.PERMS_TORNEO_CONFIG = PERMS_TORNEO_CONFIG;
+module.exports.PERMS_TORNEO = PERMS_TORNEO;

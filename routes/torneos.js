@@ -4,7 +4,12 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { exige, sesion } = require('../core/permisos');
 const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
-const { validarCriterios, validarRondas, crearBaseCalificacion, poblarPrimeraRonda } = require('./torneoJurado.js');
+const {
+  validarCriterios, validarRondas, crearBaseCalificacion, poblarPrimeraRonda,
+  /* Los permisos del torneo vienen de ahi y no se redefinen aqui: estaban en
+     los dos archivos y se separaron en cuanto uno cambio. */
+  PERMS_TORNEO_CONFIG,
+} = require('./torneoJurado.js');
 const {
   COLUMNAS_CAMPO,
   validarFormulario, normalizarRespuestas,
@@ -22,7 +27,6 @@ const MODOS_RONDAS_VALIDOS = ['una_ronda', 'eliminatoria'];
    declaradas en la ruta. `exige` las verifica antes del handler y el helper
    las vuelve a verificar dentro: es el patrón que ya usa emails.js, y la
    repetición es barata al lado de una ruta cuyo permiso no se ve. */
-const PERMS_TORNEO_CONFIG = ['editar_evento'];
 const PERMS_TORNEO        = ['gestionar_torneo', 'editar_evento'];
 
 function assertOwner(eventoId, userId) {

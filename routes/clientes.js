@@ -36,6 +36,48 @@ router.use(verifySupabaseJWT);
    (editar/importar); el listado acepta también 'ver_clientes'. */
 const { rutaDe, paraExportar, BUCKET_PRIVADO, SEGUNDOS_FIRMA } = require('../lib/archivoDeFormulario.js');
 
+/* ── Qué tramo de la lista se pide ──────────────────────────────────────
+ *
+ * La lista de asistentes de un evento real son cientos de filas. Se servían
+ * de cien en cien y el panel no mandaba página ni la enseñaba: en un evento de
+ * 386 boletas se veían las primeras 100 y **la lista simplemente se acababa**.
+ * Sin error, sin aviso, sin nada que dijera que había 286 más. Quien buscaba a
+ * alguien de la mitad de la lista concluía que no estaba inscrito.
+ *
+ * Aquí se sanea lo que llega, porque antes no se saneaba nada: un `page=abc`
+ * daba `NaN` y `range(NaN, NaN)` no devuelve vacío, revienta la consulta.
+ */
+const POR_PAGINA = 50;
+/* Tope por petición. Por encima de esto lo que se quiere es la exportación,
+   que existe y va por otro camino (`/clientes/exportar`). */
+const MAXIMO_POR_PAGINA = 200;
+
+function tramoPedido({ limit, page } = {}) {
+  const pedido = Math.floor(Number(limit));
+  const porPagina = Number.isFinite(pedido) && pedido > 0
+    ? Math.min(pedido, MAXIMO_POR_PAGINA)
+    : POR_PAGINA;
+  const p = Math.floor(Number(page));
+  const pagina = Number.isFinite(p) && p > 0 ? p : 1;
+  const desde = (pagina - 1) * porPagina;
+  return { porPagina, pagina, desde, hasta: desde + porPagina - 1 };
+}
+
+/* Lo que se escribe en la caja de búsqueda, listo para un `or()` de PostgREST.
+ *
+ * La coma separa las condiciones de un `or()`, y los paréntesis lo delimitan:
+ * buscar «Pérez, Juan» rompía la consulta entera —un 400 en la cara de quien
+ * sólo estaba buscando a alguien— y un paréntesis podía cambiar qué se
+ * filtraba. Se cambian por `%`, que en un `ilike` es «lo que sea»: así
+ * «Pérez, Juan» encuentra a «Pérez Juan» y no rompe nada.
+ *
+ * Lo que NO hace: encontrar «Juan Pérez» buscando «Pérez, Juan». Para eso
+ * habría que partir la búsqueda en palabras y exigirlas todas, que es otra
+ * cosa y más grande. Aquí se arregla el 400. */
+function paraBuscar(q) {
+  return String(q == null ? '' : q).trim().slice(0, 120).replace(/[,()"\\]/g, '%');
+}
+
 const PERMS_CLIENTES = ['gestionar_clientes'];
 /* Borrar va aparte de atender: quien reenvía boletas y corrige datos todo el
    día no tiene por qué poder borrar de paso. */
@@ -168,14 +210,22 @@ router.get('/:eventoId/origenes', exige(['ver_clientes', 'gestionar_clientes']),
 
 router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
-  const { q, estado, ticket_type_id, limit = 100, page = 1 } = req.query;
+  const { q, estado, ticket_type_id } = req.query;
+  /* Cuántas y cuál página, saneadas.
+   *
+   * Antes se hacía `(Number(page) - 1) * Number(limit)` con lo que llegara: un
+   * `page=abc` daba `NaN`, y `range(NaN, NaN)` no devuelve una lista vacía —
+   * revienta la consulta. Y sin tope, un `limit=100000` se trae el evento
+   * entero en una petición.
+   *
+   * El tope es 200 y no más: por encima, lo que se quiere es la exportación,
+   * que existe y va por otro camino. */
+  const { porPagina, pagina, desde, hasta } = tramoPedido(req.query);
   /* El filtro «sin pagar» necesita cruzar con el tipo de boleta para mirar su
      precio, y eso pide un `inner join`. En los demas casos NO se pone: un
      inner join descartaria las boletas cuyo tipo se borro, y esas tambien
      tienen que salir en la lista. */
   const unido = estado === 'sin_pagar' ? '!inner' : '';
-  const desde = (Number(page) - 1) * Number(limit);
-  const hasta = desde + Number(limit) - 1;
 
   try {
     await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);
@@ -211,8 +261,10 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
     }
     if (ticket_type_id) query = query.eq('ticket_type_id', ticket_type_id);
     if (q) {
-      /* Búsqueda en email o nombre del invitado */
-      query = query.or(`guest_email.ilike.%${q}%,guest_nombre.ilike.%${q}%,codigo.ilike.%${q}%`);
+      /* Nombre, correo o código, en una sola caja: quien busca a alguien no
+         sabe de antemano por cuál de los tres lo va a encontrar. */
+      const t = paraBuscar(q);
+      if (t) query = query.or(`guest_email.ilike.%${t}%,guest_nombre.ilike.%${t}%,codigo.ilike.%${t}%`);
     }
 
     const { data, count, error } = await query;
@@ -242,10 +294,33 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
 
     if (eCampos) console.error(`[clientes] campos del formulario de ${eventoId}: ${eCampos.message}`);
 
+    /* Los tipos de boleta, para poder filtrar por ellos.
+     *
+     * Viajan con la lista y no en otra peticion: el filtro tiene que ofrecer
+     * exactamente los tipos que esta consulta reconoce en `ticket_type_id`, y
+     * pedirlos aparte es la forma de que un dia el desplegable ofrezca uno que
+     * ya se borro, o se deje fuera el que si esta.
+     *
+     * Se leen aunque falle: un filtro que no se puede pintar no puede impedir
+     * ver la lista. */
+    const { data: tipos, error: eTipos } = await supabase
+      .from('ticket_types')
+      .select('id, nombre')
+      .eq('evento_id', eventoId)
+      .order('orden', { ascending: true });
+    if (eTipos) console.error(`[clientes] tipos de ${eventoId}: ${eTipos.message}`);
+
     res.json({
       clientes: data || [],
       total: count ?? 0,
+      /* Con qué tramo se contesta, para que el panel pueda pintar «51-100 de
+         386» y un «siguiente». Antes sólo viajaba `total`, y el panel ni lo
+         miraba: la lista se cortaba a las 100 y no lo decía. */
+      pagina,
+      por_pagina: porPagina,
+      paginas: Math.max(1, Math.ceil((count ?? 0) / porPagina)),
       stats,
+      tipos: tipos || [],
       campos_formulario: camposForm || [],
     });
   } catch (e) {
@@ -1670,3 +1745,6 @@ router.get('/:eventoId/clientes/:ticketId/archivo', exige(['ver_clientes', 'gest
 });
 
 module.exports = router;
+/* Para las pruebas: saneado del tramo y de la busqueda. Son las dos cosas de
+   esta ruta que se pueden equivocar en silencio. */
+module.exports._test = { tramoPedido, paraBuscar, POR_PAGINA, MAXIMO_POR_PAGINA };

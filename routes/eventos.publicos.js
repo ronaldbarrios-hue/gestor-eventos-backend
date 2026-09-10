@@ -9,6 +9,7 @@ const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { emitirPuestos, modoDelTipo } = require('../lib/emitirPuestos.js');
 const { boletaQueYaTenia } = require('../lib/yaEstabaRegistrado.js');
+const { tramoPedido, datosDelTramo, filtrarPorTexto } = require('../lib/tramoDeLista.js');
 const geometria = require('../lib/geometriaDelPlano.js');
 const rolDeBoleta = require('../lib/rolDeBoleta.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
@@ -73,9 +74,14 @@ router.use(verifySupabaseJWTOptional);
 
 /* GET /eventos/publicos — listado de eventos publicados vigentes (para /explorar) */
 router.get('/', async (req, res) => {
-  const { q, categoria, ciudad, page = 1, limit = 24 } = req.query;
-  const desde = (Number(page) - 1) * Number(limit);
-  const hasta = desde + Number(limit) - 1;
+  const { q, categoria, ciudad } = req.query;
+  /* La misma aritmetica sin red que tenian las demas listas, y esta es la MAS
+     expuesta: se abre sin cuenta, asi que cualquiera puede mandar `page=abc` o
+     `limit=100000`. Lo primero esta MEDIDO contra produccion: responde 200 con
+     la lista vacia, o sea que la pagina de explorar decia «no hay eventos»
+     habiendo siete. No se cae; miente, que es peor.
+     Se conservan las 24 por defecto, que es lo que pinta la cuadricula. */
+  const tramo = tramoPedido(req.query, { porDefecto: 24, tope: 60 });
   const ahora = new Date().toISOString();
 
   let query = supabase
@@ -92,10 +98,12 @@ router.get('/', async (req, res) => {
     .is('deleted_at', null)
     .or(`fecha_fin.gte.${ahora},and(fecha_fin.is.null,fecha_inicio.gte.${ahora})`)
     .order('fecha_inicio', { ascending: true })
-    .range(desde, hasta);
+    .range(tramo.desde, tramo.hasta);
 
-  if (q)         query = query.ilike('titulo', `%${q}%`);
-  if (ciudad)    query = query.ilike('location_nombre', `%${ciudad}%`);
+  /* Por palabras: quien busca «summit tech» no sabe en que orden lo escribio
+     quien organiza, y hasta ahora no encontraba «TechNova Summit». */
+  query = filtrarPorTexto(query, q, ['titulo']);
+  query = filtrarPorTexto(query, ciudad, ['location_nombre']);
   if (categoria) {
     const { data: cat } = await supabase.from('categorias').select('id').eq('slug', categoria).maybeSingle();
     if (cat) query = query.eq('categoria_id', cat.id);
@@ -103,7 +111,7 @@ router.get('/', async (req, res) => {
 
   const { data, error, count } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ eventos: data, total: count ?? 0 });
+  res.json({ eventos: data, ...datosDelTramo(tramo, count) });
 });
 
 

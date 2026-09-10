@@ -46,16 +46,47 @@ test('quitar los documentos no muta el evento que se leyó', () => {
 
 test('`gestionar_accesos` no deja reescribir la landing', () => {
   /* Las puertas viven dentro de `page_json`. Abrirlo entero dejaría a quien
-     monta puertas editando la página pública del evento. */
-  const RUTA = leer('routes/eventos.js');
-  assert.match(RUTA, /if \(perms\.has\('gestionar_accesos'\)\) camposPermitidos\.add\('page_json'\)/);
-  assert.match(RUTA, /updates\.page_json = 'accesos' in updates\.page_json/);
+     monta puertas editando la página pública del evento.
+   *
+   * El recorte se mudó a `lib/quePuedeEditar.js`. Antes estaba escrito como una
+   * adivinanza —«tiene page_json y no tiene branding, luego es accesos»— y eso
+   * aguantaba mientras hubiera UN permiso estrecho; con el segundo, el nuevo
+   * habría acabado escribiendo en `accesos`. */
+  const { llavesDePageJson, recortarPageJson } = require('../lib/quePuedeEditar.js');
+
+  const soloAccesos = new Set(['gestionar_accesos']);
+  const llaves = llavesDePageJson(soloAccesos);
+  assert.deepEqual([...llaves], ['accesos']);
+
+  const r = recortarPageJson({ accesos: [1], branding: { logo: 'x' }, paginas: [] }, llaves);
+  assert.deepEqual(r.page_json, { accesos: [1] }, 'se coló algo que no son las puertas');
+});
+
+test('cada permiso estrecho abre su propia llave, no la del vecino', () => {
+  /* Lo que la adivinanza vieja no podía distinguir. */
+  const { llavesDePageJson } = require('../lib/quePuedeEditar.js');
+  assert.deepEqual([...llavesDePageJson(new Set(['gestionar_documentos']))], ['documentos']);
+  assert.deepEqual([...llavesDePageJson(new Set(['gestionar_acreditacion']))].sort(),
+    ['credenciales', 'puntos', 'wallet']);
+  /* Y los dos amplios siguen abriéndolo entero: `null` es «todas». */
+  for (const p of ['editar_evento', 'editar_pagina_publica', '*']) {
+    assert.equal(llavesDePageJson(new Set([p])), null, `${p} dejó de abrir page_json entero`);
+  }
+  /* Sin ninguno: un Set vacío, que NO es lo mismo que `null`. Confundirlos es
+     la diferencia entre no dejar pasar a nadie y dejar pasar a todo el mundo. */
+  assert.deepEqual([...llavesDePageJson(new Set(['ver_clientes']))], []);
 });
 
 test('quien sólo tiene accesos y no manda accesos recibe un no', () => {
   /* En vez de un «sin cambios» que suena a que se guardó. */
+  const { llavesDePageJson, recortarPageJson } = require('../lib/quePuedeEditar.js');
+  const r = recortarPageJson({ branding: { logo: 'x' } }, llavesDePageJson(new Set(['gestionar_accesos'])));
+  assert.ok(r.error, 'se guardó un objeto vacío en vez de decir que no');
+  assert.match(r.error, /accesos/);
+
+  /* Y la ruta lo devuelve como 403, no como «sin cambios». */
   const RUTA = leer('routes/eventos.js');
-  assert.match(RUTA, /sólo puede configurar los accesos/);
+  assert.match(RUTA, /if \(r\.error\) return res\.status\(403\)/);
 });
 
 /* ── La migración cuida que nadie pierda nada ─────────────────────────── */
@@ -109,3 +140,38 @@ test('cada permiso nuevo trae grupo y etiqueta', () => {
    propia prueba. Comprobarlo desde aquí leyendo sus archivos pasa en esta
    máquina y falla en integración continua, donde ese repo no está — me pasó
    hoy dos veces. Cada lado fija el suyo. */
+
+/* ── El torneo: una sola lista de permisos, no dos ────────────────────── */
+
+test('los permisos del torneo se escriben una vez', () => {
+  /* Estaban en `torneos.js` y en `torneoJurado.js`, iguales. En cuanto uno
+     cambió se separaron, y eso no da error: sólo que el jurado sigue pidiendo
+     más permiso que el resto del torneo, y nadie lo nota hasta que alguien no
+     puede tocar los criterios. */
+  const jurado = leer('routes/torneoJurado.js');
+  const torneos = leer('routes/torneos.js');
+
+  assert.match(jurado, /const PERMS_TORNEO_CONFIG = \['gestionar_torneo', 'editar_evento'\];/);
+  assert.match(jurado, /module\.exports\.PERMS_TORNEO_CONFIG/, 'no la exporta: la otra tendrá que copiarla');
+  assert.doesNotMatch(torneos, /const PERMS_TORNEO_CONFIG =/,
+    '`torneos.js` volvió a tener su propia copia');
+  assert.match(torneos, /PERMS_TORNEO_CONFIG,\n\} = require\('\.\/torneoJurado\.js'\)/,
+    'no la importa de donde vive');
+});
+
+test('quien gestiona el torneo puede crearlo, no sólo operarlo', () => {
+  /* `PERMS_TORNEO` —once rutas: equipos, partidos, resultados— aceptaba
+     `gestionar_torneo`, y crear el torneo y sus categorías pedía
+     `editar_evento`. El rol «Programación», que existe justo para esto, podía
+     OPERAR un torneo y no crearlo; y al abrir la pestaña la primera lectura,
+     `GET /torneo-categorias`, ya devolvía 403.
+
+     Esto AMPLÍA lo que puede `gestionar_torneo`, a propósito: el permiso se
+     llama «gestionar torneo» y crear uno es lo primero que eso significa. */
+  /* Se lee del texto y no con `require`: cargar la ruta arrastra supabase, y
+     este archivo comprueba fuentes, no arranca el servidor. */
+  const linea = leer('routes/torneoJurado.js')
+    .match(/const PERMS_TORNEO_CONFIG = \[([^\]]*)\]/)[1];
+  assert.match(linea, /'gestionar_torneo'/);
+  assert.match(linea, /'editar_evento'/, 'alguien perdió lo que ya podía');
+});

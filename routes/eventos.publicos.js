@@ -8,6 +8,7 @@ const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js
 const { verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { signTicketQR } = require('../lib/qr.js');
 const { emitirPuestos, modoDelTipo } = require('../lib/emitirPuestos.js');
+const { boletaQueYaTenia } = require('../lib/yaEstabaRegistrado.js');
 const geometria = require('../lib/geometriaDelPlano.js');
 const rolDeBoleta = require('../lib/rolDeBoleta.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
@@ -1866,6 +1867,38 @@ router.post('/slug/:slug/reservar', async (req, res) => {
 
   if (!esGratis && !tienePagoSimple) {
     return res.status(400).json({ error: 'Este ticket requiere pago. Usá el flujo de checkout MP.' });
+  }
+
+  /* ¿Ya estaba registrada esta persona en esta misma boleta gratuita?
+   *
+   * Entonces no se emite otra: se le devuelve la que ya tiene. Antes salía una
+   * segunda boleta idéntica y no se enteraba nadie — ni quien se registró, que
+   * recibía dos correos, ni quien organiza, que contaba dos personas donde iba
+   * a llegar una. En un evento real fueron 33 así, y la mitad de un solo día en
+   * que el servidor devolvía un 500 DESPUÉS de haber insertado la boleta, de
+   * modo que la gente volvía a darle a Enviar.
+   *
+   * Va aquí a propósito: antes de tocar la silla, antes de quemar la oferta de
+   * cupo y antes de contar el aforo. Reconocer a alguien no puede costarle su
+   * sitio ni su enlace.
+   *
+   * Por qué sólo las gratuitas, y por qué el nombre también tiene que
+   * coincidir, está en `lib/yaEstabaRegistrado.js` — medido sobre datos
+   * reales, no supuesto. */
+  if (esGratis) {
+    const yaTenia = await boletaQueYaTenia({
+      eventoId: evento.id, tipoId: tipo.id, email, nombre,
+    });
+    if (yaTenia) {
+      /* 200 y no 409: para quien se registra esto no es un error, es la
+         respuesta a lo que pedía. Pedía su boleta, y aquí está. */
+      return res.json({
+        ticket: { id: yaTenia.id, codigo: yaTenia.codigo, estado: yaTenia.estado },
+        requierePago: false,
+        ya_estaba: true,
+        mensaje: `Ya estabas registrado en «${tipo.nombre}». Ésta es tu boleta, la misma de antes.`,
+      });
+    }
   }
 
   /* Solo se validan los campos aplicables a ESTE tipo de boleta: los globales

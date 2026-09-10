@@ -21,6 +21,7 @@ const { zonasDelEvento, ocupacion, juntar, agendaPorZona } = require('../lib/afo
 const { leerPuerta } = require('../lib/zonasTabla.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
 const { generarCodigo } = require('../lib/codigos.js');
+const { aQuienLeImporta } = require('../lib/aQuienLeImporta.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -39,6 +40,21 @@ const PERMS_CLIENTES = ['gestionar_clientes'];
 /* Borrar va aparte de atender: quien reenvía boletas y corrige datos todo el
    día no tiene por qué poder borrar de paso. */
 const PERMS_BORRAR = ['borrar_boletas'];
+
+/* Poner un aforo en cero es una tarea de LOGISTICA, no de atencion.
+ *
+ * Estaba detras de `gestionar_clientes`, que es el permiso de tocar las boletas
+ * de la gente: reenviarlas, corregir datos, cambiar su estado. Asi que para
+ * dejar que quien lleva la logistica limpie una zona al terminar una charla,
+ * habia que darle ademas poder sobre los asistentes de todo el evento. Eso no
+ * es una decision que alguien tomara: es que el permiso mas cercano a mano era
+ * ese.
+ *
+ * Se acepta tambien `gestionar_accesos`, que es el de las puertas y las zonas —
+ * lo que de verdad describe esta accion. `gestionar_clientes` se queda: quien
+ * hoy puede limpiar tiene que poder seguir limpiando manana, y un permiso que
+ * empieza quitando acceso se descubre en mitad de un evento. */
+const PERMS_LIMPIAR = ['gestionar_accesos', 'gestionar_clientes'];
 
 function assertOwner(eventoId, userId, perms = PERMS_CLIENTES) {
   return assertPermiso(eventoId, userId, perms, 'id, owner_id');
@@ -1077,16 +1093,43 @@ router.post('/:eventoId/reingreso', sesion('Lo opera quien está en la puerta: l
    por cada persona que entra. */
 const avisadosAforo = new Map(); // `${eventoId}:${zona}` -> nivel ya avisado
 
-function alertarAforo(eventoId, ev, z) {
+/* A quién le llega que una zona se llenó.
+ *
+ * Iba sólo a `owner_id`: la cuenta que creó el evento, que casi nunca es quien
+ * está mirando. Quien vigila el aforo es quien lleva la logística —está en el
+ * sitio, con el teléfono en la mano— y el aviso le llegaba a otra persona, que
+ * a lo mejor está en una reunión. La zona se pasaba de aforo y la única que se
+ * enteraba era la que no podía hacer nada.
+ *
+ * No fallaba nada: la notificación salía puntual, a la persona equivocada.
+ *
+ * Ahora va a quien PUEDE hacer algo — los mismos permisos que abren la pantalla
+ * de aforo—, más quien creó el evento, que sigue queriendo saberlo. */
+const AVISADOS_DEL_AFORO = ['checkin', 'gestionar_accesos'];
+
+async function alertarAforo(eventoId, ev, z) {
   const clave = `${eventoId}:${z.nombre}`;
   if (!z?.aforo_max || z.dentro < z.aforo_max) { avisadosAforo.delete(clave); return; }
   const nivel = z.excedido > 0 ? 'critico' : 'warning';
   if (avisadosAforo.get(clave) === nivel) return;
   avisadosAforo.set(clave, nivel);
-  if (ev?.owner_id) {
-    avisar({ userId: ev.owner_id, tipo: 'alerta', titulo: `Aforo: ${z.nombre}`, cuerpo: `${z.dentro}/${z.aforo_max} personas.`, link: `/eventos/${eventoId}?s=zonas&t=aforo`, eventoId });
-  }
+
+  /* La automatización primero: es lo que puede cerrar una puerta, y no depende
+     de que se sepa a quién avisar. Antes iba después, así que un fallo mirando
+     el equipo se habría llevado por delante lo único que actúa solo. */
   correrAutomatizaciones(eventoId, 'aforo_lleno', { zona: z.nombre });
+
+  const gente = await aQuienLeImporta(eventoId, AVISADOS_DEL_AFORO, { ownerId: ev?.owner_id })
+    .catch(() => (ev?.owner_id ? [ev.owner_id] : []));
+  for (const userId of gente) {
+    avisar({
+      userId, tipo: 'alerta',
+      titulo: `Aforo: ${z.nombre}`,
+      cuerpo: `${z.dentro}/${z.aforo_max} personas.`,
+      link: `/eventos/${eventoId}?s=zonas&t=aforo`,
+      eventoId,
+    });
+  }
 }
 
 /* GET /eventos/:eventoId/zonas/aforo — ocupación en vivo por zona. */
@@ -1144,11 +1187,11 @@ router.post('/:eventoId/zonas/movimiento', sesion('Lo opera quien está en la pu
    body: { zona_id?, motivo? } · sin zona_id, se limpian todas.
    No borra nada: escribe un corte y la ocupación se cuenta desde ahí. El
    reporte del día sigue viendo todos los movimientos. */
-router.post('/:eventoId/zonas/limpiar', exige(PERMS_CLIENTES), async (req, res) => {
+router.post('/:eventoId/zonas/limpiar', exige(PERMS_LIMPIAR), async (req, res) => {
   const { eventoId } = req.params;
   const { zona_id, motivo } = req.body || {};
   try {
-    await assertOwner(eventoId, req.user.id, ['gestionar_clientes']);
+    await assertOwner(eventoId, req.user.id, PERMS_LIMPIAR);
     const todas = await zonasDelEvento(eventoId);
     const objetivo = zona_id ? todas.filter(z => z.id === zona_id) : todas;
     if (objetivo.length === 0) return res.status(404).json({ error: 'Zona no encontrada.' });

@@ -87,7 +87,7 @@ const ROLES = [
   { nombre: 'Editor',            descripcion: 'Edita información, agenda y página pública', orden: 1,
     permissions: ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda'] },
   { nombre: 'Coordinador',       descripcion: 'Coordina al staff y al evento completo', orden: 2,
-    permissions: ['editar_evento', 'invitar_staff', 'gestionar_agenda', 'ver_clientes', 'ver_analytics', 'crear_canales'] },
+    permissions: ['editar_evento', 'invitar_staff', 'gestionar_agenda', 'ver_clientes', 'ver_analytics', 'crear_canales', 'gestionar_tareas'] },
   { nombre: 'Puerta',            descripcion: 'Controla el ingreso y escanea las entradas', orden: 3,
     permissions: ['checkin', 'ver_clientes'] },
   { nombre: 'Staff · Logística', descripcion: 'Montaje, técnica y escenario', orden: 4,

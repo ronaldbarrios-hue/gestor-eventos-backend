@@ -105,7 +105,8 @@ router.get('/vacantes/:id', verifySupabaseJWTOptional, publica('Bolsa de empleo 
 router.use(verifySupabaseJWT);
 
 /* La misma lista que ya comprueban los assertPermiso de abajo. */
-const PERMS_VACANTES = ['editar_evento'];
+/* Igual que el padrón: era `['editar_evento']` a secas. */
+const PERMS_VACANTES = ['gestionar_vacantes', 'editar_evento'];
 
 const ETAPAS = ['postulado', 'revisado', 'entrevista', 'oferta', 'aceptado', 'rechazado'];
 const MODALIDADES = ['presencial', 'remoto', 'hibrido'];
@@ -328,7 +329,7 @@ const CAMPOS_VACANTE = ['titulo', 'descripcion', 'rol_id', 'rol_texto', 'event_r
 router.get('/eventos/:eventoId/vacantes', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId } = req.params;
   try {
-    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     const { data, error } = await supabase.from('vacantes').select(SEL_VACANTE)
       .eq('evento_id', eventoId).order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
@@ -353,7 +354,7 @@ router.post('/eventos/:eventoId/vacantes', exige(PERMS_VACANTES), async (req, re
   if (req.body?.pago_monto == null || Number(req.body.pago_monto) < 0)
     return res.status(400).json({ error: 'El pago del contrato es obligatorio y visible.' });
   try {
-    const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const ev = await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     // TODO KYC: "solo cuentas verificadas publican" — gate cuando el proveedor esté integrado.
     const fila = { evento_id: eventoId, owner_id: ev.owner_id, titulo };
     for (const k of CAMPOS_VACANTE) {
@@ -370,7 +371,7 @@ router.post('/eventos/:eventoId/vacantes', exige(PERMS_VACANTES), async (req, re
 router.patch('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
-    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     const patch = { updated_at: new Date().toISOString() };
     for (const k of CAMPOS_VACANTE) if (req.body?.[k] !== undefined) patch[k] = req.body[k] === '' ? null : req.body[k];
     if (patch.titulo !== undefined && !String(patch.titulo).trim()) return res.status(400).json({ error: 'El título no puede quedar vacío.' });
@@ -385,7 +386,7 @@ router.patch('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (re
 router.delete('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
-    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     const { error } = await supabase.from('vacantes').delete().eq('id', id).eq('evento_id', eventoId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
@@ -396,7 +397,7 @@ router.delete('/eventos/:eventoId/vacantes/:id', exige(PERMS_VACANTES), async (r
 router.get('/eventos/:eventoId/vacantes/:vid/postulaciones', exige(PERMS_VACANTES), async (req, res) => {
   const { eventoId, vid } = req.params;
   try {
-    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     const { data, error } = await supabase.from('postulaciones')
       .select(`id, etapa, respuestas, mensaje, entrevista, monto_contrato, perfil_snapshot, created_at,
         candidato:profiles!user_id(id, nombre, avatar_url, email)`)
@@ -413,7 +414,7 @@ router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', exige(PERMS_
   const etapa = req.body?.etapa;
   if (!ETAPAS.includes(etapa)) return res.status(400).json({ error: 'Etapa inválida.' });
   try {
-    const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const ev = await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     const { data: vac } = await supabase.from('vacantes')
       .select('id, titulo, pago_monto, pago_moneda, comision_pct, rol_id, rol_texto, event_rol_id, evento_id')
       .eq('id', vid).eq('evento_id', eventoId).maybeSingle();
@@ -474,7 +475,7 @@ router.patch('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid', exige(PERMS_
 router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/entrevista', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, vid, pid } = req.params;
   try {
-    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
 
     /* Si el organizador conectó Google Calendar, crea el evento con invitación
        al candidato (best-effort: si falla, se guarda la entrevista igual). */
@@ -515,7 +516,7 @@ router.post('/eventos/:eventoId/vacantes/:vid/postulaciones/:pid/resena', sesion
   const estrellas = Number(req.body?.estrellas);
   if (!(estrellas >= 1 && estrellas <= 5)) return res.status(400).json({ error: 'Estrellas entre 1 y 5.' });
   try {
-    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     const { data: post } = await supabase.from('postulaciones').select('id, user_id, etapa').eq('id', pid).eq('vacante_id', vid).maybeSingle();
     if (!post) return res.status(404).json({ error: 'Postulación no encontrada.' });
     if (post.etapa !== 'aceptado') return res.status(400).json({ error: 'Solo puedes reseñar a alguien contratado.' });
@@ -537,7 +538,7 @@ router.get('/eventos/:eventoId/talento', sesion("Panel del evento: la ruta llama
   const { eventoId } = req.params;
   const { q, ciudad } = req.query;
   try {
-    await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     /* ciudad y foto ya no viven en perfil_talento: se leen del profile
        incrustado. `!inner` para que filtrar por ciudad filtre estas filas y
        no sólo el contenido del join (si no, el filtro de PostgREST se
@@ -561,7 +562,7 @@ router.get('/eventos/:eventoId/talento', sesion("Panel del evento: la ruta llama
 router.post('/eventos/:eventoId/vacantes/:id/destacar', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
   const { eventoId, id } = req.params;
   try {
-    const ev = await assertPermiso(eventoId, req.user.id, ['editar_evento']);
+    const ev = await assertPermiso(eventoId, req.user.id, PERMS_VACANTES);
     const { data, error } = await supabase.from('cobros_vacantes').insert({
       tipo: 'destacado', evento_id: eventoId, vacante_id: id, owner_id: ev.owner_id,
       monto: Number(req.body?.monto || 0), moneda: req.body?.moneda || 'COP', estado: 'pendiente',

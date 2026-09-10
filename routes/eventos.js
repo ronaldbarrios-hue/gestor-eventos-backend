@@ -7,6 +7,7 @@ const { otorgarBadge } = require('../lib/gamificacion.js');
 const { auditar } = require('../lib/auditar.js');
 const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
 const { tramoPedido, datosDelTramo, filtrarPorTexto } = require('../lib/tramoDeLista.js');
+const { LLAVES_ESTRECHAS, llavesDePageJson, recortarPageJson } = require('../lib/quePuedeEditar.js');
 const { esUrlImagenSegura, esUrlWebSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -22,7 +23,11 @@ const { fallaPaginas } = require('../lib/bloquesLanding.js');
 /* El padrón es parte de configurar el formulario del evento, así que pide lo
    mismo que editarlo. Se declara para el censo de la fase 7 en vez de dejarlo
    pendiente: son rutas nuevas y arreglarlo hoy es barato. */
-const PERMS_PADRON = ['editar_evento'];
+/* El padrón se carga con su propio permiso. Seguía pidiendo `editar_evento`
+   —y sólo eso—, así que para dejar que alguien subiera la lista de invitados
+   había que darle el evento entero. `editar_evento` se queda para que nadie
+   pierda lo que ya hacía. */
+const PERMS_PADRON = ['gestionar_padron', 'editar_evento'];
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -330,6 +335,9 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
   if (!actual) return res.status(404).json({ error: 'Evento no encontrado.' });
 
   let camposPermitidos = null;
+  /* Los permisos del miembro, para el recorte de `page_json` de más abajo. El
+     dueño llega aquí con `null` y eso significa «todas las claves». */
+  let permisosDelMiembro = null;
   if (actual.owner_id !== req.user.id) {
     const { data: m } = await supabase
       .from('event_members')
@@ -339,7 +347,12 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
     if (!m) return res.status(403).json({ error: 'No autorizado.' });
 
     const perms = permisosDeMiembro(m);
+    permisosDelMiembro = perms;
     camposPermitidos = new Set();
+    const llavesEstrechas = new Set(
+      Object.entries(LLAVES_ESTRECHAS)
+        .filter(([permiso]) => perms.has(permiso))
+        .flatMap(([, suyas]) => suyas));
     /* Las tres columnas de la 0064 son la misma cosa que antes iba dentro de
        `page_json`, así que van con el mismo permiso: quien podía editar la
        página pública sigue pudiendo, ni más ni menos. */
@@ -354,7 +367,10 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
        es editar la página pública: es logística. Con `gestionar_accesos` se
        abre `page_json` y se recorta a esa única clave más abajo — abrirlo
        entero dejaría a quien monta puertas reescribiendo la landing. */
-    if (perms.has('gestionar_accesos')) camposPermitidos.add('page_json');
+    /* Los permisos estrechos abren la COLUMNA `page_json`; qué claves de dentro
+       pueden tocar lo decide `lib/quePuedeEditar.js`, que es donde está escrito
+       cuál abre cuál. Aquí sólo se decide la columna. */
+    if (llavesEstrechas.size) camposPermitidos.add('page_json');
     if (perms.has('editar_evento')) {
       for (const c of CAMPOS_EDITABLES) {
         if (!c.startsWith('pago_') && !CAMPOS_DEL_SITIO.has(c)) camposPermitidos.add(c);
@@ -366,9 +382,6 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
   }
 
   const puede = (k) => camposPermitidos === null || camposPermitidos.has(k);
-  /* Se calcula aquí, mientras `perms` todavía está a mano, y se usa al mezclar. */
-  const soloAccesos = camposPermitidos !== null
-    && camposPermitidos.has('page_json') && !camposPermitidos.has('branding');
   const updates = {};
   for (const k of CAMPOS_EDITABLES) {
     if (k in req.body && puede(k)) updates[k] = req.body[k];
@@ -422,13 +435,11 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
 
      `partirSitio` mezcla por clave, así que quitar las demás de aquí basta:
      lo que no se manda no se toca. */
-  if (soloAccesos && updates.page_json && typeof updates.page_json === 'object') {
-    updates.page_json = 'accesos' in updates.page_json
-      ? { accesos: updates.page_json.accesos }
-      : {};
-    if (!Object.keys(updates.page_json).length) {
-      return res.status(403).json({ error: 'Tu rol sólo puede configurar los accesos del evento.' });
-    }
+  if (updates.page_json && typeof updates.page_json === 'object') {
+    const llaves = llavesDePageJson(permisosDelMiembro);
+    const r = recortarPageJson(updates.page_json, llaves);
+    if (r.error) return res.status(403).json({ error: r.error });
+    updates.page_json = r.page_json;
   }
 
   const updatesFinales = partirSitio(updates, actual.page_json);

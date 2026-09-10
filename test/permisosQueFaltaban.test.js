@@ -46,16 +46,47 @@ test('quitar los documentos no muta el evento que se leyó', () => {
 
 test('`gestionar_accesos` no deja reescribir la landing', () => {
   /* Las puertas viven dentro de `page_json`. Abrirlo entero dejaría a quien
-     monta puertas editando la página pública del evento. */
-  const RUTA = leer('routes/eventos.js');
-  assert.match(RUTA, /if \(perms\.has\('gestionar_accesos'\)\) camposPermitidos\.add\('page_json'\)/);
-  assert.match(RUTA, /updates\.page_json = 'accesos' in updates\.page_json/);
+     monta puertas editando la página pública del evento.
+   *
+   * El recorte se mudó a `lib/quePuedeEditar.js`. Antes estaba escrito como una
+   * adivinanza —«tiene page_json y no tiene branding, luego es accesos»— y eso
+   * aguantaba mientras hubiera UN permiso estrecho; con el segundo, el nuevo
+   * habría acabado escribiendo en `accesos`. */
+  const { llavesDePageJson, recortarPageJson } = require('../lib/quePuedeEditar.js');
+
+  const soloAccesos = new Set(['gestionar_accesos']);
+  const llaves = llavesDePageJson(soloAccesos);
+  assert.deepEqual([...llaves], ['accesos']);
+
+  const r = recortarPageJson({ accesos: [1], branding: { logo: 'x' }, paginas: [] }, llaves);
+  assert.deepEqual(r.page_json, { accesos: [1] }, 'se coló algo que no son las puertas');
+});
+
+test('cada permiso estrecho abre su propia llave, no la del vecino', () => {
+  /* Lo que la adivinanza vieja no podía distinguir. */
+  const { llavesDePageJson } = require('../lib/quePuedeEditar.js');
+  assert.deepEqual([...llavesDePageJson(new Set(['gestionar_documentos']))], ['documentos']);
+  assert.deepEqual([...llavesDePageJson(new Set(['gestionar_acreditacion']))].sort(),
+    ['credenciales', 'puntos', 'wallet']);
+  /* Y los dos amplios siguen abriéndolo entero: `null` es «todas». */
+  for (const p of ['editar_evento', 'editar_pagina_publica', '*']) {
+    assert.equal(llavesDePageJson(new Set([p])), null, `${p} dejó de abrir page_json entero`);
+  }
+  /* Sin ninguno: un Set vacío, que NO es lo mismo que `null`. Confundirlos es
+     la diferencia entre no dejar pasar a nadie y dejar pasar a todo el mundo. */
+  assert.deepEqual([...llavesDePageJson(new Set(['ver_clientes']))], []);
 });
 
 test('quien sólo tiene accesos y no manda accesos recibe un no', () => {
   /* En vez de un «sin cambios» que suena a que se guardó. */
+  const { llavesDePageJson, recortarPageJson } = require('../lib/quePuedeEditar.js');
+  const r = recortarPageJson({ branding: { logo: 'x' } }, llavesDePageJson(new Set(['gestionar_accesos'])));
+  assert.ok(r.error, 'se guardó un objeto vacío en vez de decir que no');
+  assert.match(r.error, /accesos/);
+
+  /* Y la ruta lo devuelve como 403, no como «sin cambios». */
   const RUTA = leer('routes/eventos.js');
-  assert.match(RUTA, /sólo puede configurar los accesos/);
+  assert.match(RUTA, /if \(r\.error\) return res\.status\(403\)/);
 });
 
 /* ── La migración cuida que nadie pierda nada ─────────────────────────── */

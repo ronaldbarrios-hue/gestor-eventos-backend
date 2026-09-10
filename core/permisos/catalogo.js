@@ -56,11 +56,18 @@ const CATALOGO = [
      organizador de un evento de siete mil personas como el único que puede
      aprobar que a alguien le cambien una letra del nombre en la escarapela. */
   { id: 'gestionar_solicitudes', grupo: 'Equipo',    label: 'Atender solicitudes del equipo' },
+  /* Publicar vacantes y mover postulaciones. `PERMS_VACANTES` era
+     `['editar_evento']` y nada más. */
+  { id: 'gestionar_vacantes',    grupo: 'Equipo',    label: 'Publicar vacantes' },
   /* Repartir el trabajo del evento: crear tareas, asignarlas y moverlas.
      Hasta ahora esto no era un permiso — era `owner_id`, comprobado dentro del
      handler con un «Solo el organizador puede crear tareas». O sea que quien
      lleva la logística podía ver el tablero y no poner nada en él. */
   { id: 'gestionar_tareas',      grupo: 'Equipo',    label: 'Asignar tareas' },
+  /* Contratos, riders y planos. Subir uno guarda en `page_json`, y hasta hoy
+     eso pedía `editar_evento`: para dejar que alguien colgara un PDF había que
+     darle el evento entero. */
+  { id: 'gestionar_documentos',  grupo: 'Equipo',    label: 'Subir y quitar documentos' },
   /* VER los documentos del evento: contratos, riders, listas.
    *
    * De lectura y no de escritura, porque escribirlos ya tenía dueño: viven en
@@ -91,6 +98,12 @@ const CATALOGO = [
    * atiende asistentes reenvía boletas y corrige datos todo el día, y no tiene
    * por qué poder borrar de paso. */
   { id: 'borrar_boletas',        grupo: 'Clientes',  label: 'Borrar boletas' },
+  /* El diseño de la escarapela y del carné. Vive en `page_json.wallet`, así
+     que pedía `editar_evento` — el evento entero por elegir unos colores. */
+  { id: 'gestionar_acreditacion', grupo: 'Clientes',  label: 'Diseñar escarapelas y carnés' },
+  /* El padrón de invitados: la lista previa con la que se prellena el registro.
+     Todas sus rutas pedían `editar_evento` y sólo eso. */
+  { id: 'gestionar_padron',      grupo: 'Clientes',  label: 'Cargar el padrón de invitados' },
 
   { id: 'crear_canales',         grupo: 'Chat',      label: 'Crear canales' },
   { id: 'borrar_mensajes',       grupo: 'Chat',      label: 'Moderar mensajes' },

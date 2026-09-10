@@ -1,4 +1,4 @@
-/* Tres listas del panel se cortaban en silencio.
+/* Siete listas se cortaban en silencio.
  *
  *   asistentes              de 100 en 100, y el panel no mandaba página ni la
  *                           enseñaba. Con 386 boletas se veían las primeras
@@ -8,6 +8,12 @@
  *                           equipo es un día, así que «quién tocó qué»
  *                           contestaba sobre hoy y parecía contestar sobre el
  *                           evento entero
+ *   registro de correos     tope de 100, y se viene aquí a preguntar «¿le
+ *                           llegó a ésta?»
+ *   historial de stands     tope de 100; un stand con cola escanea eso en una
+ *                           tarde
+ *   API pública (×2)        50 y 200, sin total — y quien lee es un programa,
+ *                           que no sospecha
  *
  * Una lista que se corta sin avisar es peor que un error y peor que una lista
  * vacía: el error se arregla, el vacío se nota, y esto se cree. Quien buscaba a
@@ -98,7 +104,17 @@ const LISTAS = [
   { archivo: 'routes/clientes.js', desde: "router.get('/:eventoId/clientes'", hasta: 'ESTADOS_QUE_OCUPAN' },
   { archivo: 'routes/sesiones.js', desde: "/inscripciones'", hasta: 'Marcar asistencia a UN sub-evento' },
   { archivo: 'routes/auditoria.js', desde: "router.get('/:eventoId/auditoria'", hasta: 'module.exports' },
+  /* El registro de correos. Un evento manda un correo por boleta, así que en
+     uno de 400 personas los últimos cien son un cuarto — y aquí se viene con
+     una pregunta concreta: «¿le llegó a ésta?». */
+  { archivo: 'routes/emails.js', desde: "/emails/envios'", hasta: 'Estado de la cola' },
+  /* El historial de los stands: un stand con cola escanea cien en una tarde. */
+  { archivo: 'routes/interacciones.js', desde: "router.get('/:eventoId/interacciones'", hasta: 'expositores/ranking' },
 ];
+
+/* La campana y la API pública se miden aparte: mantienen sus valores de
+   siempre a propósito —cambiarlos le cambiaría la respuesta a integraciones que
+   ya existen— así que no encajan en la comprobación de arriba. */
 
 for (const l of LISTAS) {
   test(`${l.archivo.split('/').pop()} sirve por tramos y dice cuántas hay`, () => {
@@ -138,6 +154,33 @@ test('buscar en un taller mira también la boleta, no sólo la inscripción', ()
   /* Y con tope: los ids viajan en la URL de PostgREST y una búsqueda de una
      letra casaría con el evento entero. */
   assert.match(busca, /\.limit\(200\)/);
+});
+
+test('la campana puede pedir la tanda siguiente sin alargarse para todos', () => {
+  /* Nadie baja treinta avisos buscando uno viejo, así que el por-defecto sigue
+     siendo 30: subirlo alargaría la campana de todo el mundo por una función
+     que casi nadie usa. Lo que faltaba era poder pedir más y saber cuántos hay
+     — para quien vuelve después de una semana fuera. */
+  const src = leer('routes/notificaciones.js');
+  assert.match(src, /tramoPedido\(req\.query, \{ porDefecto: 30, tope: 100 \}\)/);
+  assert.match(src, /datosDelTramo\(tramo, total\)/);
+  /* Y `no_leidas` sigue siendo el contador de NO leídas, no el total de la
+     página: son dos números distintos y el de la campana es el primero. */
+  assert.match(src, /no_leidas: count \?\? 0/);
+});
+
+test('la API pública dice cuántos hay, sin cambiarle la respuesta a nadie', () => {
+  /* Aquí cortar en silencio es peor que en el panel: quien lee es un programa.
+     Una persona que ve una lista cortada puede sospechar; un script que pide
+     los asistentes, recibe 500 de 7.000 y no ve señal de que falten,
+     sincroniza 500 y da el trabajo por hecho. */
+  const src = leer('routes/api.js');
+  assert.match(src, /tramoPedido\(req\.query, \{ porDefecto: 50, tope: 100 \}\)/, 'eventos cambió su tamaño de página');
+  assert.match(src, /tramoPedido\(req\.query, \{ porDefecto: 200, tope: 500 \}\)/, 'asistentes cambió su tamaño de página');
+  /* Los dos endpoints devuelven `meta`, y `data` se queda donde estaba: quien
+     no mire `meta` recibe exactamente lo mismo que ayer. */
+  assert.equal((src.match(/meta: datosDelTramo\(tramo, count\)/g) || []).length, 2);
+  assert.doesNotMatch(src, /Math\.min\(Number\(req\.query\.limit\)/);
 });
 
 test('nadie interpola la búsqueda sin sanearla', () => {

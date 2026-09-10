@@ -23,6 +23,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { exige } = require('../core/permisos');
 const { assertPermiso } = require('../lib/acceso.js');
+const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
 const {
   TIPOS, IDS_TIPOS, VARIABLES,
   renderEmail, ctxDeEvento, plantillaDe, enviarEmailEvento, diagnosticoProveedor,
@@ -343,19 +344,38 @@ router.delete('/eventos/:id/emails/smtp', exige(PERMS_SMTP), async (req, res) =>
   } catch (e) { fallo(res, e); }
 });
 
-/* Últimos envíos: para ver si un asistente recibió su boleta y por qué no. */
+/* Últimos envíos: para ver si un asistente recibió su boleta y por qué no.
+ *
+ * Se servían los últimos 100 y no se decía. Un evento manda un correo por
+ * boleta, así que en uno de 400 personas eso es un cuarto del registro — y a
+ * este registro se viene con una pregunta concreta: «¿le llegó a ésta?». Si la
+ * respuesta depende de si su correo cayó dentro de los últimos cien, la
+ * pantalla contesta que no cuando la respuesta era sí.
+ *
+ * Con filtro por destinatario, que es como se busca aquí de verdad. */
 router.get('/eventos/:id/emails/envios', exige(PERMS_ENVIAR), async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 100, 300);
+  const tramo = tramoPedido(req.query);
+  const { q, solo } = req.query;
   try {
     const evento = await cargarEvento(req.params.id, req.user.id, PERMS_ENVIAR);
-    const { data, error } = await supabase
+    let query = supabase
       .from('evento_email_envios')
-      .select('id, tipo, destinatario, asunto, ok, motivo, created_at')
+      .select('id, tipo, destinatario, asunto, ok, motivo, created_at', { count: 'exact' })
       .eq('evento_id', evento.id)
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .range(tramo.desde, tramo.hasta);
+
+    /* `solo=fallidos` es el filtro que se usa el día del evento: lo que hay que
+       mirar no es todo lo que salió, es lo que no llegó. */
+    if (solo === 'fallidos') query = query.eq('ok', false);
+    if (q) {
+      const t = paraBuscar(q);
+      if (t) query = query.ilike('destinatario', `%${t}%`);
+    }
+
+    const { data, count, error } = await query;
     if (error) return res.json({ envios: [], almacenamiento_listo: false });
-    res.json({ envios: data || [], almacenamiento_listo: true });
+    res.json({ envios: data || [], almacenamiento_listo: true, ...datosDelTramo(tramo, count) });
   } catch (e) { fallo(res, e); }
 });
 

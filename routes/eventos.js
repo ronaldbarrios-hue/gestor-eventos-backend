@@ -165,10 +165,22 @@ router.get('/:id', sesion('Lee un evento del panel: el dueño siempre, y un miem
   if (!m) return res.status(404).json({ error: 'Evento no encontrado.' });
 
   const permisos = [...permisosDeMiembro(m)];
+
+  /* Los documentos del evento —contratos, riders— salen del payload si este
+     miembro no puede verlos.
+   *
+     Esconder la pestaña en el panel y seguir mandando la lista sería teatro:
+     está en la misma respuesta que ya se abre en cualquier pantalla del
+     evento. Se quita aquí, que es donde se decide. */
+  const evento = conSitio(conTodo);
+  if (!permisos.includes('ver_documentos') && evento.page_json?.documentos) {
+    evento.page_json = { ...evento.page_json };
+    delete evento.page_json.documentos;
+  }
   /* El nombre ACTUAL del rol, y el de texto sólo si no hay fila: la columna
      heredada se quedó con el nombre viejo tras el renombrado de la 0090. */
   res.json({
-    evento: conSitio(conTodo), soyOwner: false,
+    evento, soyOwner: false,
     mi_rol: m.rol_detail?.nombre || m.rol,
     mi_rol_id: m.rol_id || null, permisos,
   });
@@ -333,6 +345,11 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
       camposPermitidos.add('navbar');
     }
     if (perms.has('gestionar_imagenes')) { camposPermitidos.add('cover_url'); camposPermitidos.add('gallery'); }
+    /* Las puertas del evento viven dentro de `page_json`, pero configurarlas no
+       es editar la página pública: es logística. Con `gestionar_accesos` se
+       abre `page_json` y se recorta a esa única clave más abajo — abrirlo
+       entero dejaría a quien monta puertas reescribiendo la landing. */
+    if (perms.has('gestionar_accesos')) camposPermitidos.add('page_json');
     if (perms.has('editar_evento')) {
       for (const c of CAMPOS_EDITABLES) {
         if (!c.startsWith('pago_') && !CAMPOS_DEL_SITIO.has(c)) camposPermitidos.add(c);
@@ -344,6 +361,9 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
   }
 
   const puede = (k) => camposPermitidos === null || camposPermitidos.has(k);
+  /* Se calcula aquí, mientras `perms` todavía está a mano, y se usa al mezclar. */
+  const soloAccesos = camposPermitidos !== null
+    && camposPermitidos.has('page_json') && !camposPermitidos.has('branding');
   const updates = {};
   for (const k of CAMPOS_EDITABLES) {
     if (k in req.body && puede(k)) updates[k] = req.body[k];
@@ -390,6 +410,22 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
      Antes, una pantalla que mandaba `{...suCopiaVieja, seo}` escribía su copia
      entera encima: si otra pantalla había guardado la marca entretanto, la
      borraba sin avisar. Ahora sólo puede tocar las claves que manda. */
+  /* Y el recorte: quien entra por `gestionar_accesos` y NO puede editar la
+     página sólo escribe `accesos`. Va justo antes de mezclar, cuando ya se sabe
+     qué mandó, y no en la lista de campos: allí sólo se decide QUÉ columna, no
+     qué parte de ella.
+
+     `partirSitio` mezcla por clave, así que quitar las demás de aquí basta:
+     lo que no se manda no se toca. */
+  if (soloAccesos && updates.page_json && typeof updates.page_json === 'object') {
+    updates.page_json = 'accesos' in updates.page_json
+      ? { accesos: updates.page_json.accesos }
+      : {};
+    if (!Object.keys(updates.page_json).length) {
+      return res.status(403).json({ error: 'Tu rol sólo puede configurar los accesos del evento.' });
+    }
+  }
+
   const updatesFinales = partirSitio(updates, actual.page_json);
 
   /* La landing se valida contra el catálogo de bloques ANTES de guardarla.

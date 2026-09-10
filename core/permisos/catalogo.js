@@ -43,6 +43,10 @@ const CATALOGO = [
   { id: 'gestionar_agenda',      grupo: 'Espacio',   label: 'Gestionar el espacio' },
   { id: 'gestionar_torneo',      grupo: 'Espacio',   label: 'Gestionar torneos' },
   { id: 'gestionar_expositores', grupo: 'Espacio',   label: 'Gestionar expositores' },
+  /* Configurar por dónde se entra. Era del dueño y de nadie más, y eso deja a
+     quien organiza como el único que puede decir que la puerta 3 admite
+     prensa — una tarea de logística que hace otra persona. */
+  { id: 'gestionar_accesos',     grupo: 'Espacio',   label: 'Configurar accesos e ingresos' },
 
   { id: 'invitar_staff',         grupo: 'Equipo',    label: 'Invitar al equipo' },
   { id: 'gestionar_roles',       grupo: 'Equipo',    label: 'Gestionar roles' },
@@ -52,6 +56,17 @@ const CATALOGO = [
      organizador de un evento de siete mil personas como el único que puede
      aprobar que a alguien le cambien una letra del nombre en la escarapela. */
   { id: 'gestionar_solicitudes', grupo: 'Equipo',    label: 'Atender solicitudes del equipo' },
+  /* VER los documentos del evento: contratos, riders, listas.
+   *
+   * De lectura y no de escritura, porque escribirlos ya tenía dueño: viven en
+   * `page_json`, que sólo puede tocar quien tiene `editar_pagina_publica`. Lo
+   * que no tenía dueño era MIRARLOS — cualquier miembro del equipo los veía, y
+   * con un contrato dentro eso no es una decisión, es un descuido.
+   *
+   * Y se aplica de verdad: sin este permiso, `page_json.documentos` ni siquiera
+   * viaja en la respuesta del evento. Esconder la pestaña y seguir mandando los
+   * archivos sería teatro. */
+  { id: 'ver_documentos',        grupo: 'Equipo',    label: 'Ver documentos del evento' },
 
   { id: 'gestionar_tickets',     grupo: 'Tickets',   label: 'Gestionar tipos de boleta' },
   { id: 'gestionar_descuentos',  grupo: 'Tickets',   label: 'Códigos de descuento' },
@@ -63,6 +78,9 @@ const CATALOGO = [
 
   { id: 'crear_canales',         grupo: 'Chat',      label: 'Crear canales' },
   { id: 'borrar_mensajes',       grupo: 'Chat',      label: 'Moderar mensajes' },
+  /* Escribirle a todo el evento. Era del dueño, y quien lleva la comunicación
+     de un festival no suele ser quien creó el evento en la plataforma. */
+  { id: 'publicar_anuncios',     grupo: 'Chat',      label: 'Publicar anuncios' },
 
   { id: 'ver_pagos',             grupo: 'Pagos',     label: 'Ver pagos e ingresos' },
   { id: 'reembolsar',            grupo: 'Pagos',     label: 'Registrar reembolsos' },

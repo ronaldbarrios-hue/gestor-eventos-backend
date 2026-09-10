@@ -1,6 +1,6 @@
 {
   "pendientes_maximo": 0,
-  "censado_el": "2026-09-09",
+  "censado_el": "2026-09-10",
   "total": 348,
   "rutas": {
     "GET /": {

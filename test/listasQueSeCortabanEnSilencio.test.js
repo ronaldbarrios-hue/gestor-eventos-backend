@@ -214,3 +214,28 @@ test('el filtro de la auditoría se ofrece con lo que hay, no con una lista a ma
      «boleta.borrar» buscando «borrar», incluido dentro del correo del actor. */
   assert.match(src, /query\.eq\('accion', accion\)/);
 });
+
+test('se puede exportar un solo tipo de boleta', () => {
+  /* En estos eventos los tipos son las actividades —«Registro», «PijaoTech»,
+     «DemoDay»— así que «quién va al DemoDay» es una hoja distinta de «la lista
+     del evento». Sin esto había que exportar las 440 filas y filtrar a mano en
+     Excel, que es donde se pierde media hora y se cuela un error de copiado. */
+  const src = leer('routes/clientes.js');
+  const ruta = src.slice(src.indexOf("router.get('/:eventoId/clientes/exportar'"), src.indexOf('/archivo?campo='));
+
+  assert.match(ruta, /const \{ ticket_type_id \} = req\.query;/);
+  assert.match(ruta, /q\.eq\('ticket_type_id', tipo\.id\)/, 'acepta el parámetro y no filtra por él');
+
+  /* El tipo tiene que ser de ESTE evento: uno de otro evento devolvería una
+     hoja vacía en vez de un no, y eso se lee como «no hay nadie inscrito». */
+  assert.match(ruta, /\.eq\('id', ticket_type_id\)\.eq\('evento_id', eventoId\)/);
+  assert.match(ruta, /no es de este evento/);
+
+  /* Y sobran las preguntas de los OTROS tipos: saldrían como columnas vacías
+     de punta a punta. */
+  assert.match(ruta, /!c\.ticket_type_id \|\| c\.ticket_type_id === tipo\.id/);
+
+  /* Sin el parámetro se exporta todo, como siempre: quien ya usaba esta ruta
+     no puede notar el cambio. */
+  assert.match(ruta, /if \(tipo\) q = q\.eq/);
+});

@@ -174,8 +174,8 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
   /* Cuántas y cuál página, saneadas.
    *
    * Antes se hacía `(Number(page) - 1) * Number(limit)` con lo que llegara: un
-   * `page=abc` daba `NaN`, y `range(NaN, NaN)` no devuelve una lista vacía —
-   * revienta la consulta. Y sin tope, un `limit=100000` se trae el evento
+   * `page=abc` daba `NaN`, y eso no da error — da una lista VACÍA, que para
+   * una lista es la peor respuesta posible porque es creíble. Y sin tope, un `limit=100000` se trae el evento
    * entero en una petición.
    *
    * El tope es 200 y no más: por encima, lo que se quiere es la exportación,

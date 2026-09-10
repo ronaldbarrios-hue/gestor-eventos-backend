@@ -101,6 +101,10 @@ test('una coma en la búsqueda ya no devuelve un 400', () => {
 /* ── Y las tres listas la usan ───────────────────────────────────────── */
 
 const LISTAS = [
+  /* La pública de explorar: la MÁS expuesta, porque se abre sin cuenta. */
+  { archivo: 'routes/eventos.publicos.js', desde: "router.get('/', async", hasta: 'GET /eventos/publicos/slug' },
+  /* «Mis eventos»: la novena, y no tenía ni el `Math.min`. */
+  { archivo: 'routes/eventos.js', desde: "router.get('/', sesion(", hasta: 'GET /eventos/:id —' },
   { archivo: 'routes/clientes.js', desde: "router.get('/:eventoId/clientes'", hasta: 'ESTADOS_QUE_OCUPAN' },
   { archivo: 'routes/sesiones.js', desde: "/inscripciones'", hasta: 'Marcar asistencia a UN sub-evento' },
   { archivo: 'routes/auditoria.js', desde: "router.get('/:eventoId/auditoria'", hasta: 'module.exports' },
@@ -122,7 +126,10 @@ for (const l of LISTAS) {
     const ruta = src.slice(src.indexOf(l.desde), src.indexOf(l.hasta));
     assert.ok(ruta.length > 100, 'no se encontró la ruta: cambió el ancla de esta prueba');
 
-    assert.match(ruta, /tramoPedido\(req\.query\)/, 'sanea el tramo a mano o no lo sanea');
+    /* Con o sin opciones: una lista puede pedir su tamaño por defecto y su
+       tope —la de explorar pinta 24, la campana 30— pero la aritmética sale
+       siempre del mismo sitio. */
+    assert.match(ruta, /tramoPedido\(req\.query[,)]/, 'sanea el tramo a mano o no lo sanea');
     assert.match(ruta, /\.range\(tramo\.desde, tramo\.hasta\)/, 'sigue usando `.limit()`, que corta sin decirlo');
     assert.match(ruta, /count: 'exact'/, 'sin el total no se puede saber si hay más');
     assert.match(ruta, /datosDelTramo\(tramo, count\)/, 'no dice en qué tramo va');

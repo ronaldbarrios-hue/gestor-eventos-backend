@@ -6,6 +6,7 @@ const { slugify, uniqueEventoSlug } = require('../lib/slug.js');
 const { otorgarBadge } = require('../lib/gamificacion.js');
 const { auditar } = require('../lib/auditar.js');
 const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
+const { tramoPedido, datosDelTramo, filtrarPorTexto } = require('../lib/tramoDeLista.js');
 const { esUrlImagenSegura, esUrlWebSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -83,9 +84,15 @@ function validarPublicacion(modo, url) {
 
 /* GET /eventos — lista de mis eventos + eventos donde soy miembro activo */
 router.get('/', sesion('Los eventos propios y aquellos donde la persona es miembro del equipo. Es «lo mío», no un permiso sobre un evento ajeno: la consulta ya filtra por owner_id o por pertenencia.'), async (req, res) => {
-  const { q, estado, modalidad, page = 1, limit = 20 } = req.query;
-  const desde = (Number(page) - 1) * Number(limit);
-  const hasta = desde + Number(limit) - 1;
+  const { q, estado, modalidad } = req.query;
+  /* La octava lista con el mismo saneado a mano, y esta ni siquiera lo tenia:
+     `(Number(page) - 1) * Number(limit)` con `page=abc` da `NaN`, y eso no
+     da error: devuelve la lista VACIA. Un parametro raro en la URL le decia a
+     alguien que no tenia eventos.
+     Y sin tope: un `limit=100000` se traia todo. Se conserva el 20 por
+     defecto para no cambiarle la respuesta a nadie; el tope de 200 esta por
+     encima de lo que pide el que mas pide (100, el hub de mensajes). */
+  const tramo = tramoPedido(req.query, { porDefecto: 20, tope: 200 });
 
   const { data: memberships } = await supabase
     .from('event_members')
@@ -101,9 +108,11 @@ router.get('/', sesion('Los eventos propios y aquellos donde la persona es miemb
     .or(`owner_id.eq.${req.user.id}${memberEventIds.length ? `,id.in.(${memberEventIds.join(',')})` : ''}`)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-    .range(desde, hasta);
+    .range(tramo.desde, tramo.hasta);
 
-  if (q)         query = query.ilike('titulo', `%${q}%`);
+  /* Por palabras, como las demas listas: «summit tech» encuentra «TechNova
+     Summit» aunque no este escrito en ese orden. */
+  query = filtrarPorTexto(query, q, ['titulo']);
   if (estado)    query = query.eq('estado', estado);
   if (modalidad) query = query.eq('modalidad', modalidad);
 
@@ -120,7 +129,7 @@ router.get('/', sesion('Los eventos propios y aquellos donde la persona es miemb
     esMiembro: memberSet.has(e.id),
   }));
 
-  res.json({ eventos, total: count ?? 0 });
+  res.json({ eventos, ...datosDelTramo(tramo, count) });
 });
 
 /* GET /eventos/:id — evento del owner O de un miembro activo */

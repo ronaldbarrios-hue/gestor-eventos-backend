@@ -4,6 +4,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { resolverTicket } = require('../lib/ticketLookup.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { tramoPedido, datosDelTramo } = require('../lib/tramoDeLista.js');
 const { otorgarPuntos, reglasPuntosDeEvento } = require('../lib/gamificacion.js');
 const { saldoDeTicket, recompensasDisponibles } = require('../lib/saldoTicket.js');
 const { COLS_TARJETA } = require('../lib/expositores.js');
@@ -222,18 +223,26 @@ router.post('/:eventoId/interacciones', exige(PERMS_ESCANEO), async (req, res) =
    Query: ?ticket_id= &limit= */
 router.get('/:eventoId/interacciones', exige(PERMS_ESCANEO), async (req, res) => {
   const { eventoId } = req.params;
-  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  /* Se servían los últimos 100 y no se decía. Un stand con cola escanea eso en
+     una tarde: el historial contestaba sobre el último rato y parecía contestar
+     sobre el evento — y aquí se viene a comprobar si un canje se registró, que
+     es una pregunta sobre algo concreto, no sobre lo reciente. */
+  const tramo = tramoPedido(req.query);
   try {
     await assertEscaneo(eventoId, req.user.id);
     let q = supabase.from('ticket_interacciones')
-      .select('*, ticket:tickets!ticket_id(codigo, guest_nombre), expositor:networking_expositores!expositor_id(nombre)')
+      .select('*, ticket:tickets!ticket_id(codigo, guest_nombre), expositor:networking_expositores!expositor_id(nombre)',
+              { count: 'exact' })
       .eq('evento_id', eventoId)
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .range(tramo.desde, tramo.hasta);
     if (req.query.ticket_id) q = q.eq('ticket_id', req.query.ticket_id);
-    const { data, error } = await q;
+    /* Por expositor: es como se revisa el stand de alguien concreto sin leer
+       el historial entero del evento. */
+    if (req.query.expositor_id) q = q.eq('expositor_id', req.query.expositor_id);
+    const { data, count, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ interacciones: data || [] });
+    res.json({ interacciones: data || [], ...datosDelTramo(tramo, count) });
   } catch (e) { err(res, e); }
 });
 

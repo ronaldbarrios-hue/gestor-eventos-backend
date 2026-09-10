@@ -22,6 +22,8 @@ const { leerPuerta } = require('../lib/zonasTabla.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
 const { generarCodigo } = require('../lib/codigos.js');
 const { aQuienLeImporta } = require('../lib/aQuienLeImporta.js');
+const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
+const { yaRegistrados, clavePersona } = require('../lib/yaEstabaRegistrado.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -168,14 +170,22 @@ router.get('/:eventoId/origenes', exige(['ver_clientes', 'gestionar_clientes']),
 
 router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
   const { eventoId } = req.params;
-  const { q, estado, ticket_type_id, limit = 100, page = 1 } = req.query;
+  const { q, estado, ticket_type_id } = req.query;
+  /* Cuántas y cuál página, saneadas.
+   *
+   * Antes se hacía `(Number(page) - 1) * Number(limit)` con lo que llegara: un
+   * `page=abc` daba `NaN`, y `range(NaN, NaN)` no devuelve una lista vacía —
+   * revienta la consulta. Y sin tope, un `limit=100000` se trae el evento
+   * entero en una petición.
+   *
+   * El tope es 200 y no más: por encima, lo que se quiere es la exportación,
+   * que existe y va por otro camino. */
+  const tramo = tramoPedido(req.query);
   /* El filtro «sin pagar» necesita cruzar con el tipo de boleta para mirar su
      precio, y eso pide un `inner join`. En los demas casos NO se pone: un
      inner join descartaria las boletas cuyo tipo se borro, y esas tambien
      tienen que salir en la lista. */
   const unido = estado === 'sin_pagar' ? '!inner' : '';
-  const desde = (Number(page) - 1) * Number(limit);
-  const hasta = desde + Number(limit) - 1;
 
   try {
     await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);
@@ -195,7 +205,7 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
       `, { count: 'exact' })
       .eq('evento_id', eventoId)
       .order('created_at', { ascending: false })
-      .range(desde, hasta);
+      .range(tramo.desde, tramo.hasta);
 
     if (estado === 'sin_pagar') {
       /* «Sin pagar» no es un estado de la boleta, es una pregunta: quien
@@ -211,8 +221,10 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
     }
     if (ticket_type_id) query = query.eq('ticket_type_id', ticket_type_id);
     if (q) {
-      /* Búsqueda en email o nombre del invitado */
-      query = query.or(`guest_email.ilike.%${q}%,guest_nombre.ilike.%${q}%,codigo.ilike.%${q}%`);
+      /* Nombre, correo o código, en una sola caja: quien busca a alguien no
+         sabe de antemano por cuál de los tres lo va a encontrar. */
+      const t = paraBuscar(q);
+      if (t) query = query.or(`guest_email.ilike.%${t}%,guest_nombre.ilike.%${t}%,codigo.ilike.%${t}%`);
     }
 
     const { data, count, error } = await query;
@@ -242,10 +254,30 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
 
     if (eCampos) console.error(`[clientes] campos del formulario de ${eventoId}: ${eCampos.message}`);
 
+    /* Los tipos de boleta, para poder filtrar por ellos.
+     *
+     * Viajan con la lista y no en otra peticion: el filtro tiene que ofrecer
+     * exactamente los tipos que esta consulta reconoce en `ticket_type_id`, y
+     * pedirlos aparte es la forma de que un dia el desplegable ofrezca uno que
+     * ya se borro, o se deje fuera el que si esta.
+     *
+     * Se leen aunque falle: un filtro que no se puede pintar no puede impedir
+     * ver la lista. */
+    const { data: tipos, error: eTipos } = await supabase
+      .from('ticket_types')
+      .select('id, nombre')
+      .eq('evento_id', eventoId)
+      .order('orden', { ascending: true });
+    if (eTipos) console.error(`[clientes] tipos de ${eventoId}: ${eTipos.message}`);
+
     res.json({
       clientes: data || [],
-      total: count ?? 0,
+      /* Con qué tramo se contesta, para que el panel pueda pintar «51-100 de
+         386» y un «siguiente». Antes sólo viajaba `total`, y el panel ni lo
+         miraba: la lista se cortaba a las 100 y no lo decía. */
+      ...datosDelTramo(tramo, count),
       stats,
+      tipos: tipos || [],
       campos_formulario: camposForm || [],
     });
   } catch (e) {
@@ -720,16 +752,23 @@ router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, r
       .order('orden', { ascending: true });
     const camposForm = campos || [];
 
-    /* Correos ya emitidos, para no duplicar. Se consulta por trozos porque un
-       `in` con 5.000 valores no pasa. */
-    const emails = rows.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean);
-    const dup = new Set();
-    for (let i = 0; i < emails.length; i += 300) {
-      const { data: ex } = await supabase
-        .from('tickets').select('guest_email')
-        .eq('evento_id', eventoId).in('guest_email', emails.slice(i, i + 300));
-      (ex || []).forEach(x => x.guest_email && dup.add(x.guest_email));
-    }
+    /* Quiénes de la lista YA tienen esta misma boleta.
+     *
+     * La regla es la MISMA que la del registro público, y vive en
+     * `lib/yaEstabaRegistrado.js`. Hasta hoy eran dos: aquí se rechazaba
+     * cualquier correo que ya tuviera una boleta en el evento —sin mirar el
+     * tipo—, así que importar a alguien del registro general para el DemoDay
+     * fallaba con «Ya existe una boleta con ese correo», mientras el registro
+     * público sí lo permitía. Y lo permitía con razón: en el evento que se
+     * midió, 3 de 48 repeticiones eran justo eso.
+     *
+     * Dos caminos con dos reglas para la misma pregunta es cómo se acaba
+     * explicando a quien organiza que «depende de por dónde lo metas». */
+    const yaEstaban = await yaRegistrados({
+      eventoId,
+      tipoId: tipo.id,
+      correos: rows.map(r => r.email),
+    });
 
     const estado = marcar_pagado ? 'pagado' : 'emitido';
     const precio_efectivo = marcar_pagado ? Number(tipo.precio) : null;
@@ -751,7 +790,22 @@ router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, r
          de la gente a la que se le va a entregar la boleta impresa o por
          WhatsApp. Exigirlo dejaba fuera exactamente ese caso. */
       if (email && !email.includes('@')) { errores.push({ fila, motivo: 'Correo invalido.', row: r }); continue; }
-      if (email && dup.has(email))       { errores.push({ fila, motivo: 'Ya existe una boleta con ese correo.', row: r }); continue; }
+      /* Mismo correo, mismo nombre y misma boleta: ya la tiene.
+       *
+       * El nombre cuenta porque un correo no es una persona: en el evento que
+       * se midió, 12 de 45 repeticiones traían otro nombre —alguien
+       * inscribiendo a su equipo o a su familia con su propio correo—, y
+       * cortar por correo a secas dejaba fuera justo esas filas. Que es
+       * exactamente lo que hacía esta importación.
+       *
+       * Y se mira también contra las filas anteriores del MISMO archivo: una
+       * lista con la misma persona dos veces creaba dos boletas, porque la
+       * comprobación sólo miraba la base. */
+      const suClave = clavePersona(email, nombre);
+      if (email && yaEstaban.has(suClave)) {
+        errores.push({ fila, motivo: `${nombre} ya tiene esta boleta.`, row: r });
+        continue;
+      }
 
       let respuestas = null;
       if (r.respuestas && typeof r.respuestas === 'object') {
@@ -761,7 +815,8 @@ router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, r
         respuestas = Object.keys(limpias).length ? limpias : null;
       }
 
-      if (email) dup.add(email);
+      /* Se apunta para que la siguiente fila del archivo la vea. */
+      if (email) yaEstaban.add(suClave);
       aInsertar.push({
         fila,
         row: {

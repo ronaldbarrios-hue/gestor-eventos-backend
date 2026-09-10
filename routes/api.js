@@ -5,21 +5,39 @@ const express = require('express');
 const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifyApiToken } = require('../lib/apitoken.js');
+const { tramoPedido, datosDelTramo } = require('../lib/tramoDeLista.js');
 
 const router = express.Router();
 router.use(verifyApiToken);
 
+/* ── Por qué esta API también pagina ────────────────────────────────────
+ *
+ * Aquí cortar en silencio es peor que en el panel, no mejor: quien lee esto es
+ * un programa. Una persona que ve una lista cortada puede sospechar; un script
+ * que pide los asistentes, recibe 500 de 7.000 y no ve ninguna señal de que
+ * falten, sincroniza 500 y da el trabajo por hecho. El error se descubre
+ * semanas después, en el CRM de otro.
+ *
+ * Los valores por defecto y los topes se mantienen exactamente como estaban
+ * —50/100 en eventos, 200/500 en asistentes— para no cambiarle la respuesta a
+ * ninguna integración que ya exista. Lo que se añade es `page` y un bloque
+ * `meta` con el total: quien no lo mire sigue recibiendo lo mismo que ayer, y
+ * quien lo mire puede saber que hay más. */
+
+
 /* GET /api/v1/eventos — eventos del owner del token */
 router.get('/eventos', sesion('Los tokens y webhooks de SU cuenta: cada uno cuelga de un usuario y sólo él los ve.'), async (req, res) => {
-  const { data, error } = await supabase
+  const tramo = tramoPedido(req.query, { porDefecto: 50, tope: 100 });
+  const { data, count, error } = await supabase
     .from('eventos')
-    .select('id, slug, titulo, descripcion, estado, modalidad, fecha_inicio, fecha_fin, location_nombre, aforo_total, aforo_vendido, currency, created_at')
+    .select('id, slug, titulo, descripcion, estado, modalidad, fecha_inicio, fecha_fin, location_nombre, aforo_total, aforo_vendido, currency, created_at',
+            { count: 'exact' })
     .eq('owner_id', req.apiOwner)
     .is('deleted_at', null)
     .order('fecha_inicio', { ascending: false })
-    .limit(Math.min(Number(req.query.limit) || 50, 100));
+    .range(tramo.desde, tramo.hasta);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ data: data || [] });
+  res.json({ data: data || [], meta: datosDelTramo(tramo, count) });
 });
 
 /* GET /api/v1/eventos/:id */
@@ -43,12 +61,14 @@ router.get('/eventos/:id/asistentes', sesion('Los tokens y webhooks de SU cuenta
     .from('eventos').select('id').eq('id', req.params.id).eq('owner_id', req.apiOwner).maybeSingle();
   if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
 
-  const { data, error } = await supabase
+  const tramo = tramoPedido(req.query, { porDefecto: 200, tope: 500 });
+  const { data, count, error } = await supabase
     .from('tickets')
-    .select('id, codigo, estado, guest_nombre, guest_email, precio_pagado, pagado_at, checked_in_at, created_at, tipo:ticket_types!ticket_type_id(nombre)')
+    .select('id, codigo, estado, guest_nombre, guest_email, precio_pagado, pagado_at, checked_in_at, created_at, tipo:ticket_types!ticket_type_id(nombre)',
+            { count: 'exact' })
     .eq('evento_id', req.params.id)
     .order('created_at', { ascending: false })
-    .limit(Math.min(Number(req.query.limit) || 200, 500));
+    .range(tramo.desde, tramo.hasta);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ data: (data || []).map(t => ({
     id: t.id, codigo: t.codigo, estado: t.estado,
@@ -56,7 +76,7 @@ router.get('/eventos/:id/asistentes', sesion('Los tokens y webhooks de SU cuenta
     tipo: t.tipo?.nombre || null,
     precio_pagado: t.precio_pagado, pagado_at: t.pagado_at,
     checked_in_at: t.checked_in_at, created_at: t.created_at,
-  })) });
+  })), meta: datosDelTramo(tramo, count) });
 });
 
 /* GET /api/v1/eventos/:id/resumen — métricas básicas */

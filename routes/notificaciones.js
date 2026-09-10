@@ -10,18 +10,24 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 
 const { sesion } = require('../core/permisos');
+const { tramoPedido, datosDelTramo } = require('../lib/tramoDeLista.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
 router.get('/me/notificaciones', sesion("Sus avisos: nadie más los ve ni los marca como leídos."), async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 30, 100);
+  /* La campana enseña las últimas y eso está bien: nadie baja treinta avisos
+     buscando uno viejo. Lo que faltaba era poder pedir la siguiente tanda —y
+     saber cuántas hay— para quien vuelve después de una semana fuera.
+     El por-defecto sigue siendo 30: cambiarlo alargaría la campana de todo el
+     mundo por una función que casi nadie usa. */
+  const tramo = tramoPedido(req.query, { porDefecto: 30, tope: 100 });
 
-  const { data, error } = await supabase
+  const { data, count: total, error } = await supabase
     .from('notificaciones')
-    .select('id, tipo, titulo, cuerpo, link, evento_id, leida, created_at')
+    .select('id, tipo, titulo, cuerpo, link, evento_id, leida, created_at', { count: 'exact' })
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .range(tramo.desde, tramo.hasta);
   if (error) return res.status(500).json({ error: error.message });
 
   const { count, error: e2 } = await supabase
@@ -31,7 +37,7 @@ router.get('/me/notificaciones', sesion("Sus avisos: nadie más los ve ni los ma
     .eq('leida', false);
   if (e2) return res.status(500).json({ error: e2.message });
 
-  res.json({ notificaciones: data || [], no_leidas: count ?? 0 });
+  res.json({ notificaciones: data || [], no_leidas: count ?? 0, ...datosDelTramo(tramo, total) });
 });
 
 router.patch('/me/notificaciones/:id/leer', sesion("Sus avisos: nadie más los ve ni los marca como leídos."), async (req, res) => {

@@ -9,7 +9,7 @@ const express = require('express');
 const { sesion } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
-const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
+const { tramoPedido, datosDelTramo, filtrarPorTexto } = require('../lib/tramoDeLista.js');
 const router = express.Router();
 router.use(verifySupabaseJWT);
 
@@ -47,10 +47,7 @@ router.get('/:eventoId/auditoria', sesion("El registro de quién tocó qué lo v
   if (accion) query = query.eq('accion', accion);
   /* Y por quien: el correo del actor queda en la fila incluso si esa cuenta ya
      no esta en el equipo, que es cuando de verdad se busca. */
-  if (q) {
-    const t = paraBuscar(q);
-    if (t) query = query.ilike('actor_email', `%${t}%`);
-  }
+  query = filtrarPorTexto(query, q, ['actor_email']);
 
   const { data, count, error } = await query;
   if (error) return res.status(500).json({ error: error.message });

@@ -145,8 +145,13 @@ test('buscar en un taller mira también la boleta, no sólo la inscripción', ()
   const src = sinComentarios('routes/sesiones.js');
   const busca = src.slice(src.indexOf('if (q) {'), src.indexOf('const { data, count, error } = await query;'));
   assert.match(busca, /from\('tickets'\)/, 'no busca en las boletas: no se puede buscar por código');
-  assert.match(busca, /codigo\.ilike/, 'no se puede buscar por código de boleta');
+  assert.match(busca, /condicionDeTexto\(q, \['codigo'/, 'no se puede buscar por código de boleta');
   assert.match(busca, /ticket_id\.in\./);
+  /* Las dos condiciones en UN `or()`: encadenar dos `.or()` los une con Y, y
+     entonces habría que casar por la inscripción *y* por la boleta a la vez —
+     que no encuentra a nadie. */
+  assert.match(busca, /condiciones\.join\(','\)/);
+  assert.equal((busca.match(/query\.or\(/g) || []).length, 1);
   /* Sin `!inner`: convertir la relación en obligatoria dejaría fuera a las
      inscripciones sin boleta, que existen a propósito —siempre llega quien
      aparece en el taller sin haber pasado por la entrada general—. */

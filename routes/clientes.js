@@ -22,7 +22,7 @@ const { leerPuerta } = require('../lib/zonasTabla.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
 const { generarCodigo } = require('../lib/codigos.js');
 const { aQuienLeImporta } = require('../lib/aQuienLeImporta.js');
-const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
+const { tramoPedido, datosDelTramo, filtrarPorTexto } = require('../lib/tramoDeLista.js');
 const { yaRegistrados, clavePersona } = require('../lib/yaEstabaRegistrado.js');
 
 /* Notificar sin romper la petición si el helper falla. */
@@ -220,12 +220,10 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
       query = query.eq('estado', estado);
     }
     if (ticket_type_id) query = query.eq('ticket_type_id', ticket_type_id);
-    if (q) {
-      /* Nombre, correo o código, en una sola caja: quien busca a alguien no
-         sabe de antemano por cuál de los tres lo va a encontrar. */
-      const t = paraBuscar(q);
-      if (t) query = query.or(`guest_email.ilike.%${t}%,guest_nombre.ilike.%${t}%,codigo.ilike.%${t}%`);
-    }
+    /* Nombre, correo o código, en una sola caja: quien busca a alguien no sabe
+       de antemano por cuál de los tres lo va a encontrar. Por palabras, no por
+       trozo literal: «Pérez, Juan» tiene que encontrar a «Juan Pérez». */
+    query = filtrarPorTexto(query, q, ['guest_nombre', 'guest_email', 'codigo']);
 
     const { data, count, error } = await query;
     if (error) return res.status(500).json({ error: error.message });

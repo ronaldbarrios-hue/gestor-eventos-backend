@@ -23,7 +23,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { exige } = require('../core/permisos');
 const { assertPermiso } = require('../lib/acceso.js');
-const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
+const { tramoPedido, datosDelTramo, filtrarPorTexto } = require('../lib/tramoDeLista.js');
 const {
   TIPOS, IDS_TIPOS, VARIABLES,
   renderEmail, ctxDeEvento, plantillaDe, enviarEmailEvento, diagnosticoProveedor,
@@ -368,10 +368,9 @@ router.get('/eventos/:id/emails/envios', exige(PERMS_ENVIAR), async (req, res) =
     /* `solo=fallidos` es el filtro que se usa el día del evento: lo que hay que
        mirar no es todo lo que salió, es lo que no llegó. */
     if (solo === 'fallidos') query = query.eq('ok', false);
-    if (q) {
-      const t = paraBuscar(q);
-      if (t) query = query.ilike('destinatario', `%${t}%`);
-    }
+    /* Por palabras: «ana gmail» encuentra ana@gmail.com, que es como se busca
+       un correo cuando se recuerda el dominio y no el nombre entero. */
+    query = filtrarPorTexto(query, q, ['destinatario']);
 
     const { data, count, error } = await query;
     if (error) return res.json({ envios: [], almacenamiento_listo: false });

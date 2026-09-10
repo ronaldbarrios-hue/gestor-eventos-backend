@@ -33,7 +33,7 @@ const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
-const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
+const { tramoPedido, datosDelTramo, condicionDeTexto } = require('../lib/tramoDeLista.js');
 const {
   validarFormulario, normalizarRespuestas,
   COLUMNAS_CAMPO,
@@ -564,8 +564,9 @@ panel.get('/:eventoId/sesiones/:sesionId/inscripciones', sesion("Panel del event
        * un `!inner`, que dejaría fuera a las inscripciones SIN boleta — que
        * existen a propósito: siempre llega quien aparece en el taller sin haber
        * pasado por la entrada general. */
-      const t = paraBuscar(q);
-      if (t) {
+      const enLaBoleta = condicionDeTexto(q, ['codigo', 'guest_nombre', 'guest_email']);
+      const enLaInscripcion = condicionDeTexto(q, ['nombre', 'email']);
+      if (enLaInscripcion) {
         /* El tope existe porque estos ids viajan en la URL de PostgREST y una
            búsqueda de una letra casaría con el evento entero. 200 boletas es
            más de lo que cualquiera revisa a ojo; quien busca así de ancho está
@@ -574,11 +575,14 @@ panel.get('/:eventoId/sesiones/:sesionId/inscripciones', sesion("Panel del event
           .from('tickets')
           .select('id')
           .eq('evento_id', req.params.eventoId)
-          .or(`codigo.ilike.%${t}%,guest_nombre.ilike.%${t}%,guest_email.ilike.%${t}%`)
+          .or(enLaBoleta)
           .limit(200);
         const ids = (boletas || []).map(x => x.id);
 
-        const condiciones = [`nombre.ilike.%${t}%`, `email.ilike.%${t}%`];
+        /* Las dos condiciones van en UN solo `or()`: encadenar dos `.or()` los
+           uniría con Y, y entonces habría que casar por la inscripción *y* por
+           la boleta a la vez — que no encuentra a nadie. */
+        const condiciones = [enLaInscripcion];
         if (ids.length) condiciones.push(`ticket_id.in.(${ids.join(',')})`);
         query = query.or(condiciones.join(','));
       }

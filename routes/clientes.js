@@ -40,6 +40,21 @@ const PERMS_CLIENTES = ['gestionar_clientes'];
    día no tiene por qué poder borrar de paso. */
 const PERMS_BORRAR = ['borrar_boletas'];
 
+/* Poner un aforo en cero es una tarea de LOGISTICA, no de atencion.
+ *
+ * Estaba detras de `gestionar_clientes`, que es el permiso de tocar las boletas
+ * de la gente: reenviarlas, corregir datos, cambiar su estado. Asi que para
+ * dejar que quien lleva la logistica limpie una zona al terminar una charla,
+ * habia que darle ademas poder sobre los asistentes de todo el evento. Eso no
+ * es una decision que alguien tomara: es que el permiso mas cercano a mano era
+ * ese.
+ *
+ * Se acepta tambien `gestionar_accesos`, que es el de las puertas y las zonas —
+ * lo que de verdad describe esta accion. `gestionar_clientes` se queda: quien
+ * hoy puede limpiar tiene que poder seguir limpiando manana, y un permiso que
+ * empieza quitando acceso se descubre en mitad de un evento. */
+const PERMS_LIMPIAR = ['gestionar_accesos', 'gestionar_clientes'];
+
 function assertOwner(eventoId, userId, perms = PERMS_CLIENTES) {
   return assertPermiso(eventoId, userId, perms, 'id, owner_id');
 }
@@ -1144,11 +1159,11 @@ router.post('/:eventoId/zonas/movimiento', sesion('Lo opera quien está en la pu
    body: { zona_id?, motivo? } · sin zona_id, se limpian todas.
    No borra nada: escribe un corte y la ocupación se cuenta desde ahí. El
    reporte del día sigue viendo todos los movimientos. */
-router.post('/:eventoId/zonas/limpiar', exige(PERMS_CLIENTES), async (req, res) => {
+router.post('/:eventoId/zonas/limpiar', exige(PERMS_LIMPIAR), async (req, res) => {
   const { eventoId } = req.params;
   const { zona_id, motivo } = req.body || {};
   try {
-    await assertOwner(eventoId, req.user.id, ['gestionar_clientes']);
+    await assertOwner(eventoId, req.user.id, PERMS_LIMPIAR);
     const todas = await zonasDelEvento(eventoId);
     const objetivo = zona_id ? todas.filter(z => z.id === zona_id) : todas;
     if (objetivo.length === 0) return res.status(404).json({ error: 'Zona no encontrada.' });

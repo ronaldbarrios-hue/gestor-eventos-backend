@@ -4,6 +4,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { auditar } = require('../lib/auditar.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { CATALOGO } = require('../core/permisos/catalogo.js');
 
 const router = express.Router();
 router.use(verifySupabaseJWT);
@@ -28,7 +29,20 @@ router.get('/:eventoId/roles', exige(PERMS_ROLES), async (req, res) => {
       .eq('evento_id', eventoId)
       .order('orden', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ roles: data || [] });
+    /* El catalogo viaja con los roles.
+     *
+     * ── Por que ─────────────────────────────────────────────────────────
+     *
+     * El panel manteniendo su propia copia de la lista en `src/lib/permisos.js`
+     * era el plan «hasta que se pida al servidor», y mientras tanto paso lo
+     * previsible: se anadio `borrar_boletas`, se protegio la ruta con el, y en
+     * el panel no aparecio la casilla. O sea que quien organiza NO podia
+     * concederselo a nadie — el permiso existia, el boton existia, y no habia
+     * forma de unir los dos. Sin ningun error: la casilla simplemente no
+     * estaba, y quien la buscaba concluia que la plataforma no lo hacia.
+     *
+     * `grupo` y `label` ya viajaban en el catalogo justo para este dia. */
+    res.json({ roles: data || [], catalogo: CATALOGO });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

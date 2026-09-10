@@ -136,7 +136,28 @@ router.patch('/:eventoId/equipo/:miembroId', sesion("Cada ruta llama a assertOwn
   const { rol_id } = req.body;
   if (!rol_id) return res.status(400).json({ error: 'rol_id requerido.' });
   try {
-    await assertOwner(eventoId, req.user.id, ['gestionar_roles']);
+    const ev = await assertOwner(eventoId, req.user.id, ['gestionar_roles']);
+
+    /* Nadie se cambia el rol a si mismo.
+     *
+     * `gestionar_roles` es «reparte los papeles del equipo», y quien lo tiene
+     * podia usarlo para ascenderse: un clic desde «Logistica» hasta
+     * «Administrador», sin que nadie lo aprobara y con la auditoria diciendo
+     * solo que se cambio un rol. No hace falta mala fe — se llega ahi buscando
+     * el permiso que a uno le falta para terminar lo que esta haciendo.
+     *
+     * El dueno si puede: es su evento y no hay a quien pedirle permiso. Para
+     * los demas, cambiarse el propio papel lo hace otra persona, que es lo que
+     * significa que alguien te lo haya dado. */
+    const { data: objetivo } = await supabase
+      .from('event_members').select('user_id')
+      .eq('id', miembroId).eq('evento_id', eventoId).maybeSingle();
+    if (!objetivo) return res.status(404).json({ error: 'Ese miembro no esta en el equipo.' });
+    if (String(objetivo.user_id) === String(req.user.id)
+        && String(ev.owner_id) !== String(req.user.id)) {
+      return res.status(403).json({ error: 'No puedes cambiarte el rol a ti mismo. Pideselo a quien organiza.' });
+    }
+
     const { data: rol } = await supabase
       .from('event_roles').select('id, nombre').eq('id', rol_id).eq('evento_id', eventoId).maybeSingle();
     if (!rol) return res.status(400).json({ error: 'Rol inválido para este evento.' });

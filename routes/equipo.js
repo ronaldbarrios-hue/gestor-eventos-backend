@@ -24,7 +24,7 @@ router.get('/:eventoId/equipo', sesion("Cada ruta llama a assertOwner con la lis
     const { data: miembros, error } = await supabase
       .from('event_members')
       .select(`
-        id, email, nombre_invitado, rol, rol_id, custom_permissions, status, invited_at, accepted_at,
+        id, user_id, email, nombre_invitado, rol, rol_id, custom_permissions, status, invited_at, accepted_at,
         profile:profiles!user_id(id, nombre, avatar_url, email),
         rol_detail:event_roles!rol_id(id, nombre, descripcion)
       `)
@@ -32,6 +32,10 @@ router.get('/:eventoId/equipo', sesion("Cada ruta llama a assertOwner con la lis
       .neq('status', 'removed')
       .order('invited_at', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
+    /* `user_id` viaja a proposito, y no basta con el `profile.id` de al lado:
+       a quien esta invitado y todavia no acepto no le hay perfil, asi que el
+       panel no tendria con que reconocer su propia fila. La necesita para no
+       ofrecerle cambiarse el rol a si mismo — algo que el servidor rechaza. */
     const { data: owner } = await supabase
       .from('profiles').select('id, nombre, avatar_url, email').eq('id', evento.owner_id).maybeSingle();
     res.json({ owner, miembros: miembros || [] });

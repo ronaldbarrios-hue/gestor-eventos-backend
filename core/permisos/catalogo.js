@@ -75,6 +75,17 @@ const CATALOGO = [
   { id: 'gestionar_clientes',    grupo: 'Clientes',  label: 'Editar clientes' },
   { id: 'checkin',               grupo: 'Clientes',  label: 'Hacer check-in' },
   { id: 'vip_zone',              grupo: 'Clientes',  label: 'Atender cualquier puerta' },
+  /* BORRAR una boleta, que no es lo mismo que anularla.
+   *
+   * Anular deja la fila: la persona sigue en la lista, marcada como inválida, y
+   * eso es lo correcto casi siempre — hay un rastro de que existió.
+   *
+   * Borrar es para lo que NO DEBIÓ EXISTIR: los duplicados que deja un fallo,
+   * las pruebas del montaje. Es irreversible y se lleva por delante las
+   * respuestas del formulario, así que va aparte de `gestionar_clientes`: quien
+   * atiende asistentes reenvía boletas y corrige datos todo el día, y no tiene
+   * por qué poder borrar de paso. */
+  { id: 'borrar_boletas',        grupo: 'Clientes',  label: 'Borrar boletas' },
 
   { id: 'crear_canales',         grupo: 'Chat',      label: 'Crear canales' },
   { id: 'borrar_mensajes',       grupo: 'Chat',      label: 'Moderar mensajes' },

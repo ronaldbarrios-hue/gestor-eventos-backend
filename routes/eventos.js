@@ -5,14 +5,10 @@ const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { slugify, uniqueEventoSlug } = require('../lib/slug.js');
 const { otorgarBadge } = require('../lib/gamificacion.js');
 const { auditar } = require('../lib/auditar.js');
+const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
 const { esUrlImagenSegura, esUrlWebSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
-const {
-  TIPOS_CAMPO, GRUPOS, FICHAS,
-  MAX_CAMPOS_FORMULARIO, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
-  PLANTILLA,
-} = require('../lib/formularioCampos.js');
 const { ofrecerCupoAlSiguiente } = require('../lib/waitlistOferta.js');
 const { conSitio, listaConSitio, partirSitio } = require('../lib/eventoSitio.js');
 const { hashDocumento, columnasSinPregunta, clave: clavePadron, ALIAS_DOCUMENTO, extraerDocumento,
@@ -514,148 +510,40 @@ router.get('/:id/formulario', sesion('Editar el evento: lo comprueba puedeEditar
   const permiso = await puedeEditarEvento(req, req.params.id);
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
 
-  /* `session_id is null` es lo que separa el formulario del evento de las
-     preguntas propias de un sub-evento (migración 0059). Sin este filtro se
-     mezclarían las dos cosas en el mismo editor.
+  /* `session_id is null` y `torneo_id is null` son lo que separa el formulario
+     del evento de las preguntas de un sub-evento (0059) y de un torneo (0095).
+     El filtro y sus reintentos viven en lib/guardarCampos.js, junto al borrado
+     que usa exactamente el mismo — que es lo que impide que un dia se filtre la
+     lectura y se olvide el borrado. */
+  const { campos, completo, error } = await leerCampos(req.params.id, {});
+  if (error) return res.status(500).json({ error: error.message });
 
-     `torneo_id is null` es lo mismo para los campos de un torneo (0095). Si la
-     0095 no está aplicada la columna no existe y el select falla entero: por
-     eso el reintento de abajo, que ya existía para la 0055, sirve también
-     aquí. */
-  const { data, error } = await supabase
-    .from('event_form_fields')
-    .select(COLUMNAS_CAMPO)
-    .eq('evento_id', req.params.id)
-    .is('session_id', null)
-    .is('torneo_id', null)
-    .order('orden', { ascending: true });
-  if (error) {
-    /* Sin la 0055 no existen `grupo` ni `ayuda`: se reintenta sin ellas para
-       que el formulario siga editándose mientras la migración no esté. */
-    const { data: viejo, error: e2 } = await supabase
-      .from('event_form_fields')
-      .select('id, tipo, etiqueta, opciones, requerido, orden, ticket_type_id')
-      .eq('evento_id', req.params.id)
-      .order('orden', { ascending: true });
-    if (e2) return res.status(500).json({ error: e2.message });
-    return res.json({
-      campos: viejo || [], tipos: TIPOS_CAMPO, grupos: GRUPOS, fichas: FICHAS, plantilla: PLANTILLA,
-      max_campos: MAX_CAMPOS_FORMULARIO, agrupacion_lista: false,
-    });
-  }
   res.json({
-    campos: data || [],
-    /* El catálogo viaja con la respuesta: el panel no mantiene su propia copia. */
-    tipos: TIPOS_CAMPO,
-    /* La plantilla de importacion viaja con el catalogo por el mismo motivo
-       que los tipos: si el frontend mantiene su propia copia de las columnas,
-       acaban divergiendo y el archivo que se descarga deja de ser el que se
-       acepta al subir. */
-    plantilla: PLANTILLA,
-    grupos: GRUPOS,
-    fichas: FICHAS,
-    max_campos: MAX_CAMPOS_FORMULARIO,
-    agrupacion_lista: true,
+    campos,
+    /* El catalogo viaja con la respuesta: el panel no mantiene su propia copia. */
+    ...catalogoDeFormulario(),
+    /* Sin la 0055 no hay `grupo` ni `ayuda`: el editor abre igual, pero se le
+       dice que no ofrezca lo que no se va a guardar. */
+    agrupacion_lista: completo,
   });
 });
 
 /* PUT /eventos/:id/formulario — guarda la lista de campos personalizados.
    Body: { campos: [{ id?, tipo, etiqueta, opciones, requerido }, ...] }
-   Hace un "diff": campos con `id` existente se ACTUALIZAN in-place
-   (conservan su id, así las respuestas ya guardadas en boletas no quedan
-   huérfanas); campos sin `id` se INSERTAN; campos que ya no vienen en la
-   lista se BORRAN. */
+
+   OJO: guardar BORRA lo que no venga en el payload, y en esta tabla viven
+   tambien las preguntas de sub-eventos y torneos, que esta pantalla no conoce
+   ni manda. Lo que las protege es el alcance —aqui, «las que no son de nadie
+   mas»—, y por eso el borrado y la lectura salen del mismo sitio. */
 router.put('/:id/formulario', sesion('Editar el evento: lo comprueba puedeEditarEvento / owner_id + event_members antes de tocar nada.'), async (req, res) => {
   const permiso = await puedeEditarEvento(req, req.params.id);
   if (!permiso.ok) return res.status(permiso.status).json({ error: permiso.error });
 
-  const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
-  const falloDef = validarDefinicion(campos);
-  if (falloDef) return res.status(400).json({ error: falloDef });
+  const r = await guardarCampos({ eventoId: req.params.id, alcance: {}, campos: req.body.campos });
+  if (r.error) return res.status(r.estado || 500).json({ error: r.error });
 
-  /* OJO: este diff BORRA lo que no venga en el payload. Las preguntas de un
-     sub-evento comparten evento_id, así que sin `session_id is null` guardar el
-     formulario del evento se las llevaría por delante — el editor del evento no
-     las manda porque no las conoce.
-
-     Lo mismo, y por lo mismo, con los campos de cada torneo (0095): son la
-     tercera cosa que vive en esta tabla y tampoco se ve desde esta pantalla.
-     Este es exactamente el fallo que se destapó en Q8 con los motivos de los
-     stands —filtrar la lectura y olvidar el borrado—, así que aquí van los dos
-     filtros juntos.
-
-     Si la 0095 no está aplicada, `torneo_id` no existe y el filtro revienta la
-     consulta. En ese caso no hay campos de torneo que proteger, así que se
-     repite sin él: lo que no se puede es guardar a ciegas. */
-  let { data: existentes, error: eGet } = await supabase
-    .from('event_form_fields')
-    .select('id')
-    .eq('evento_id', req.params.id)
-    .is('session_id', null)
-    .is('torneo_id', null);
-  if (eGet && /torneo_id/i.test(eGet.message || '')) {
-    ({ data: existentes, error: eGet } = await supabase
-      .from('event_form_fields')
-      .select('id')
-      .eq('evento_id', req.params.id)
-      .is('session_id', null));
-  }
-  if (eGet) return res.status(500).json({ error: eGet.message });
-
-  const idsExistentes = new Set((existentes || []).map(c => c.id));
-  const idsEnviados = new Set(campos.filter(c => c.id && idsExistentes.has(c.id)).map(c => c.id));
-
-  /* 1) Borrar los que ya no vienen en la lista */
-  const idsABorrar = [...idsExistentes].filter(id => !idsEnviados.has(id));
-  if (idsABorrar.length > 0) {
-    const { error: eDel } = await supabase.from('event_form_fields').delete().in('id', idsABorrar);
-    if (eDel) return res.status(500).json({ error: eDel.message });
-  }
-
-  /* 2) Actualizar los que conservan su id (mantiene el vínculo con respuestas ya guardadas) */
-  for (let i = 0; i < campos.length; i++) {
-    const c = campos[i];
-    if (c.id && idsExistentes.has(c.id)) {
-      const { error: eUpd } = await supabase
-        .from('event_form_fields')
-        .update(filaCampo(c, i))
-        .eq('id', c.id);
-      if (eUpd) return res.status(500).json({ error: eUpd.message });
-    }
-  }
-
-  /* 3) Insertar los nuevos (sin id, o con id que ya no existe) */
-  const nuevos = campos
-    .map((c, i) => ({ ...c, _orden: i }))
-    .filter(c => !c.id || !idsExistentes.has(c.id));
-  if (nuevos.length > 0) {
-    const filas = nuevos.map(c => ({ evento_id: req.params.id, ...filaCampo(c, c._orden) }));
-    const { error: eIns } = await supabase.from('event_form_fields').insert(filas);
-    if (eIns) return res.status(500).json({ error: eIns.message });
-  }
-
-  /* La misma pareja de filtros que arriba: lo que se devuelve es lo que el
-     editor volverá a mandar al guardar, así que colar aquí un campo de torneo
-     es hacer que el editor del evento lo adopte sin querer. */
-  let { data: final, error: eFinal } = await supabase
-    .from('event_form_fields')
-    .select(COLUMNAS_CAMPO)
-    .eq('evento_id', req.params.id)
-    .is('session_id', null)
-    .is('torneo_id', null)
-    .order('orden', { ascending: true });
-  if (eFinal && /torneo_id/i.test(eFinal.message || '')) {
-    ({ data: final, error: eFinal } = await supabase
-      .from('event_form_fields')
-      .select(COLUMNAS_CAMPO)
-      .eq('evento_id', req.params.id)
-      .is('session_id', null)
-      .order('orden', { ascending: true }));
-  }
-  if (eFinal) return res.status(500).json({ error: eFinal.message });
-
-  auditar(req, req.params.id, 'evento.formulario.editar', { entidad: 'evento', entidadId: req.params.id, detalle: { total_campos: final.length } });
-  res.json({ campos: final });
+  auditar(req, req.params.id, 'evento.formulario.editar', { entidad: 'evento', entidadId: req.params.id, detalle: { total_campos: r.campos.length } });
+  res.json({ campos: r.campos });
 });
 
 /* DELETE /eventos/:id — soft delete */

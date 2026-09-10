@@ -3,9 +3,10 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { exige, sesion } = require('../core/permisos');
+const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
 const { validarCriterios, validarRondas, crearBaseCalificacion, poblarPrimeraRonda } = require('./torneoJurado.js');
 const {
-  TIPOS_CAMPO, GRUPOS, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  COLUMNAS_CAMPO,
   validarFormulario, normalizarRespuestas,
   MAX_CAMPOS_FORMULARIO,
 } = require('../lib/formularioCampos.js');
@@ -931,30 +932,23 @@ router.get('/:eventoId/torneo/:torneoId/formulario', exige(PERMS_TORNEO), async 
     const torneo = await torneoDelEvento(eventoId, torneoId);
     if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
 
-    const { data, error } = await supabase
-      .from('event_form_fields')
-      .select(COLUMNAS_CAMPO)
-      .eq('evento_id', eventoId)
-      .eq('torneo_id', torneoId)
-      .order('orden', { ascending: true });
+    const { campos, error } = await leerCampos(eventoId, { torneo_id: torneoId });
 
     /* Sin la 0095 esto no es «no hay campos»: es que no se pueden tener. Se
-       dice, en vez de enseñar un editor que guardaría en el vacío. */
+       dice, en vez de ensenar un editor que guardaria en el vacio. */
     if (error) {
       if (falta0095(error)) {
-        return res.status(503).json({ error: AVISO_0095, campos: [], tipos: TIPOS_CAMPO, listo: false });
+        return res.status(503).json({ error: AVISO_0095, campos: [], ...catalogoDeFormulario({ max: MAX_CAMPOS_TORNEO }), listo: false });
       }
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({
-      torneo, campos: data || [], tipos: TIPOS_CAMPO,
-      /* `grupos` como sugerencia, igual que en el formulario del evento. La
-         columna `grupo` es de `event_form_fields` desde la 0055, o sea que
-         estos formularios ya la guardaban — lo que faltaba era ofrecerla. */
-      grupos: GRUPOS,
-      max_campos: MAX_CAMPOS_TORNEO, listo: true,
-    });
+    /* El MISMO catalogo que el formulario del evento. Esta ruta armaba el suyo
+       y se dejaba fuera las fichas y la hoja de importacion: inscribir equipos
+       pide mas datos que comprar una entrada, no menos, y las veintiuna
+       preguntas de una batalla de pitch se acababan escribiendo a mano una a
+       una. */
+    res.json({ torneo, campos, ...catalogoDeFormulario({ max: MAX_CAMPOS_TORNEO }), listo: true });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }
@@ -968,60 +962,19 @@ router.put('/:eventoId/torneo/:torneoId/formulario', exige(PERMS_TORNEO), async 
     const torneo = await torneoDelEvento(eventoId, torneoId);
     if (!torneo) return res.status(404).json({ error: 'Torneo no encontrado.' });
 
-    const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
-    const falloDef = validarDefinicion(campos, { max: MAX_CAMPOS_TORNEO });
-    if (falloDef) return res.status(400).json({ error: falloDef });
-
-    /* Sólo los de ESTE torneo. */
-    const { data: existentes, error: eGet } = await supabase
-      .from('event_form_fields').select('id')
-      .eq('evento_id', eventoId).eq('torneo_id', torneoId);
-    if (eGet) {
-      if (falta0095(eGet)) return res.status(503).json({ error: AVISO_0095 });
-      return res.status(500).json({ error: eGet.message });
+    /* El alcance —`torneo_id`— es lo que separa «guardar las preguntas de este
+       torneo» de «borrar las del evento y las de los demas torneos», y sale del
+       mismo sitio que el borrado. */
+    const r = await guardarCampos({
+      eventoId, alcance: { torneo_id: torneoId },
+      campos: req.body.campos, max: MAX_CAMPOS_TORNEO,
+    });
+    if (r.error) {
+      if (falta0095({ message: r.error })) return res.status(503).json({ error: AVISO_0095 });
+      return res.status(r.estado || 500).json({ error: r.error });
     }
 
-    const idsExistentes = new Set((existentes || []).map(c => c.id));
-    const idsEnviados = new Set(campos.filter(c => c.id && idsExistentes.has(c.id)).map(c => c.id));
-
-    const idsABorrar = [...idsExistentes].filter(id => !idsEnviados.has(id));
-    if (idsABorrar.length) {
-      const { error } = await supabase.from('event_form_fields').delete().in('id', idsABorrar);
-      if (error) return res.status(500).json({ error: error.message });
-    }
-
-    for (let i = 0; i < campos.length; i++) {
-      const c = campos[i];
-      if (!c.id || !idsExistentes.has(c.id)) continue;
-      /* Conserva el id: lo que ya contestó un equipo apunta a él. */
-      const { error } = await supabase
-        .from('event_form_fields').update(filaCampo(c, i)).eq('id', c.id);
-      if (error) return res.status(500).json({ error: error.message });
-    }
-
-    const nuevos = campos.map((c, i) => ({ ...c, _orden: i }))
-      .filter(c => !c.id || !idsExistentes.has(c.id));
-    if (nuevos.length) {
-      const filas = nuevos.map(c => ({
-        evento_id: eventoId,
-        torneo_id: torneoId,
-        /* «Sólo para el tipo VIP» es un filtro del formulario de compra; aquí
-           el filtro ya es el torneo. */
-        ...filaCampo({ ...c, ticket_type_id: null }, c._orden),
-      }));
-      const { error } = await supabase.from('event_form_fields').insert(filas);
-      if (error) return res.status(500).json({ error: error.message });
-    }
-
-    const { data: final, error: eFinal } = await supabase
-      .from('event_form_fields').select(COLUMNAS_CAMPO)
-      .eq('evento_id', eventoId).eq('torneo_id', torneoId)
-      .order('orden', { ascending: true });
-    /* Se acaban de guardar: si la relectura falla y se devuelve una lista
-       vacía, el panel enseña que no hay campos justo después de crearlos. */
-    if (eFinal) console.error(`[torneos] releer campos de ${torneoId}: ${eFinal.message}`);
-
-    res.json({ campos: final || [] });
+    res.json({ campos: r.campos });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

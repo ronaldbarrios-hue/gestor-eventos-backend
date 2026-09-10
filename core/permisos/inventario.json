@@ -1,7 +1,7 @@
 {
   "pendientes_maximo": 0,
   "censado_el": "2026-09-10",
-  "total": 348,
+  "total": 349,
   "rutas": {
     "GET /": {
       "estado": "publica",
@@ -960,6 +960,12 @@
       "estado": "exige",
       "acciones": [
         "gestionar_clientes"
+      ]
+    },
+    "DELETE /eventos/:eventoId/clientes/:ticketId": {
+      "estado": "exige",
+      "acciones": [
+        "borrar_boletas"
       ]
     },
     "GET /eventos/:eventoId/dinero": {

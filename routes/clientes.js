@@ -36,6 +36,9 @@ router.use(verifySupabaseJWT);
 const { rutaDe, paraExportar, BUCKET_PRIVADO, SEGUNDOS_FIRMA } = require('../lib/archivoDeFormulario.js');
 
 const PERMS_CLIENTES = ['gestionar_clientes'];
+/* Borrar va aparte de atender: quien reenvía boletas y corrige datos todo el
+   día no tiene por qué poder borrar de paso. */
+const PERMS_BORRAR = ['borrar_boletas'];
 
 function assertOwner(eventoId, userId, perms = PERMS_CLIENTES) {
   return assertPermiso(eventoId, userId, perms, 'id, owner_id');
@@ -288,6 +291,78 @@ router.patch('/:eventoId/clientes/:ticketId', exige(PERMS_CLIENTES), async (req,
     }
 
     res.json({ ticket: data });
+  } catch (e) {
+    res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
+  }
+});
+
+/* DELETE /eventos/:eventoId/clientes/:ticketId — borrar una boleta
+ *
+ * ── Borrar no es anular ──────────────────────────────────────────────────
+ *
+ * Anular deja la fila: la persona sigue en la lista, marcada como inválida, y
+ * queda el rastro de que existió. Es lo correcto casi siempre.
+ *
+ * Esto es para lo que NO DEBIÓ EXISTIR: los duplicados que deja un fallo —un
+ * registro que devolvió error y se reintentó cinco veces—, las boletas de
+ * prueba del montaje. Ahí «marcar como inválida» deja la lista llena de ruido
+ * que hay que explicarle a alguien en la puerta.
+ *
+ * ── Lo que NO se borra ───────────────────────────────────────────────────
+ *
+ * Una boleta que se pagó con dinero. Borrarla destruye el registro de un pago
+ * que sí ocurrió, y eso no se arregla con un «deshacer». Para eso está el
+ * reembolso, que deja constancia.
+ *
+ * ── Y los contadores ─────────────────────────────────────────────────────
+ *
+ * Se mueven igual que al anular. Es el mismo error que ya costó caro una vez:
+ * quitar una boleta sin bajar el aforo deja el evento «agotado» con sitios
+ * vacíos, y la lista de espera sin enterarse.
+ */
+router.delete('/:eventoId/clientes/:ticketId', exige(PERMS_BORRAR), async (req, res) => {
+  const { eventoId, ticketId } = req.params;
+  try {
+    await assertOwner(eventoId, req.user.id, PERMS_BORRAR);
+
+    const { data: t } = await supabase
+      .from('tickets')
+      .select('id, estado, ticket_type_id, precio_pagado, codigo, guest_nombre, guest_email')
+      .eq('id', ticketId).eq('evento_id', eventoId).maybeSingle();
+    if (!t) return res.status(404).json({ error: 'Boleta no encontrada.' });
+
+    if (Number(t.precio_pagado) > 0) {
+      return res.status(409).json({
+        error: 'Esta boleta se pagó. Bórrala no: reembólsala, para que quede constancia de la devolución.',
+      });
+    }
+
+    /* Cuántas personas mueve, ANTES de borrar: después no hay a quién
+       preguntarle su capacidad. */
+    const ocupaba = ESTADOS_QUE_OCUPAN.has(t.estado);
+    const personas = ocupaba ? await personasDeTicket(ticketId) : 1;
+
+    /* La silla primero. Si se borra la boleta antes, la reserva se queda
+       apuntando a una fila que ya no existe y nadie puede volver a venderla. */
+    await sillaDeLaCompra.liberarPorTicket(ticketId).catch(() => {});
+
+    const { error } = await supabase
+      .from('tickets').delete().eq('id', ticketId).eq('evento_id', eventoId);
+    if (error) return res.status(500).json({ error: error.message });
+
+    if (ocupaba) {
+      await ajustarAforo(eventoId, t.ticket_type_id, -1, personas);
+      ofrecerCupoAlSiguiente({ eventoId, ticketTypeId: t.ticket_type_id }).catch(() => {});
+    }
+
+    /* Queda anotado con el código y el correo: es lo único que sobrevive a la
+       fila, y lo que contesta «¿qué pasó con la boleta de esta persona?». */
+    auditar(req, eventoId, 'boleta.borrar', {
+      entidad: 'ticket', entidadId: ticketId,
+      detalle: { codigo: t.codigo, email: t.guest_email, nombre: t.guest_nombre, estado: t.estado },
+    });
+
+    res.json({ ok: true, codigo: t.codigo });
   } catch (e) {
     res.status(e.message === 'No autorizado.' ? 403 : 400).json({ error: e.message });
   }

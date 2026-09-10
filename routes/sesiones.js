@@ -32,9 +32,10 @@ const { horaDelEscaneo } = require('../lib/horaDeEscaneo.js');
 const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
+const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
 const {
   validarFormulario, normalizarRespuestas,
-  TIPOS_CAMPO, GRUPOS, COLUMNAS_CAMPO, filaCampo, validarDefinicion,
+  COLUMNAS_CAMPO,
   MAX_CAMPOS_FORMULARIO,
 } = require('../lib/formularioCampos.js');
 const { enviarEmailEvento } = require('../lib/emailPlantillas.js');
@@ -474,26 +475,14 @@ panel.get('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: 
     const sesion = await sesionDelEvento(eventoId, sesionId);
     if (!sesion) return res.status(404).json({ error: 'Sub-evento no encontrado.' });
 
-    const { data, error } = await supabase
-      .from('event_form_fields')
-      .select(COLUMNAS_CAMPO)
-      .eq('evento_id', eventoId)
-      .eq('session_id', sesionId)
-      .order('orden', { ascending: true });
+    const { campos, error } = await leerCampos(eventoId, { session_id: sesionId });
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json({
-      sesion,
-      campos: data || [],
-      /* El catálogo viaja con la respuesta, igual que en el formulario del
-         evento: el panel no mantiene su propia copia. */
-      tipos: TIPOS_CAMPO,
-      /* `grupos` como sugerencia, igual que en el formulario del evento. La
-         columna `grupo` es de `event_form_fields` desde la 0055, o sea que
-         estos formularios ya la guardaban — lo que faltaba era ofrecerla. */
-      grupos: GRUPOS,
-      max_campos: MAX_CAMPOS_SUBEVENTO,
-    });
+    /* El MISMO catálogo que el formulario del evento, fichas e importación
+       incluidas. Antes esta ruta armaba el suyo y se dejaba fuera las dos: un
+       taller con veinte preguntas se escribía a mano una a una mientras la
+       misma pantalla las importaba de una hoja para el evento. */
+    res.json({ sesion, campos, ...catalogoDeFormulario({ max: MAX_CAMPOS_SUBEVENTO }) });
   } catch (e) { fallo(res, e); }
 });
 
@@ -505,74 +494,26 @@ panel.put('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: 
     const sesion = await sesionDelEvento(eventoId, sesionId);
     if (!sesion) return res.status(404).json({ error: 'Sub-evento no encontrado.' });
 
-    const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
-    const falloDef = validarDefinicion(campos, { max: MAX_CAMPOS_SUBEVENTO });
-    if (falloDef) return res.status(400).json({ error: falloDef });
-
-    /* Sólo las de ESTE sub-evento. Sin el `.eq('session_id', …)` el diff se
-       llevaría el formulario del evento entero. */
-    const { data: existentes, error: eGet } = await supabase
-      .from('event_form_fields')
-      .select('id')
-      .eq('evento_id', eventoId)
-      .eq('session_id', sesionId);
-    if (eGet) return res.status(500).json({ error: eGet.message });
-
-    const idsExistentes = new Set((existentes || []).map(c => c.id));
-    const idsEnviados = new Set(campos.filter(c => c.id && idsExistentes.has(c.id)).map(c => c.id));
-
-    const idsABorrar = [...idsExistentes].filter(id => !idsEnviados.has(id));
-    if (idsABorrar.length) {
-      const { error } = await supabase.from('event_form_fields').delete().in('id', idsABorrar);
-      if (error) return res.status(500).json({ error: error.message });
-    }
-
-    for (let i = 0; i < campos.length; i++) {
-      const c = campos[i];
-      if (!c.id || !idsExistentes.has(c.id)) continue;
-      /* Conserva el id: las respuestas ya guardadas apuntan a él y renombrar
-         una pregunta no puede huerfanizar lo que ya contestó la gente. */
-      const { error } = await supabase
-        .from('event_form_fields').update(filaCampo(c, i)).eq('id', c.id);
-      if (error) return res.status(500).json({ error: error.message });
-    }
-
-    const nuevos = campos
-      .map((c, i) => ({ ...c, _orden: i }))
-      .filter(c => !c.id || !idsExistentes.has(c.id));
-    if (nuevos.length) {
-      const filas = nuevos.map(c => ({
-        evento_id: eventoId,
-        session_id: sesionId,
-        /* Una pregunta de sub-evento nunca es "sólo para el tipo VIP": ese
-           filtro es del formulario de compra y aquí no significa nada. */
-        ...filaCampo({ ...c, ticket_type_id: null }, c._orden),
-      }));
-      const { error } = await supabase.from('event_form_fields').insert(filas);
-      if (error) return res.status(500).json({ error: error.message });
-    }
+    /* El alcance —`session_id`— es lo que separa «guardar mis preguntas» de
+       «borrar el formulario del evento entero», y va en el mismo sitio que el
+       borrado. */
+    const r = await guardarCampos({
+      eventoId, alcance: { session_id: sesionId },
+      campos: req.body.campos, max: MAX_CAMPOS_SUBEVENTO,
+    });
+    if (r.error) return res.status(r.estado || 500).json({ error: r.error });
 
     /* Guardar preguntas y dejar el sub-evento en un modo que no las usa sería
        escribir en el vacío. Se pone en 'propio' solo; y si se quedó sin
        ninguna, se vuelve a 'ninguno' para que la agenda pública no enseñe un
        formulario vacío. */
-    const modoQueToca = campos.length ? 'propio' : (sesion.formulario_modo === 'propio' ? 'ninguno' : sesion.formulario_modo);
+    const modoQueToca = r.campos.length ? 'propio' : (sesion.formulario_modo === 'propio' ? 'ninguno' : sesion.formulario_modo);
     if (modoQueToca !== sesion.formulario_modo) {
       await supabase.from('agenda_sessions')
         .update({ formulario_modo: modoQueToca }).eq('id', sesionId);
     }
 
-    const { data: final, error: eFinal } = await supabase
-      .from('event_form_fields')
-      .select(COLUMNAS_CAMPO)
-      .eq('evento_id', eventoId)
-      .eq('session_id', sesionId)
-      .order('orden', { ascending: true });
-    /* Relectura después de guardar el formulario: una lista vacía dice que se
-       perdieron las preguntas que se acaban de escribir. */
-    if (eFinal) console.error(`[sesiones] releer campos de ${sesionId}: ${eFinal.message}`);
-
-    res.json({ campos: final || [], formulario_modo: modoQueToca });
+    res.json({ campos: r.campos, formulario_modo: modoQueToca });
   } catch (e) { fallo(res, e); }
 });
 

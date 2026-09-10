@@ -1,6 +1,6 @@
 -- 0122 · Los permisos que faltaban
 --
--- Tres secciones del panel no se podían conceder ni quitar por rol, porque no
+-- Cuatro cosas del panel no se podían conceder ni quitar por rol, porque no
 -- existía el permiso:
 --
 --   Accesos e ingresos    era del DUEÑO y de nadie más. Eso deja a quien
@@ -10,7 +10,11 @@
 --   Anuncios              lo mismo, y quien lleva la comunicación de un
 --                         festival no suele ser quien creó el evento aquí.
 --   Documentos            al revés: no pedía NADA. Cualquier miembro del equipo
---                         veía los contratos y los riders. Con un contrato
+--                         veía los contratos y los riders.
+--   Borrar boletas        no existía la acción. Anular deja la fila —y eso está
+--                         bien casi siempre— pero los duplicados que deja un
+--                         fallo hay que poder quitarlos, y no con el mismo
+--                         permiso que atiende asistentes. Con un contrato
 --                         dentro eso no es una decisión, es un descuido.
 --
 -- ── Lo que esta migración cuida ────────────────────────────────────────
@@ -44,7 +48,7 @@ as $$
         "gestionar_agenda","gestionar_torneo","gestionar_expositores","gestionar_accesos",
         "invitar_staff","gestionar_roles","remover_miembros","gestionar_solicitudes","ver_documentos",
         "gestionar_tickets","gestionar_descuentos",
-        "ver_clientes","gestionar_clientes","checkin","vip_zone",
+        "ver_clientes","gestionar_clientes","checkin","vip_zone","borrar_boletas",
         "crear_canales","borrar_mensajes","publicar_anuncios",
         "ver_pagos","reembolsar","ver_analytics"]'::jsonb, 0),
     ('Editor',            'Edita información, agenda y página pública',
@@ -93,7 +97,7 @@ update public.event_roles r
    set permissions = coalesce(
          (select jsonb_agg(distinct p)
             from jsonb_array_elements_text(
-              r.permissions || '["gestionar_accesos","publicar_anuncios"]'::jsonb) p),
+              r.permissions || '["gestionar_accesos","publicar_anuncios","borrar_boletas"]'::jsonb) p),
          r.permissions)
  where r.is_system
    and r.nombre = 'Administrador';
@@ -107,7 +111,7 @@ update public.event_roles r
 --   -- Y el Administrador tiene los tres nuevos:
 --   select count(*) from public.event_roles
 --    where is_system and nombre = 'Administrador'
---      and not (permissions ?& array['ver_documentos','gestionar_accesos','publicar_anuncios']);
+--      and not (permissions ?& array['ver_documentos','gestionar_accesos','publicar_anuncios','borrar_boletas']);
 --   -- 0
 --
 -- ── Vuelta atrás ───────────────────────────────────────────────────────
@@ -117,6 +121,6 @@ update public.event_roles r
 --
 --   update public.event_roles
 --      set permissions = (select jsonb_agg(p) from jsonb_array_elements_text(permissions) p
---                          where p not in ('ver_documentos','gestionar_accesos','publicar_anuncios'));
+--                          where p not in ('ver_documentos','gestionar_accesos','publicar_anuncios','borrar_boletas'));
 --
 -- Y volver a aplicar la 0109 para la semilla.

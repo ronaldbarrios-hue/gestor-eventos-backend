@@ -33,6 +33,7 @@ const { anotarConstancia } = require('../lib/constanciaLegal.js');
 const { verifySupabaseJWT, verifySupabaseJWTOptional } = require('../middleware/auth.js');
 const { assertPermiso } = require('../lib/acceso.js');
 const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
+const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
 const {
   validarFormulario, normalizarRespuestas,
   COLUMNAS_CAMPO,
@@ -517,23 +518,46 @@ panel.put('/:eventoId/sesiones/:sesionId/formulario', sesion("Panel del evento: 
   } catch (e) { fallo(res, e); }
 });
 
-/* Los inscritos de un sub-evento, con sus respuestas del formulario. */
+/* Los inscritos de un sub-evento, con sus respuestas del formulario.
+ *
+ * Se servían con un tope de 500 y sin decirlo. Es el mismo corte en silencio
+ * que tenía la lista de asistentes —donde ya mordió: 386 boletas y se veían
+ * cien— sólo con el techo más arriba, esperando el primer taller grande. Una
+ * lista que se corta sin avisar se cree: quien no encuentra a alguien concluye
+ * que no está inscrito.
+ *
+ * Ahora va por tramos, con `q` para buscar por nombre, correo o código de
+ * boleta — lo mismo que en asistentes, porque es la misma pregunta. */
 panel.get('/:eventoId/sesiones/:sesionId/inscripciones', sesion("Panel del evento: la ruta llama a assertPermiso con su lista concreta antes de tocar nada."), async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 500, 2000);
+  const tramo = tramoPedido(req.query);
+  const { q } = req.query;
   try {
     await assertPermiso(req.params.eventoId, req.user.id, PERMS_VER, 'id, owner_id');
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('sesion_inscripciones')
       .select(`id, nombre, email, telefono, respuestas, estado, asistio_at, created_at,
                ticket:tickets!ticket_id(codigo, guest_nombre, guest_email,
-                                        usuario:profiles!user_id(nombre, email))`)
+                                        usuario:profiles!user_id(nombre, email))`,
+              { count: 'exact' })
       .eq('evento_id', req.params.eventoId)
       .eq('session_id', req.params.sesionId)
       .order('created_at', { ascending: true })
-      .limit(limit);
+      .range(tramo.desde, tramo.hasta);
+
+    if (q) {
+      /* Sólo por las columnas de ESTA tabla. El nombre de la boleta —cuando la
+         inscripción no trae uno propio— vive en `tickets`, y filtrar por una
+         tabla relacionada dentro de un `or()` no se puede sin convertir la
+         relación en un `!inner`, que dejaría fuera a las inscripciones sin
+         boleta. Se prefiere buscar en menos sitios a perder filas. */
+      const t = paraBuscar(q);
+      if (t) query = query.or(`nombre.ilike.%${t}%,email.ilike.%${t}%`);
+    }
+
+    const { data, count, error } = await query;
     if (error) {
-      if (faltaMigracion(error)) return res.json({ inscripciones: [], almacenamiento_listo: false });
+      if (faltaMigracion(error)) return res.json({ inscripciones: [], almacenamiento_listo: false, total: 0, pagina: 1, por_pagina: tramo.porPagina, paginas: 1 });
       return res.status(500).json({ error: error.message });
     }
 
@@ -545,7 +569,36 @@ panel.get('/:eventoId/sesiones/:sesionId/inscripciones', sesion("Panel del event
       email_mostrar: i.email || i.ticket?.usuario?.email || i.ticket?.guest_email || '—',
       codigo_boleta: i.ticket?.codigo || null,
     }));
-    res.json({ inscripciones, almacenamiento_listo: true });
+    /* Los totales del SUB-EVENTO, no de la pagina.
+     *
+     * «34 apuntados de 40» se calculaba sobre las filas cargadas. Con la lista
+     * partida en paginas eso diria «50 apuntados» en un taller de ochenta —un
+     * numero equivocado en la cabecera es peor que no ponerlo, porque se usa
+     * para decidir si queda cupo—. Se cuentan aparte, con `head: true`: no
+     * traen filas, solo el numero.
+     *
+     * `q` NO entra aqui a proposito: la cabecera dice cuanta gente hay
+     * apuntada, y eso no cambia porque alguien escriba en el buscador. */
+    const cuenta = async (fn) => {
+      const { count: n } = await fn(supabase
+        .from('sesion_inscripciones')
+        .select('id', { count: 'exact', head: true })
+        .eq('evento_id', req.params.eventoId)
+        .eq('session_id', req.params.sesionId));
+      return n || 0;
+    };
+    const [apuntados, asistieron] = await Promise.all([
+      cuenta(q2 => q2.neq('estado', 'cancelado')),
+      cuenta(q2 => q2.eq('estado', 'asistio')),
+    ]).catch(() => [null, null]);
+
+    res.json({
+      inscripciones, almacenamiento_listo: true,
+      ...datosDelTramo(tramo, count),
+      /* `null` si no se pudieron contar: el panel enseña lo que tenga en vez
+         de un cero que parece un dato. */
+      apuntados, asistieron,
+    });
   } catch (e) { fallo(res, e); }
 });
 

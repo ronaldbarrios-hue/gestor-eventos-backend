@@ -22,6 +22,8 @@ const { leerPuerta } = require('../lib/zonasTabla.js');
 const { COLS_TARJETA, standsPorZona } = require('../lib/expositores.js');
 const { generarCodigo } = require('../lib/codigos.js');
 const { aQuienLeImporta } = require('../lib/aQuienLeImporta.js');
+const { tramoPedido, datosDelTramo, paraBuscar } = require('../lib/tramoDeLista.js');
+const { yaRegistrados, clavePersona } = require('../lib/yaEstabaRegistrado.js');
 
 /* Notificar sin romper la petición si el helper falla. */
 function avisar(payload) {
@@ -35,48 +37,6 @@ router.use(verifySupabaseJWT);
 /* Owner o miembro con permiso. Por defecto 'gestionar_clientes'
    (editar/importar); el listado acepta también 'ver_clientes'. */
 const { rutaDe, paraExportar, BUCKET_PRIVADO, SEGUNDOS_FIRMA } = require('../lib/archivoDeFormulario.js');
-
-/* ── Qué tramo de la lista se pide ──────────────────────────────────────
- *
- * La lista de asistentes de un evento real son cientos de filas. Se servían
- * de cien en cien y el panel no mandaba página ni la enseñaba: en un evento de
- * 386 boletas se veían las primeras 100 y **la lista simplemente se acababa**.
- * Sin error, sin aviso, sin nada que dijera que había 286 más. Quien buscaba a
- * alguien de la mitad de la lista concluía que no estaba inscrito.
- *
- * Aquí se sanea lo que llega, porque antes no se saneaba nada: un `page=abc`
- * daba `NaN` y `range(NaN, NaN)` no devuelve vacío, revienta la consulta.
- */
-const POR_PAGINA = 50;
-/* Tope por petición. Por encima de esto lo que se quiere es la exportación,
-   que existe y va por otro camino (`/clientes/exportar`). */
-const MAXIMO_POR_PAGINA = 200;
-
-function tramoPedido({ limit, page } = {}) {
-  const pedido = Math.floor(Number(limit));
-  const porPagina = Number.isFinite(pedido) && pedido > 0
-    ? Math.min(pedido, MAXIMO_POR_PAGINA)
-    : POR_PAGINA;
-  const p = Math.floor(Number(page));
-  const pagina = Number.isFinite(p) && p > 0 ? p : 1;
-  const desde = (pagina - 1) * porPagina;
-  return { porPagina, pagina, desde, hasta: desde + porPagina - 1 };
-}
-
-/* Lo que se escribe en la caja de búsqueda, listo para un `or()` de PostgREST.
- *
- * La coma separa las condiciones de un `or()`, y los paréntesis lo delimitan:
- * buscar «Pérez, Juan» rompía la consulta entera —un 400 en la cara de quien
- * sólo estaba buscando a alguien— y un paréntesis podía cambiar qué se
- * filtraba. Se cambian por `%`, que en un `ilike` es «lo que sea»: así
- * «Pérez, Juan» encuentra a «Pérez Juan» y no rompe nada.
- *
- * Lo que NO hace: encontrar «Juan Pérez» buscando «Pérez, Juan». Para eso
- * habría que partir la búsqueda en palabras y exigirlas todas, que es otra
- * cosa y más grande. Aquí se arregla el 400. */
-function paraBuscar(q) {
-  return String(q == null ? '' : q).trim().slice(0, 120).replace(/[,()"\\]/g, '%');
-}
 
 const PERMS_CLIENTES = ['gestionar_clientes'];
 /* Borrar va aparte de atender: quien reenvía boletas y corrige datos todo el
@@ -220,7 +180,7 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
    *
    * El tope es 200 y no más: por encima, lo que se quiere es la exportación,
    * que existe y va por otro camino. */
-  const { porPagina, pagina, desde, hasta } = tramoPedido(req.query);
+  const tramo = tramoPedido(req.query);
   /* El filtro «sin pagar» necesita cruzar con el tipo de boleta para mirar su
      precio, y eso pide un `inner join`. En los demas casos NO se pone: un
      inner join descartaria las boletas cuyo tipo se borro, y esas tambien
@@ -245,7 +205,7 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
       `, { count: 'exact' })
       .eq('evento_id', eventoId)
       .order('created_at', { ascending: false })
-      .range(desde, hasta);
+      .range(tramo.desde, tramo.hasta);
 
     if (estado === 'sin_pagar') {
       /* «Sin pagar» no es un estado de la boleta, es una pregunta: quien
@@ -312,13 +272,10 @@ router.get('/:eventoId/clientes', exige(PERMS_CLIENTES), async (req, res) => {
 
     res.json({
       clientes: data || [],
-      total: count ?? 0,
       /* Con qué tramo se contesta, para que el panel pueda pintar «51-100 de
          386» y un «siguiente». Antes sólo viajaba `total`, y el panel ni lo
          miraba: la lista se cortaba a las 100 y no lo decía. */
-      pagina,
-      por_pagina: porPagina,
-      paginas: Math.max(1, Math.ceil((count ?? 0) / porPagina)),
+      ...datosDelTramo(tramo, count),
       stats,
       tipos: tipos || [],
       campos_formulario: camposForm || [],
@@ -795,16 +752,23 @@ router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, r
       .order('orden', { ascending: true });
     const camposForm = campos || [];
 
-    /* Correos ya emitidos, para no duplicar. Se consulta por trozos porque un
-       `in` con 5.000 valores no pasa. */
-    const emails = rows.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean);
-    const dup = new Set();
-    for (let i = 0; i < emails.length; i += 300) {
-      const { data: ex } = await supabase
-        .from('tickets').select('guest_email')
-        .eq('evento_id', eventoId).in('guest_email', emails.slice(i, i + 300));
-      (ex || []).forEach(x => x.guest_email && dup.add(x.guest_email));
-    }
+    /* Quiénes de la lista YA tienen esta misma boleta.
+     *
+     * La regla es la MISMA que la del registro público, y vive en
+     * `lib/yaEstabaRegistrado.js`. Hasta hoy eran dos: aquí se rechazaba
+     * cualquier correo que ya tuviera una boleta en el evento —sin mirar el
+     * tipo—, así que importar a alguien del registro general para el DemoDay
+     * fallaba con «Ya existe una boleta con ese correo», mientras el registro
+     * público sí lo permitía. Y lo permitía con razón: en el evento que se
+     * midió, 3 de 48 repeticiones eran justo eso.
+     *
+     * Dos caminos con dos reglas para la misma pregunta es cómo se acaba
+     * explicando a quien organiza que «depende de por dónde lo metas». */
+    const yaEstaban = await yaRegistrados({
+      eventoId,
+      tipoId: tipo.id,
+      correos: rows.map(r => r.email),
+    });
 
     const estado = marcar_pagado ? 'pagado' : 'emitido';
     const precio_efectivo = marcar_pagado ? Number(tipo.precio) : null;
@@ -826,7 +790,22 @@ router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, r
          de la gente a la que se le va a entregar la boleta impresa o por
          WhatsApp. Exigirlo dejaba fuera exactamente ese caso. */
       if (email && !email.includes('@')) { errores.push({ fila, motivo: 'Correo invalido.', row: r }); continue; }
-      if (email && dup.has(email))       { errores.push({ fila, motivo: 'Ya existe una boleta con ese correo.', row: r }); continue; }
+      /* Mismo correo, mismo nombre y misma boleta: ya la tiene.
+       *
+       * El nombre cuenta porque un correo no es una persona: en el evento que
+       * se midió, 12 de 45 repeticiones traían otro nombre —alguien
+       * inscribiendo a su equipo o a su familia con su propio correo—, y
+       * cortar por correo a secas dejaba fuera justo esas filas. Que es
+       * exactamente lo que hacía esta importación.
+       *
+       * Y se mira también contra las filas anteriores del MISMO archivo: una
+       * lista con la misma persona dos veces creaba dos boletas, porque la
+       * comprobación sólo miraba la base. */
+      const suClave = clavePersona(email, nombre);
+      if (email && yaEstaban.has(suClave)) {
+        errores.push({ fila, motivo: `${nombre} ya tiene esta boleta.`, row: r });
+        continue;
+      }
 
       let respuestas = null;
       if (r.respuestas && typeof r.respuestas === 'object') {
@@ -836,7 +815,8 @@ router.post('/:eventoId/clientes/importar', exige(PERMS_CLIENTES), async (req, r
         respuestas = Object.keys(limpias).length ? limpias : null;
       }
 
-      if (email) dup.add(email);
+      /* Se apunta para que la siguiente fila del archivo la vea. */
+      if (email) yaEstaban.add(suClave);
       aInsertar.push({
         fila,
         row: {
@@ -1745,6 +1725,3 @@ router.get('/:eventoId/clientes/:ticketId/archivo', exige(['ver_clientes', 'gest
 });
 
 module.exports = router;
-/* Para las pruebas: saneado del tramo y de la busqueda. Son las dos cosas de
-   esta ruta que se pueden equivocar en silencio. */
-module.exports._test = { tramoPedido, paraBuscar, POR_PAGINA, MAXIMO_POR_PAGINA };

@@ -89,10 +89,30 @@ async function assertAccess(eventoId, userId) {
 
   const { data: m } = await supabase
     .from('event_members')
-    .select('id, rol_id').eq('evento_id', eventoId).eq('user_id', userId).eq('status', 'active')
+    .select('id, rol_id, custom_permissions, rol_detail:event_roles!rol_id(permissions)')
+    .eq('evento_id', eventoId).eq('user_id', userId).eq('status', 'active')
     .maybeSingle();
   if (!m) throw new Error('No autorizado.');
-  return { ev, isOwner: false, member: m };
+  const suyos = new Set([...(m.rol_detail?.permissions || []), ...(m.custom_permissions || [])]);
+  return { ev, isOwner: false, member: m, permisos: suyos, mandaTodo: suyos.has('*') };
+}
+
+/* Quién reparte el trabajo.
+ *
+ * Era `owner_id` y punto: «Solo el organizador puede crear tareas». Quien lleva
+ * la logística —la persona cuyo trabajo ES repartir el trabajo— veía el tablero
+ * y no podía poner nada en él, ni reasignar, ni cambiar una fecha. Tenía que
+ * pedírselo a quien creó el evento, tarea por tarea.
+ *
+ * `editar_evento` cuenta además del permiso nuevo: los roles que ya existen
+ * —Administrador, Editor, Coordinador— lo tienen, y sin esto habría que
+ * migrarlos a todos para que siguieran haciendo lo que ya hacían. Nadie pierde
+ * nada y quien quiera dar sólo esto, ahora puede. */
+const MANDAN_EN_TAREAS = ['gestionar_tareas', 'editar_evento'];
+
+function repartaTrabajo(ctx) {
+  return Boolean(ctx.isOwner || ctx.mandaTodo
+    || MANDAN_EN_TAREAS.some(p => ctx.permisos?.has(p)));
 }
 
 const ESTADOS    = ['pendiente', 'en_curso', 'hecho', 'cancelada'];
@@ -121,7 +141,10 @@ router.get('/:eventoId/tareas', sesion('Es del equipo del evento: la ruta compru
       .order('orden', { ascending: true })
       .order('created_at', { ascending: false });
 
-    if (!ctx.isOwner) {
+    /* Quien reparte el trabajo ve el tablero ENTERO. Antes sólo lo veía el
+       dueño y los demás veían lo suyo, que para quien asigna es no ver nada:
+       las tareas que reparte son de otros por definición. */
+    if (!repartaTrabajo(ctx)) {
       /* Filtra: asignadas a mí o a mi rol o sin asignar a nadie en mi rol */
       query = query.or(`asignado_user_id.eq.${req.user.id},asignado_rol_id.eq.${ctx.member.rol_id}`);
     }
@@ -142,7 +165,7 @@ router.post('/:eventoId/tareas', sesion('Es del equipo del evento: la ruta compr
 
   try {
     const ctx = await assertAccess(eventoId, req.user.id);
-    if (!ctx.isOwner) return res.status(403).json({ error: 'Solo el organizador puede crear tareas.' });
+    if (!repartaTrabajo(ctx)) return res.status(403).json({ error: 'No puedes crear tareas en este evento.' });
 
     const { data, error } = await supabase
       .from('tareas').insert({
@@ -180,9 +203,17 @@ router.patch('/:eventoId/tareas/:tareaId', sesion('Es del equipo del evento: la 
     if (!actual) return res.status(404).json({ error: 'Tarea no encontrada.' });
 
     /* Permisos diferenciados */
-    const allOwner = ['titulo','descripcion','prioridad','asignado_user_id','asignado_rol_id','vence_at','orden'];
+    /* Tres formas de poder tocar una tarea, y cada una da lo suyo:
+       · quien reparte el trabajo, todo;
+       · quien la escribió, todo — aunque luego le quiten el permiso, para que
+         una tarea no se quede sin nadie que pueda corregirla;
+       · a quien se la asignaron, sólo darla por hecha. */
+    const TODO_LO_SUYO = ['titulo','descripcion','prioridad','asignado_user_id','asignado_rol_id','vence_at','orden'];
     const ownByAsignado = actual.asignado_user_id === req.user.id;
-    const fields = ctx.isOwner ? [...allOwner, 'estado'] : (ownByAsignado ? ['estado'] : []);
+    const laEscribio = actual.created_by && String(actual.created_by) === String(req.user.id);
+    const fields = (repartaTrabajo(ctx) || laEscribio)
+      ? [...TODO_LO_SUYO, 'estado']
+      : (ownByAsignado ? ['estado'] : []);
 
     if (fields.length === 0) return res.status(403).json({ error: 'No puedes editar esta tarea.' });
 
@@ -243,12 +274,19 @@ router.patch('/:eventoId/tareas/:tareaId', sesion('Es del equipo del evento: la 
   }
 });
 
-/* DELETE — solo owner */
+/* DELETE — quien reparte el trabajo, o quien escribió la tarea */
 router.delete('/:eventoId/tareas/:tareaId', sesion('Es del equipo del evento: la ruta comprueba pertenencia activa, no un permiso concreto. Cualquier miembro entra, y lo que puede hacer dentro lo decide el handler.'), async (req, res) => {
   const { eventoId, tareaId } = req.params;
   try {
     const ctx = await assertAccess(eventoId, req.user.id);
-    if (!ctx.isOwner) return res.status(403).json({ error: 'No autorizado.' });
+    /* Se mira la tarea antes de borrarla: quien la escribió puede retirarla
+       aunque no reparta el trabajo — poner una y no poder quitarla deja
+       tableros llenos de cosas que ya no van. */
+    const { data: suya } = await supabase
+      .from('tareas').select('created_by').eq('id', tareaId).eq('evento_id', eventoId).maybeSingle();
+    if (!suya) return res.status(404).json({ error: 'Tarea no encontrada.' });
+    const laEscribio = suya.created_by && String(suya.created_by) === String(req.user.id);
+    if (!repartaTrabajo(ctx) && !laEscribio) return res.status(403).json({ error: 'No autorizado.' });
     const { error } = await supabase
       .from('tareas').delete().eq('id', tareaId).eq('evento_id', eventoId);
     if (error) return res.status(500).json({ error: error.message });

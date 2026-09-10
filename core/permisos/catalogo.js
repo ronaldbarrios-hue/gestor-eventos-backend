@@ -56,6 +56,11 @@ const CATALOGO = [
      organizador de un evento de siete mil personas como el único que puede
      aprobar que a alguien le cambien una letra del nombre en la escarapela. */
   { id: 'gestionar_solicitudes', grupo: 'Equipo',    label: 'Atender solicitudes del equipo' },
+  /* Repartir el trabajo del evento: crear tareas, asignarlas y moverlas.
+     Hasta ahora esto no era un permiso — era `owner_id`, comprobado dentro del
+     handler con un «Solo el organizador puede crear tareas». O sea que quien
+     lleva la logística podía ver el tablero y no poner nada en él. */
+  { id: 'gestionar_tareas',      grupo: 'Equipo',    label: 'Asignar tareas' },
   /* VER los documentos del evento: contratos, riders, listas.
    *
    * De lectura y no de escritura, porque escribirlos ya tenía dueño: viven en

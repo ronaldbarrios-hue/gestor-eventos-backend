@@ -25,6 +25,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8').replace(/\r/g, '');
+/* Sin comentarios: los comentarios de estas rutas explican por que NO se usa
+   `!inner` y citan el `Math.min` viejo, asi que una prueba que los mide se
+   pone verde midiendo la explicacion del arreglo en vez del arreglo. Ya ha
+   pasado en este repo mas de una vez. */
+const sinComentarios = (f) => leer(f)
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
 const { tramoPedido, datosDelTramo, paraBuscar, POR_PAGINA, MAXIMO } = require('../lib/tramoDeLista.js');
 
 /* ── El saneado, una vez ─────────────────────────────────────────────── */
@@ -110,6 +117,28 @@ for (const l of LISTAS) {
       'volvió el saneado a mano, con su propio tope');
   });
 }
+
+test('buscar en un taller mira también la boleta, no sólo la inscripción', () => {
+  /* El CÓDIGO de la boleta vive sólo en `tickets`, y es por lo que se busca a
+     alguien el día del taller: es lo que tiene en la mano. La pantalla lo
+     ofrecía —«nombre, correo o código»— y filtrando sólo por las columnas de
+     `sesion_inscripciones` no habría encontrado ni uno: un buscador que
+     contesta «nadie» sobre una lista llena.
+     (El nombre y el correo sí suelen estar copiados en la inscripción; buscar
+     también por la boleta cubre las filas donde falten.) */
+  const src = sinComentarios('routes/sesiones.js');
+  const busca = src.slice(src.indexOf('if (q) {'), src.indexOf('const { data, count, error } = await query;'));
+  assert.match(busca, /from\('tickets'\)/, 'no busca en las boletas: no se puede buscar por código');
+  assert.match(busca, /codigo\.ilike/, 'no se puede buscar por código de boleta');
+  assert.match(busca, /ticket_id\.in\./);
+  /* Sin `!inner`: convertir la relación en obligatoria dejaría fuera a las
+     inscripciones sin boleta, que existen a propósito —siempre llega quien
+     aparece en el taller sin haber pasado por la entrada general—. */
+  assert.doesNotMatch(busca, /!inner/);
+  /* Y con tope: los ids viajan en la URL de PostgREST y una búsqueda de una
+     letra casaría con el evento entero. */
+  assert.match(busca, /\.limit\(200\)/);
+});
 
 test('nadie interpola la búsqueda sin sanearla', () => {
   for (const f of ['routes/clientes.js', 'routes/sesiones.js', 'routes/auditoria.js']) {

@@ -546,13 +546,42 @@ panel.get('/:eventoId/sesiones/:sesionId/inscripciones', sesion("Panel del event
       .range(tramo.desde, tramo.hasta);
 
     if (q) {
-      /* Sólo por las columnas de ESTA tabla. El nombre de la boleta —cuando la
-         inscripción no trae uno propio— vive en `tickets`, y filtrar por una
-         tabla relacionada dentro de un `or()` no se puede sin convertir la
-         relación en un `!inner`, que dejaría fuera a las inscripciones sin
-         boleta. Se prefiere buscar en menos sitios a perder filas. */
+      /* Buscar aquí no es buscar en una tabla, son dos.
+       *
+       * El CÓDIGO de la boleta vive sólo en `tickets`, y es por lo que se busca
+       * a alguien el día del taller: es lo que la persona tiene en la mano. La
+       * pantalla lo ofrecía —«buscar por nombre, correo o código»— y filtrando
+       * únicamente por las columnas de `sesion_inscripciones` no habría
+       * encontrado ni uno.
+       *
+       * El nombre y el correo sí suelen estar copiados en la inscripción: al
+       * apuntarse se toman de la boleta si no vienen en el cuerpo. «Suelen»,
+       * no «siempre» — las columnas admiten nulo—, así que buscar también por
+       * la boleta cubre las filas donde falten.
+       *
+       * Primero se buscan las boletas que casan y luego las inscripciones que
+       * sean de esas boletas o que casen por su cuenta. Dos consultas en vez de
+       * un `!inner`, que dejaría fuera a las inscripciones SIN boleta — que
+       * existen a propósito: siempre llega quien aparece en el taller sin haber
+       * pasado por la entrada general. */
       const t = paraBuscar(q);
-      if (t) query = query.or(`nombre.ilike.%${t}%,email.ilike.%${t}%`);
+      if (t) {
+        /* El tope existe porque estos ids viajan en la URL de PostgREST y una
+           búsqueda de una letra casaría con el evento entero. 200 boletas es
+           más de lo que cualquiera revisa a ojo; quien busca así de ancho está
+           mirando, no buscando. */
+        const { data: boletas } = await supabase
+          .from('tickets')
+          .select('id')
+          .eq('evento_id', req.params.eventoId)
+          .or(`codigo.ilike.%${t}%,guest_nombre.ilike.%${t}%,guest_email.ilike.%${t}%`)
+          .limit(200);
+        const ids = (boletas || []).map(x => x.id);
+
+        const condiciones = [`nombre.ilike.%${t}%`, `email.ilike.%${t}%`];
+        if (ids.length) condiciones.push(`ticket_id.in.(${ids.join(',')})`);
+        query = query.or(condiciones.join(','));
+      }
     }
 
     const { data, count, error } = await query;

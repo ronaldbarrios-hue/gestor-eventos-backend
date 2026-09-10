@@ -22,8 +22,25 @@ const path = require('node:path');
 
 const { TODOS } = require('../core/permisos/catalogo.js');
 
-const SQL = fs.readFileSync(
-  path.join(__dirname, '..', 'db', 'migrations', '0109_roles_que_hacen_lo_que_dicen.sql'), 'utf8');
+/* La ÚLTIMA migración que redefine la semilla, no una en concreto.
+ *
+ * Estaba clavado a la 0109, así que el día que otra migración la redefiniera
+ * —la 0122 lo hace— esta prueba seguiría midiendo la versión vieja: verde
+ * mientras los roles que se crean de verdad son otros. Un test clavado a un
+ * número envejece sin avisar. */
+const DIR = path.join(__dirname, '..', 'db', 'migrations');
+const ARCHIVO_SEMILLA = fs.readdirSync(DIR)
+  /* Sólo las migraciones NUMERADAS. Con `.sort()` a secas ganaba
+     `_pendientes_0107_0108_0109.sql` —el guion bajo ordena después de los
+     dígitos— y la prueba medía un archivo de apuntes en vez de la migración
+     que se aplica. */
+  .filter(f => /^\d{4}_.*\.sql$/.test(f))
+  .filter(f => fs.readFileSync(path.join(DIR, f), 'utf8')
+    .includes('create or replace function private.fn_roles_semilla()'))
+  .sort()
+  .pop();
+
+const SQL = fs.readFileSync(path.join(DIR, ARCHIVO_SEMILLA), 'utf8');
 
 /* La semilla tal cual la declara la migración: se leen los pares
    ('Nombre', 'descripción', '[...]'::jsonb, orden) de dentro de `values`. */
@@ -101,12 +118,33 @@ test('sólo se tocan los roles que nadie ha ajustado', () => {
      La comparación es por CONJUNTO: el orden dentro del jsonb no significa
      nada, y compararlo como texto dejaría fuera filas idénticas. */
   const actualizaciones = [...SQL.matchAll(/update public\.event_roles r([\s\S]*?);/g)].map(m => m[1]);
-  assert.ok(actualizaciones.length >= 3, 'no encuentro las actualizaciones de los roles ya creados');
+  assert.ok(actualizaciones.length >= 1, 'no encuentro las actualizaciones de los roles ya creados');
+
   for (const u of actualizaciones) {
+    /* Una que REEMPLAZA la lista está decidiendo por el organizador, así que
+       sólo puede tocar roles intactos. Una que SÓLO AÑADE —`permissions || …`—
+       no pisa ninguna decisión: da algo que nadie había podido quitar todavía,
+       y hace falta para que un permiso nuevo no empiece quitando acceso.
+
+       La diferencia se lee en el SQL: con `||` se suma, con un literal se
+       sustituye. */
+    const soloAnade = /permissions\s*\|\|/.test(u);
+    if (soloAnade) {
+      assert.equal(/set permissions = '\[/.test(u), false,
+        'dice que suma pero también escribe una lista literal');
+      continue;
+    }
     assert.match(u, /is_system/, 'una actualización toca roles que no son de la semilla');
     assert.match(u, /fn_mismo_conjunto/,
       'una actualización pisa el rol aunque alguien ya lo hubiera ajustado');
   }
-  assert.match(SQL, /create or replace function private\.fn_mismo_conjunto/,
-    'desapareció la comparación por conjunto');
+  /* La comparación por conjunto sólo hace falta si esta migración REEMPLAZA
+     listas. La 0122 no reemplaza ninguna —sólo suma un permiso— y exigirle la
+     función la obligaría a arrastrar código que no usa. La función sigue en la
+     base: se creó con `create or replace` y no se borra. */
+  const hayReemplazos = actualizaciones.some(u => !/permissions\s*\|\|/.test(u));
+  if (hayReemplazos) {
+    assert.match(SQL, /create or replace function private\.fn_mismo_conjunto/,
+      'desapareció la comparación por conjunto');
+  }
 });

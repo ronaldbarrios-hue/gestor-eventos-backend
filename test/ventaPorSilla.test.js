@@ -180,8 +180,19 @@ test('anular o reembolsar desde el panel la devuelve, con la MISMA regla que el 
      `delta < 0` y no con una condición propia. */
   const c = leer('routes/clientes.js');
   assert.match(c, /if \(delta < 0\) \{[\s\S]{0,500}sillaDeLaCompra\.liberarPorTicket\(ticketId\)/);
-  /* Y el reembolso por la pasarela, que es otro camino. */
-  assert.equal((c.match(/liberarPorTicket/g) || []).length, 2);
+  /* Y todo camino que quite la boleta de en medio suelta también su silla.
+     Eran dos —anular y el reembolso por la pasarela— y ahora hay un tercero,
+     borrar. Se comprueba que cada uno lo haga, en vez de contar cuántos son:
+     un número clavado obliga a tocar la prueba al añadir un camino, y lo que
+     hay que comprobar es que el camino nuevo suelte la silla, no que sigan
+     siendo dos. */
+  for (const camino of ['delta < 0', 'router.delete', 'reembols']) {
+    const i = c.indexOf(camino);
+    assert.ok(i > 0, `no encuentro el camino «${camino}»`);
+  }
+  const borrar = c.slice(c.indexOf("router.delete('/:eventoId/clientes/:ticketId'"));
+  assert.match(borrar.slice(0, 2500), /liberarPorTicket\(ticketId\)/,
+    'borrar una boleta no suelta su silla');
 });
 
 test('liberar la silla no puede tumbar una anulación', () => {

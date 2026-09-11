@@ -50,7 +50,15 @@ app.get('/', publica('Portada de la API: dice qué es esto y qué endpoints hay.
   });
 });
 
-app.get('/health', publica('Latido del servidor: lo consultan el panel de cPanel y cualquier vigilante externo.'), (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/health', publica('Latido del servidor: lo consultan el panel de cPanel y cualquier vigilante externo. Trae el commit desplegado para poder comparar Render contra cPanel sin entrar a mirar archivos.'), (_req, res) => {
+  const { commitDesplegado, commitCorto } = require('./lib/version.js');
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    commit: commitDesplegado(),
+    commit_corto: commitCorto(),
+  });
+});
 
 /* ── Identidad propia ──────────────────────────────────────────────────────
    Detrás de un interruptor (`AUTH_PROPIA`) y montada antes que nada: son rutas

@@ -1580,25 +1580,56 @@ router.patch('/:eventoId/alertas/:id/resolver', sesion("Lo opera quien está en 
    vez. Eso es un detalle del proveedor, no algo que quien exporta deba sufrir. */
 router.get('/:eventoId/clientes/exportar', sesion("Exportar es leer la lista entera: la ruta exige ver_clientes o gestionar_clientes sobre el rol del miembro."), async (req, res) => {
   const { eventoId } = req.params;
+  /* Se puede exportar UN tipo de boleta.
+   *
+   * En estos eventos los tipos son las actividades —«Registro», «PijaoTech»,
+   * «DemoDay»—, así que «la lista de quién va al DemoDay» es una hoja distinta
+   * de «la lista del evento». Sin esto había que exportar las 440 filas y
+   * filtrar a mano en Excel, que es donde se pierde media hora y se cuela un
+   * error de copiado.
+   *
+   * Sin el parámetro se exporta todo, como siempre: quien ya usaba esta ruta no
+   * nota nada. */
+  const { ticket_type_id } = req.query;
   try {
     await assertOwner(eventoId, req.user.id, ['ver_clientes', 'gestionar_clientes']);
 
     const { data: ev } = await supabase
       .from('eventos').select('titulo, slug').eq('id', eventoId).maybeSingle();
 
+    /* El nombre del tipo, para que el archivo se llame por él y no haya dos
+       descargas iguales en la carpeta. Se comprueba además que sea de ESTE
+       evento: un id de otro evento devolvería una hoja vacía en vez de un no. */
+    let tipo = null;
+    if (ticket_type_id) {
+      const { data } = await supabase
+        .from('ticket_types').select('id, nombre')
+        .eq('id', ticket_type_id).eq('evento_id', eventoId).maybeSingle();
+      if (!data) return res.status(404).json({ error: 'Ese tipo de boleta no es de este evento.' });
+      tipo = data;
+    }
+
     /* Las preguntas, en su orden. Sin `session_id` para quedarnos con las del
        evento y no mezclar las de los sub-eventos, que tienen su propia hoja. */
-    const { data: campos } = await supabase
+    const { data: todosLosCampos } = await supabase
       .from('event_form_fields')
       .select(COLUMNAS_CAMPO)
       .eq('evento_id', eventoId)
       .is('session_id', null)
       .order('orden');
 
+    /* Exportando UN tipo, sobran las preguntas de los otros: saldrían como
+       columnas vacías de punta a punta. Se quedan las que valen para todas
+       (`ticket_type_id` nulo) y las suyas — la misma regla con la que el
+       formulario público decide qué preguntar. */
+    const campos = tipo
+      ? (todosLosCampos || []).filter(c => !c.ticket_type_id || c.ticket_type_id === tipo.id)
+      : todosLosCampos;
+
     const LOTE = 1000;
     const filas = [];
     for (let desde = 0; ; desde += LOTE) {
-      const { data, error } = await supabase
+      let q = supabase
         .from('tickets')
         .select(`codigo, estado, precio_pagado, created_at, pagado_at, checked_in_at,
                  guest_nombre, guest_email, respuestas,
@@ -1606,6 +1637,8 @@ router.get('/:eventoId/clientes/exportar', sesion("Exportar es leer la lista ent
         .eq('evento_id', eventoId)
         .order('created_at', { ascending: true })
         .range(desde, desde + LOTE - 1);
+      if (tipo) q = q.eq('ticket_type_id', tipo.id);
+      const { data, error } = await q;
       if (error) return res.status(500).json({ error: error.message });
       filas.push(...(data || []));
       if (!data || data.length < LOTE) break;
@@ -1651,6 +1684,10 @@ router.get('/:eventoId/clientes/exportar', sesion("Exportar es leer la lista ent
     res.json({
       evento: ev?.titulo || 'evento',
       slug: ev?.slug || 'evento',
+      /* De qué es esta hoja. Viaja para que el archivo se llame por el tipo y
+         para que el panel pueda decirlo al terminar: una descarga que no dice
+         de qué es se abre tres veces buscando la buena. */
+      tipo: tipo?.nombre || null,
       columnas,
       filas: datos,
       total: datos.length,

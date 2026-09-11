@@ -97,7 +97,7 @@ test('«Administrador» se define como TODOS, no como una lista escrita a mano',
     'el Administrador volvió a una lista literal: el día que se añada un permiso, no lo tendrá');
 });
 
-test('el rol Administrador acaba teniendo los 21', () => {
+test('el rol Administrador acaba teniendo TODOS los del catálogo', () => {
   /* Se comprueba el resultado además de la forma: `[...TODOS]` podría
      apuntar a una lista vacía y la prueba de arriba pasaría igual. */
   assert.ok(Array.isArray(ROLES), 'la semilla no exporta ROLES: no se puede comprobar el resultado');

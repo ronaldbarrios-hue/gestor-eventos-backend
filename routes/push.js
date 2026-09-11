@@ -12,7 +12,7 @@ const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { notificarVarios } = require('../lib/notificar.js');
 
-const { sesion, publica } = require('../core/permisos');
+const { sesion, publica, exige } = require('../core/permisos');
 const router = express.Router();
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY;
@@ -92,14 +92,29 @@ router.post('/me/push/test', verifySupabaseJWT, sesion("La suscripción de push 
    el anuncio se guarda y se crea una notificación in-app por destinatario —
    ése es el canal que no depende de claves ni de permisos del navegador. El
    push se manda además, si se puede. */
-router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, sesion("Sólo el dueño del evento puede lanzar un aviso a todo el mundo; se comprueba contra owner_id."), async (req, res) => {
+/* `publicar_anuncios` y no «ser el dueño».
+ *
+ * El permiso existe desde la migración 0122 y su etiqueta en el panel dice
+ * «Publicar anuncios», pero ninguna ruta lo comprobaba: se podía conceder y no
+ * concedía nada. Medido en producción: 34 roles lo tienen puesto y esta ruta
+ * los seguía rechazando a todos.
+ *
+ * Es el fallo de siempre de esta base, en su peor forma — no un permiso que
+ * falta, que se nota al chocar contra un 403, sino uno que sobra: quien armó
+ * el rol marcó la casilla, se quedó tranquilo, y el 403 aparece semanas
+ * después con la casilla marcada delante.
+ *
+ * El dueño sigue pasando: `exige` le concede `*`. */
+router.post('/eventos/:eventoId/push/broadcast', verifySupabaseJWT, exige(['publicar_anuncios']), async (req, res) => {
   const { eventoId } = req.params;
   const { titulo, mensaje, url } = req.body || {};
   if (!titulo?.trim() || !mensaje?.trim()) return res.status(400).json({ error: 'Título y mensaje son requeridos.' });
 
+  /* El evento ya lo cargó el guardia; se relee sólo el título, que es lo que
+     va en el aviso. `owner_id` se sigue necesitando para la audiencia. */
   const { data: ev } = await supabase
     .from('eventos').select('id, owner_id, titulo').eq('id', eventoId).single();
-  if (!ev || ev.owner_id !== req.user.id) return res.status(403).json({ error: 'No autorizado.' });
+  if (!ev) return res.status(404).json({ error: 'Evento no encontrado.' });
 
   /* Audiencia: el dueño y los miembros activos del equipo. */
   const { data: miembros } = await supabase

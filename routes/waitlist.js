@@ -1,7 +1,7 @@
 /* GESTEK — Lista de espera (admin endpoints, auth requerida).
    Montado en /eventos en index.js.
 
-   GET    /:eventoId/waitlist                     — lista completa (owner)
+   GET    /:eventoId/waitlist                     — lista completa
    PATCH  /:eventoId/waitlist/:waitlistId         — cambiar estado
    POST   /:eventoId/waitlist/:waitlistId/notify  — notificar manualmente
    DELETE /:eventoId/waitlist/:waitlistId         — quitar de la lista
@@ -10,7 +10,7 @@
 'use strict';
 
 const express  = require('express');
-const { exige, sesion } = require('../core/permisos');
+const { exige } = require('../core/permisos');
 const supabase = require('../lib/supabase.js');
 const { verifySupabaseJWT } = require('../middleware/auth.js');
 const { ofrecerCupoAlSiguiente, enviarPushWaitlist, HORAS_OFERTA } = require('../lib/waitlistOferta.js');
@@ -24,19 +24,28 @@ const ESTADOS_VALIDOS = ['active', 'contacted', 'purchased', 'cancelled', 'expir
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
-async function verificarOwner(eventoId, userId) {
-  const { data } = await supabase
-    .from('eventos').select('owner_id').eq('id', eventoId).maybeSingle();
-  if (!data) return false;
-  return data.owner_id === userId;
-}
+/* ── Quién puede tocar la fila ────────────────────────────────────────────
+ *
+ * Era el dueño y nadie más. La lista de espera es trabajo de logística —mirar
+ * quién espera un cupo y ofrecérselo cuando alguien cancela— y dejarla en el
+ * dueño obliga a lo que pasó capacitando: dar permisos muy altos a quien sólo
+ * tenía que atender la fila.
+ *
+ * `gestionar_clientes` y no un permiso nuevo: la fila es la antesala de la
+ * lista de inscritos, y quien administra inscritos ya puede hacer con una
+ * boleta bastante más de lo que se hace aquí. Inventar un permiso por ruta
+ * acaba en un panel de sesenta casillas donde no se encuentra ninguna.
+ *
+ * Leer se abre además a `ver_clientes`: ver quién espera no mueve nada.
+ *
+ * El dueño sigue pasando siempre —`exige` le concede `*`—, así que nadie
+ * pierde nada de lo que tenía. */
+const PERMS_VER_FILA   = ['ver_clientes', 'gestionar_clientes'];
+const PERMS_MOVER_FILA = ['gestionar_clientes'];
 
 /* ── GET /:eventoId/waitlist ─────────────────────────────── */
 
-router.get('/:eventoId/waitlist', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
-  if (!(await verificarOwner(req.params.eventoId, req.user.id))) {
-    return res.status(403).json({ error: 'No autorizado.' });
-  }
+router.get('/:eventoId/waitlist', exige(PERMS_VER_FILA), async (req, res) => {
 
   const { q, estado, ticket_type_id } = req.query;
 
@@ -83,13 +92,10 @@ router.get('/:eventoId/waitlist', sesion('Sólo el dueño del evento: la ruta co
 
 /* ── PATCH /:eventoId/waitlist/:waitlistId ───────────────── */
 
-router.patch('/:eventoId/waitlist/:waitlistId', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
+router.patch('/:eventoId/waitlist/:waitlistId', exige(PERMS_MOVER_FILA), async (req, res) => {
   const { estado } = req.body;
   if (!ESTADOS_VALIDOS.includes(estado)) {
     return res.status(400).json({ error: `estado inválido. Usa: ${ESTADOS_VALIDOS.join(', ')}.` });
-  }
-  if (!(await verificarOwner(req.params.eventoId, req.user.id))) {
-    return res.status(403).json({ error: 'No autorizado.' });
   }
 
   const updates = { estado };
@@ -115,9 +121,7 @@ router.patch('/:eventoId/waitlist/:waitlistId', sesion('Sólo el dueño del even
    forma de tomarlo antes que nadie. Ahora hace lo mismo que el disparador
    automático: correo `cupo_liberado` con enlace que caduca y el cupo guardado
    mientras tanto. */
-router.post('/:eventoId/waitlist/:waitlistId/notify', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
-  const esOwner = await verificarOwner(req.params.eventoId, req.user.id);
-  if (!esOwner) return res.status(403).json({ error: 'No autorizado.' });
+router.post('/:eventoId/waitlist/:waitlistId/notify', exige(PERMS_MOVER_FILA), async (req, res) => {
 
   const { data: entry, error: eEntry } = await supabase
     .from('event_waitlist')
@@ -165,10 +169,7 @@ router.post('/:eventoId/waitlist/:waitlistId/notify', sesion('Sólo el dueño de
 
 /* ── DELETE /:eventoId/waitlist/:waitlistId ──────────────── */
 
-router.delete('/:eventoId/waitlist/:waitlistId', sesion('Sólo el dueño del evento: la ruta compara owner_id y no pide un permiso. Declararla con exige() dejaría entrar a los editores, que es MÁS de lo que hace hoy.'), async (req, res) => {
-  if (!(await verificarOwner(req.params.eventoId, req.user.id))) {
-    return res.status(403).json({ error: 'No autorizado.' });
-  }
+router.delete('/:eventoId/waitlist/:waitlistId', exige(PERMS_MOVER_FILA), async (req, res) => {
 
   const { error } = await supabase
     .from('event_waitlist')

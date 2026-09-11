@@ -13,6 +13,11 @@
 deployment:
   tasks:
     - export DEPLOYPATH=$HOME/api
+    # 0 · Qué commit es este, ANTES de que el paso siguiente lo excluya.
+    #     El `.git` no viaja a $DEPLOYPATH (rsync lo excluye a propósito, ver
+    #     abajo), así que /health no podría preguntarle a git qué versión es
+    #     esta. Un .txt de una línea sí viaja, y con eso alcanza.
+    - /bin/bash -lc 'git rev-parse HEAD > COMMIT.txt'
     # 1 · El código
     - /bin/bash -lc 'mkdir -p "$DEPLOYPATH" && rsync -a --delete --exclude ".git" --exclude "node_modules" --exclude ".env" ./ "$DEPLOYPATH"/'
     # 2 · Las dependencias, con el node del entorno virtual (login shell)

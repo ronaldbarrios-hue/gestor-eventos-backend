@@ -21,3 +21,9 @@ db/migraciones/salida-usuarios.sql
 # de Supabase Storage para la migración Camino A. Datos personales reales,
 # NUNCA va a Git.
 .archivos/
+
+# Lo escribe el propio despliegue de cPanel (.cpanel.yml, paso 0) justo antes
+# de excluir el .git del rsync — es el commit desplegado, para que /health lo
+# pueda leer sin tener un repositorio a mano. No es código fuente: se genera
+# cada vez, y cambia en cada despliegue.
+COMMIT.txt

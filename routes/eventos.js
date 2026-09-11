@@ -8,6 +8,7 @@ const { auditar } = require('../lib/auditar.js');
 const { leerCampos, guardarCampos, catalogoDeFormulario } = require('../lib/guardarCampos.js');
 const { tramoPedido, datosDelTramo, filtrarPorTexto } = require('../lib/tramoDeLista.js');
 const { LLAVES_ESTRECHAS, llavesDePageJson, recortarPageJson } = require('../lib/quePuedeEditar.js');
+const { loQueDeVerdadCambia } = require('../lib/mismoValor.js');
 const { esUrlImagenSegura, esUrlWebSegura } = require('../lib/urls.js');
 const { dispatch } = require('../lib/webhooks.js');
 const { assertPermiso } = require('../lib/acceso.js');
@@ -65,6 +66,33 @@ const ESTADOS_VALIDOS = ['borrador', 'publicado', 'cancelado', 'finalizado'];
    nombrarlas una a una y la próxima que salga se quedaría fuera sin que nadie
    lo note. */
 const CAMPOS_DEL_SITIO = new Set(['page_json', 'branding', 'paginas', 'navbar']);
+
+/* Cómo se llama cada campo cuando hay que nombrárselo a una persona.
+ *
+ * Sólo los que alguien puede intentar cambiar sin permiso; el resto cae a su
+ * nombre técnico, que es feo pero cierto. Un mensaje que dice «no puedes
+ * cambiar cover_url» al menos se puede buscar; uno que dice «no autorizado» no
+ * se puede ni preguntar. */
+const NOMBRE_DEL_CAMPO = {
+  cover_url: 'la portada',
+  gallery  : 'la galería',
+  page_json: 'el contenido de la página',
+  branding : 'la marca',
+  paginas  : 'las páginas',
+  navbar   : 'el menú de la página',
+  titulo   : 'el título',
+  descripcion: 'la descripción',
+  fecha_inicio: 'la fecha de inicio',
+  fecha_fin: 'la fecha de fin',
+  aforo_total: 'el aforo',
+  modo_publico: 'el modo de publicación',
+};
+
+function enPalabras(campos) {
+  const n = campos.map(c => NOMBRE_DEL_CAMPO[c] || c);
+  if (n.length === 1) return n[0];
+  return `${n.slice(0, -1).join(', ')} ni ${n[n.length - 1]}`;
+}
 
 /* Los tres modos de publicación (migración 0060). Ver el comentario de la
    migración para qué significa cada uno. */
@@ -385,6 +413,53 @@ router.patch('/:id', sesion('Editar el evento: lo comprueba puedeEditarEvento / 
   const updates = {};
   for (const k of CAMPOS_EDITABLES) {
     if (k in req.body && puede(k)) updates[k] = req.body[k];
+  }
+
+  /* ── Lo que no puedes tocar y CAMBIARÍA algo, se dice ────────────────────
+   *
+   * El bucle de arriba descarta lo que tu rol no abre, y hasta aquí eso se
+   * respondía con un 200. Quien cambiaba la portada junto al título veía
+   * «Guardado», el título cambiaba, y la portada se quedaba igual. Es la peor
+   * forma del fallo de esta base: no esconde una función, dice que guardó algo
+   * que no guardó, y no hay ninguna pregunta que lo destape — se descubre
+   * mirando la portada un mes después.
+   *
+   * Lo que NO se puede hacer es rechazar todo campo no permitido: hay diez
+   * pantallas que mandan el evento entero para tocar una cosa —el plano, los
+   * stands, la acreditación— y funcionan porque lo que no pueden tocar llega
+   * igual que como está guardado. Rechazar por mandarlo las rompería todas.
+   *
+   * Así que la pregunta es si CAMBIARÍA algo. `lib/mismoValor.js` la contesta
+   * sin confundir `null` con `''`, `120` con `'120'`, ni el mismo objeto con
+   * las claves en otro orden: cada uno de esos falsos «sí cambió» convertiría
+   * un guardado que hoy funciona en un 403.
+   *
+   * Se rechaza entero y no a medias. Guardar el título y no la portada, aunque
+   * se avisara, deja al evento en un estado que nadie pidió; y quien lo lee
+   * deprisa vuelve a creer que se guardó todo. */
+  const noPermitidos = CAMPOS_EDITABLES.filter(k => k in req.body && !puede(k));
+  if (noPermitidos.length) {
+    /* En su propia consulta, y si falla se sigue como siempre. Meter estas
+       columnas en el `select` de arriba dejaría el guardado del evento entero
+       colgando de que existan todas: una columna que falte —un despliegue sin
+       su migración— rompería el `select` y con él la pantalla. Esto es una
+       comprobación de más; no puede ser lo que tumbe editar un evento. */
+    let guardado = null;
+    try {
+      const r = await supabase
+        .from('eventos').select(noPermitidos.join(', ')).eq('id', actual.id).maybeSingle();
+      if (!r.error) guardado = r.data;
+    } catch { /* se sigue sin la comprobación */ }
+
+    if (guardado) {
+      const cambian = loQueDeVerdadCambia(noPermitidos, req.body, guardado);
+      if (cambian.length) {
+        return res.status(403).json({
+          error: `Tu rol no puede cambiar ${enPalabras(cambian)}. No se guardó nada.`,
+          campos: cambian,
+        });
+      }
+    }
   }
 
   if (camposPermitidos === null && req.body.slug && req.body.slug !== actual.slug) {

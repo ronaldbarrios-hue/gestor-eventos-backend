@@ -1133,7 +1133,12 @@ router.get('/slug/:slug', async (req, res) => {
   try {
     const { data: proximas } = await supabase
       .from('agenda_sessions')
-      .select('id, titulo, tipo, inicio, fin, ubicacion, track, cupo, inscritos, requiere_inscripcion')
+      /* `descripcion` desde el 11-sep: el bloque de agenda de la landing decia
+         de cada actividad el titulo y la hora, y «Torneo gamer» a secas no dice
+         que es. La columna ya estaba rellena en 14 de las 18 actividades de
+         produccion. Mismo arreglo que en `lib/aforoZonas.js` para el mapa, que
+         es el otro sitio donde se listan actividades. */
+      .select('id, titulo, descripcion, tipo, inicio, fin, ubicacion, track, cupo, inscritos, requiere_inscripcion')
       .eq('evento_id', evento.id)
       .neq('moderacion', 'pendiente').neq('moderacion', 'rechazado')
       .order('inicio', { ascending: true })

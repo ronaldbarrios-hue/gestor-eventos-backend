@@ -1,28 +1,15 @@
 ---
 # Despliegue en cPanel (Git Version Control → "Deploy HEAD Commit").
 #
-# El backend no se construye: se instala y se reinicia. Los pasos son tres y el
-# tercero es el que se olvida.
-#
-# ⚠️ REVISA ESTO ANTES DE DESPLEGAR:
-#   DEPLOYPATH = carpeta de la aplicación en "Setup Node.js App"
-#   (Application root). Aquí se asume `api`; $HOME ya apunta a /home/TU_USUARIO.
-#
-#   Si el repositorio ya está clonado EN esa carpeta, las tareas de copia
-#   sobran y basta con el npm ci y el restart: dejá sólo las dos últimas.
+# El repositorio YA está clonado directamente en la carpeta de la app
+# ("Application root" = gestek-api), así que no hace falta copiar nada de
+# un lado a otro — solo instalar dependencias y reiniciar.
 deployment:
   tasks:
-    - export DEPLOYPATH=$HOME/api
-    # 0 · Qué commit es este, ANTES de que el paso siguiente lo excluya.
-    #     El `.git` no viaja a $DEPLOYPATH (rsync lo excluye a propósito, ver
-    #     abajo), así que /health no podría preguntarle a git qué versión es
-    #     esta. Un .txt de una línea sí viaja, y con eso alcanza.
-    - /bin/bash -lc 'git rev-parse HEAD > COMMIT.txt'
-    # 1 · El código
-    - /bin/bash -lc 'mkdir -p "$DEPLOYPATH" && rsync -a --delete --exclude ".git" --exclude "node_modules" --exclude ".env" ./ "$DEPLOYPATH"/'
-    # 2 · Las dependencias, con el node del entorno virtual (login shell)
+    - export DEPLOYPATH=$HOME/gestek-api
+    # 0 · Qué commit es este, para que /health lo pueda leer.
+    - /bin/bash -lc 'cd "$DEPLOYPATH" && git rev-parse HEAD > COMMIT.txt'
+    # 1 · Las dependencias
     - /bin/bash -lc 'cd "$DEPLOYPATH" && npm ci --omit=dev --no-audit --no-fund'
-    # 3 · El reinicio. Passenger recarga cuando cambia este archivo; sin esta
-    #     línea el código nuevo está en el disco y el proceso viejo sigue
-    #     corriendo, y se pierde media hora buscando por qué "no subió".
+    # 2 · El reinicio. Passenger recarga cuando cambia este archivo.
     - /bin/bash -lc 'mkdir -p "$DEPLOYPATH/tmp" && touch "$DEPLOYPATH/tmp/restart.txt"'

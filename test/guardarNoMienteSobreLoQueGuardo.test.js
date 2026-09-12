@@ -133,3 +133,18 @@ test('el mensaje nombra los campos en palabras', () => {
      cierto: mejor un nombre que se puede buscar que ninguno. */
   assert.match(src, /NOMBRE_DEL_CAMPO\[c\] \|\| c/);
 });
+
+test('una lista vacía y un campo sin poner son lo mismo', () => {
+  /* Cierra el cuarto falso «sí cambió»: la base con null y el formulario
+     mandando `[]`. Hoy no pasa —los 15 eventos guardan `[]`, ninguno null— pero
+     un evento nuevo o una columna futura lo traería, y sería un 403 donde hoy
+     se guarda bien. */
+  assert.ok(mismoValor(null, []));
+  assert.ok(mismoValor(null, {}));
+  assert.ok(mismoValor([], null));
+  assert.ok(mismoValor({}, null));
+
+  /* Y no esconde vaciar algo que tenía contenido, que sí es un cambio. */
+  assert.ok(!mismoValor(['foto.jpg'], []));
+  assert.ok(!mismoValor({ color: '#fff' }, {}));
+});

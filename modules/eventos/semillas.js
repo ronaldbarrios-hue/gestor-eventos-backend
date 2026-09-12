@@ -68,6 +68,24 @@ const CANALES = [
  * una ruta, o el rol promete algo que no se cumple. */
 const { TODOS } = require('../../core/permisos/catalogo.js');
 
+/* ── Esta lista tiene una gemela en la base, y manda la gemela ───────────
+ *
+ * Los roles de un evento nuevo NO los siembra este archivo hoy: los siembra el
+ * disparador `trg_seed_event_roles`, que lee `private.fn_roles_semilla()`. Este
+ * de aquí es el mismo reparto para el día del corte a servidor propio —por eso
+ * el `INSERT IGNORE`, que es de MySQL.
+ *
+ * O sea: dos listas del mismo reparto, y una de ellas no se ejecuta todavía.
+ * Es la receta exacta para que se separen sin que nadie lo note, y se
+ * separaron: medido el 11-sep, cinco de los once roles no coincidían. El peor,
+ * «Staff · Logística», aquí ni siquiera tenía `checkin` — el día del corte,
+ * quien lleva la logística de un evento nuevo se habría quedado sin escanear
+ * entradas, sin puertas y sin acreditación, y en su lugar podría editar la
+ * agenda. Nada de eso da error: da un rol que no sirve.
+ *
+ * `test/lasDosSemillasRepartenIgual.test.js` las compara. Si cambias una,
+ * cambia la otra — y si de verdad tienen que decir cosas distintas, escríbelo
+ * ahí, que para eso está. */
 const ROLES = [
   /* El que faltaba: hasta la 0089 no había ningún rol que pudiera todo. Las
      pantallas más sensibles se guardan con «sólo el dueño», y el dueño no es un
@@ -85,22 +103,29 @@ const ROLES = [
   { nombre: 'Administrador',     descripcion: 'Puede todo dentro del evento, salvo transferirlo o borrarlo', orden: 0,
     permissions: [...TODOS] },
   { nombre: 'Editor',            descripcion: 'Edita información, agenda y página pública', orden: 1,
-    permissions: ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda'] },
+    permissions: ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda', 'ver_documentos'] },
   { nombre: 'Coordinador',       descripcion: 'Coordina al staff y al evento completo', orden: 2,
-    permissions: ['editar_evento', 'invitar_staff', 'gestionar_agenda', 'ver_clientes', 'ver_analytics', 'crear_canales', 'gestionar_tareas'] },
+    permissions: ['editar_evento', 'invitar_staff', 'gestionar_agenda', 'ver_clientes', 'ver_analytics',
+                  'crear_canales', 'gestionar_solicitudes', 'gestionar_tareas', 'ver_documentos'] },
   { nombre: 'Puerta',            descripcion: 'Controla el ingreso y escanea las entradas', orden: 3,
     permissions: ['checkin', 'ver_clientes'] },
+  /* El que más se había separado, y el que más se nota: aquí tenía
+     `crear_canales` y `gestionar_agenda` —o sea, ni escanear una entrada— y la
+     base le da desde la 0124 la puerta, las zonas, la acreditación y los
+     documentos. Quien lleva la logística escanea y abre puertas; programar la
+     agenda es de Programación. */
   { nombre: 'Staff · Logística', descripcion: 'Montaje, técnica y escenario', orden: 4,
-    permissions: ['crear_canales', 'gestionar_agenda'] },
+    permissions: ['crear_canales', 'checkin', 'ver_documentos', 'gestionar_documentos',
+                  'gestionar_acreditacion', 'gestionar_accesos'] },
   { nombre: 'Atención',          descripcion: 'Atiende asistentes durante el evento', orden: 5,
-    permissions: ['ver_clientes', 'checkin'] },
+    permissions: ['ver_clientes', 'gestionar_clientes', 'checkin', 'gestionar_solicitudes', 'gestionar_padron'] },
   { nombre: 'VIP host',          descripcion: 'Anfitrión de zona VIP', orden: 6,
     permissions: ['vip_zone', 'ver_clientes', 'checkin'] },
   /* Quien COORDINA a los expositores, no un expositor: el expositor entra por
      su propio enlace (`/expositor/:codigo`) y edita SU ficha, no la de los
      demás. Con el nombre viejo, el rol concedía administrar a todos. */
   { nombre: 'Coordinación de expositores', descripcion: 'Gestiona los stands y las fichas de los expositores', orden: 7,
-    permissions: ['gestionar_expositores'] },
+    permissions: ['gestionar_expositores', 'ver_clientes'] },
   /* Quien ARMA el programa. Un ponente no administra nada: su ficha vive en
      `speakers` y se le engancha a cada actividad desde el Calendario. Con el
      nombre viejo, un ponente podía editar la agenda entera del evento. */

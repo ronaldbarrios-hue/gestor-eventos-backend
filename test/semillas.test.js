@@ -45,14 +45,42 @@ test('los once roles, en su orden', () => {
   );
 });
 
-test('los permisos de los roles que más cuestan de reconstruir', () => {
+test('cada rol semilla puede lo suyo, y no lo de otro', () => {
+  /* Antes esto fijaba las listas EXACTAS de tres roles. Se quedó vieja el día
+     que la base repartió más permisos que esta lista —la 0124— y falló por que
+     el código mejoró, no por que se rompiera. La igualdad exacta contra su
+     fuente la comprueba `lasDosSemillasRepartenIgual`, que la lee de la
+     migración en vez de copiarla.
+     
+     Aquí se fija lo que NO se puede perder al reorganizar los roles: que cada
+     uno pueda su trabajo, y que no se le cuele el de otro. Eso sobrevive a que
+     se añada un permiso, que es lo que tiene que pasar. */
   const de = (n) => ROLES.find(r => r.nombre === n).permissions;
-  /* «Puerta» desde la 0090: se llamaba «Staff · Acceso». El nombre dice
-     ahora quién es la persona, no en qué cajonón del organigrama está. */
-  assert.deepEqual(de('Puerta'), ['checkin', 'ver_clientes']);
-  assert.deepEqual(de('Finanzas'), ['ver_pagos', 'reembolsar', 'ver_clientes', 'ver_analytics']);
-  assert.deepEqual(de('Editor'),
-    ['editar_evento', 'editar_pagina_publica', 'gestionar_imagenes', 'gestionar_agenda']);
+  const puede   = (n, p) => assert.ok(de(n).includes(p),  `«${n}» perdió «${p}»`);
+  const noPuede = (n, p) => assert.ok(!de(n).includes(p), `«${n}» se quedó con «${p}», que no es suyo`);
+
+  /* «Puerta» desde la 0090: se llamaba «Staff · Acceso». El nombre dice ahora
+     quién es la persona, no en qué cajón del organigrama está. */
+  puede('Puerta', 'checkin');
+  puede('Puerta', 'ver_clientes');     // sin la lista no se puede buscar a nadie
+  noPuede('Puerta', 'ver_pagos');      // la puerta no mira el dinero
+  noPuede('Puerta', 'editar_evento');
+
+  puede('Finanzas', 'ver_pagos');
+  puede('Finanzas', 'reembolsar');
+  noPuede('Finanzas', 'checkin');      // quien lleva las cuentas no está en la puerta
+  noPuede('Finanzas', 'editar_evento');
+
+  puede('Editor', 'editar_pagina_publica');
+  puede('Editor', 'gestionar_imagenes');
+  noPuede('Editor', 'ver_pagos');
+  noPuede('Editor', 'checkin');
+
+  /* El de la capacitación: quien lleva la logística escanea y abre puertas.
+     Programar la agenda es de «Programación». */
+  puede('Staff · Logística', 'checkin');
+  puede('Staff · Logística', 'gestionar_accesos');
+  noPuede('Staff · Logística', 'gestionar_agenda');
 });
 
 test('ningún rol se queda sin permisos', () => {

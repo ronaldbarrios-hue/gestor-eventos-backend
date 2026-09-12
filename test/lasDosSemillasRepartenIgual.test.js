@@ -38,7 +38,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { ROLES } = require('../modules/eventos/semillas.js');
+const { ROLES, CANALES, BLOQUES_INICIALES, paginaPorDefecto } = require('../modules/eventos/semillas.js');
 const { TODOS } = require('../core/permisos/catalogo.js');
 
 const RAIZ = path.resolve(__dirname, '..');
@@ -104,4 +104,61 @@ test('el Administrador de la base no se quedó corto frente al catálogo', () =>
   assert.deepEqual(faltan, [],
     'el rol «Administrador» que siembra la base no puede todo: '
     + 'hay permisos del catálogo que no le llegan, y nadie se enteraría');
+});
+
+/* ── Y las otras dos siembras ─────────────────────────────────────────────
+ *
+ * `semillas.js` siembra TRES cosas y la base tiene TRES disparadores para lo
+ * mismo: roles, canales de chat y la página inicial. Los roles se habían
+ * separado; los otros dos se midieron el 11-sep y coincidían.
+ *
+ * Se fijan aquí igual, y no por simetría: la que no se ejecuta es la que se
+ * queda atrás, y las tres están en esa situación hasta el corte a servidor
+ * propio. Comprobar sólo la que ya falló es arreglar el caso y dejar la causa.
+ */
+
+/* Cada migración es la que DEFINE su función. Se nombra explícitamente en vez
+   de buscar por todo `db/migrations`: varias migraciones posteriores la
+   mencionan de pasada —la 0030 sólo le fija el `search_path`— y la última que
+   la nombra no es la que dice qué hace. */
+const leerMigracion = (nombre) =>
+  fs.readFileSync(path.join(RAIZ, 'db', 'migrations', nombre), 'utf8');
+
+test('los canales de chat que se siembran son los mismos', () => {
+  const sql = leerMigracion('0008_chat.sql');
+  const i = sql.indexOf('insert into public.chat_channels (evento_id, nombre, tipo, created_by) values');
+  assert.ok(i > 0, 'la 0008 ya no siembra los canales como se esperaba');
+
+  const bloque = sql.slice(i, sql.indexOf(';', i));
+  const enLaBase = [...bloque.matchAll(/\(new\.id,\s*'([^']+)',\s*'([^']+)'/g)]
+    .map(m => ({ nombre: m[1], tipo: m[2] }));
+
+  assert.deepEqual(
+    CANALES.map(c => ({ nombre: c.nombre, tipo: c.tipo })),
+    enLaBase,
+    'los canales de JavaScript y los de la base ya no son los mismos, ni en el mismo orden');
+});
+
+test('la página inicial nace con los mismos bloques y los mismos ids', () => {
+  /* Los ids importan más que los tipos: un embed exportado «de esta sección
+     exacta» apunta a uno de ellos. Si el corte a servidor propio los cambiara,
+     cada código pegado en la web de un organizador dejaría de encontrar su
+     bloque — y lo que se vería es un hueco, no un error. */
+  const sql = leerMigracion('0010_page_json_v2.sql');
+  const i = sql.indexOf('function public.default_page_blocks()');
+  assert.ok(i > 0, 'la 0010 ya no define default_page_blocks');
+
+  const bloque = sql.slice(i, sql.indexOf('$$;', i));
+  const enLaBase = [...bloque.matchAll(/'id',\s*'([^']+)',\s*'type',\s*'([^']+)'/g)]
+    .map(m => ({ id: m[1], type: m[2] }));
+  assert.ok(enLaBase.length > 0, 'no se pudo leer ningún bloque de la migración');
+
+  const enJs = paginaPorDefecto().pages[0].blocks.map(b => ({ id: b.id, type: b.type }));
+  assert.deepEqual(enJs, enLaBase,
+    'la página inicial de JavaScript y la de la base ya no coinciden');
+
+  /* Y `BLOQUES_INICIALES` es la tercera copia de lo mismo, dentro del propio
+     `semillas.js`: la lista de tipos que se usa para construirlos. */
+  assert.deepEqual(BLOQUES_INICIALES, enLaBase.map(b => b.type),
+    'BLOQUES_INICIALES se separó de los bloques que de verdad se siembran');
 });
